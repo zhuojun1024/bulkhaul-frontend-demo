@@ -1,10 +1,9 @@
 <template>
   <div class="page" v-loading="loading">
     <PageHeader title="结算管理" desc="按合同月度汇总运费，对账、结算与逾期跟踪">
+      <el-button type="primary" :icon="DocumentAdd" @click="openGenerate">生成结算单</el-button>
       <el-button :icon="Download" @click="exportCsv">导出</el-button>
-      <el-button type="primary" :icon="Postcard" @click="$router.push('/settlement/invoice')">
-        发票管理
-      </el-button>
+      <el-button :icon="Postcard" @click="$router.push('/settlement/invoice')">发票管理</el-button>
     </PageHeader>
 
     <div class="stat-row">
@@ -110,18 +109,51 @@
         </div>
       </div>
     </div>
+
+    <!-- 生成结算单 -->
+    <el-dialog v-model="genDialog" title="生成结算单" width="760px">
+      <el-alert type="info" :closable="false" style="margin-bottom: 12px">
+        按「合同 + 月份（卸货时间）」聚合已完成且未入账单的车次，生成后账单进入"待对账"，可发起对账三方比对。
+      </el-alert>
+      <el-table ref="genTableRef" :data="candidates" stripe size="small" @selection-change="onGenSelect">
+        <el-table-column type="selection" width="45" />
+        <el-table-column prop="contractId" label="合同编号" width="110" />
+        <el-table-column label="客户" min-width="150" show-overflow-tooltip>
+          <template #default="{ row }">{{ find.customer(row.customerId)?.name }}</template>
+        </el-table-column>
+        <el-table-column prop="period" label="结算周期" width="100" />
+        <el-table-column label="车次" width="80" align="right">
+          <template #default="{ row }">{{ row.dispatchCount }}</template>
+        </el-table-column>
+        <el-table-column label="运量(吨)" width="100" align="right">
+          <template #default="{ row }">{{ formatNum(row.quantity) }}</template>
+        </el-table-column>
+        <el-table-column label="预估运费(元)" width="130" align="right">
+          <template #default="{ row }">
+            <span class="num">{{ formatMoney(row.freight) }}</span>
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button @click="genDialog = false">取消</el-button>
+        <el-button type="primary" :disabled="!selectedGroups.length" @click="confirmGenerate">
+          生成{{ selectedGroups.length ? `（${selectedGroups.length}）` : '' }}
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 defineOptions({ name: 'Settlement' })
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Download, Refresh, Postcard } from '@element-plus/icons-vue'
+import { Search, Download, Refresh, Postcard, DocumentAdd } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
+import { settlementCandidates, generateSettlements, startReconcile as flowStartReconcile, confirmSettle } from '@/mock/flow'
 import { formatMoney, formatNum } from '@/utils'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
@@ -191,23 +223,59 @@ function invoiceType(status) {
 }
 
 function startReconcile(row) {
-  ElMessageBox.confirm(`开始对账 ${row.billNo}？对账需与调度、磅单数据核对。`, '发起对账', { type: 'info' }).then(() => {
-    row.status = 'reconciling'
-    ElMessage.success('对账已发起')
+  ElMessageBox.confirm(`开始对账 ${row.billNo}？将执行调度量 vs 磅单净重 vs 结算量三方比对。`, '发起对账', { type: 'info' }).then(() => {
+    const r = flowStartReconcile(row)
+    ElMessage.success(r.diffCount ? `对账完成：${r.diffCount} 车次存在差异` : '对账完成：无差异')
   }).catch(() => {})
 }
 
 function settle(row) {
+  const r = row.reconciliation
+  const lossWarn =
+    r && r.lossQty > 0
+      ? `<br/><span style="color:var(--color-warning)">本期损耗合计 ${r.lossQty} 吨（约 ${formatMoney(r.lossAmount)}），按出磅净重结算，损耗已扣减。</span>`
+      : ''
+  const diffWarn =
+    r && r.diffCount
+      ? `<br/><span style="color:var(--color-danger)">${r.diffCount} 车次结算量与磅单不一致，请确认后再结算。</span>`
+      : ''
   ElMessageBox.confirm(
-    `确认结算 ${row.billNo}？<br/>结算金额 ${formatMoney(row.totalAmount)}，将对客户发起收款。`,
+    `确认结算 ${row.billNo}？<br/>结算金额 ${formatMoney(row.totalAmount)}，结算后进入收款。${lossWarn}${diffWarn}`,
     '确认结算',
     { dangerouslyUseHTMLString: true, type: 'success', confirmButtonText: '确认结算' }
   ).then(() => {
-    row.status = 'settled'
-    row.paidAmount = row.totalAmount
-    row.settleDate = dayjs().format('YYYY-MM-DD')
-    ElMessage.success('结算完成')
+    confirmSettle(row)
+    ElMessage.success('结算完成，进入收款')
   }).catch(() => {})
+}
+
+/* ===== 生成结算单 ===== */
+const genDialog = ref(false)
+const genTableRef = ref()
+const candidates = ref([])
+const selectedGroups = ref([])
+
+function openGenerate() {
+  candidates.value = settlementCandidates()
+  if (!candidates.value.length) {
+    ElMessage.info('暂无已完成且未入账单的车次')
+    return
+  }
+  genDialog.value = true
+  nextTick(() => {
+    genTableRef.value?.clearSelection()
+    candidates.value.forEach((row) => genTableRef.value?.toggleRowSelection(row, true))
+  })
+}
+
+function onGenSelect(rows) {
+  selectedGroups.value = rows
+}
+
+function confirmGenerate() {
+  const created = generateSettlements(selectedGroups.value.map((g) => g.key))
+  genDialog.value = false
+  ElMessage.success(`已生成 ${created.length} 张结算单，可发起对账`)
 }
 
 function exportCsv() {

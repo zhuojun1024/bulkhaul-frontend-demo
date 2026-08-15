@@ -142,6 +142,13 @@
                 <div class="amount-preview num">{{ formatMoney(amount) }}</div>
               </el-form-item>
             </el-col>
+            <el-col :span="8">
+              <el-form-item label="结算账期(天)" prop="paymentDays">
+                <el-select v-model="form.paymentDays" style="width: 100%">
+                  <el-option v-for="d in [30, 45, 60, 90]" :key="d" :label="`${d} 天`" :value="d" />
+                </el-select>
+              </el-form-item>
+            </el-col>
             <el-col :span="24">
               <el-form-item label="备注">
                 <el-input v-model="form.remark" type="textarea" :rows="3" placeholder="结算方式、违约责任等补充条款" maxlength="200" show-word-limit />
@@ -164,10 +171,11 @@
 defineOptions({ name: 'ContractCreate' })
 import { ref, reactive, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { db } from '@/mock'
+import { creditCheck } from '@/mock/flow'
 import { formatMoney } from '@/utils'
 import dayjs from 'dayjs'
 
@@ -193,6 +201,7 @@ const form = reactive({
   endDate: dayjs().add(6, 'month').format('YYYY-MM-DD'),
   quantity: 10000,
   unitPrice: 50,
+  paymentDays: 30,
   remark: ''
 })
 
@@ -223,6 +232,14 @@ function submit(status) {
       ElMessage.warning('请完善必填信息')
       return
     }
+    // 提交审批时做客户信用校验（草稿不占用授信）
+    if (status === 'pending') {
+      const check = creditCheck(form.shipperId, amount.value)
+      if (!check.ok) {
+        ElMessageBox.alert(check.message, '信用校验未通过', { type: 'warning', confirmButtonText: '知道了' })
+        return
+      }
+    }
     submitting.value = true
     setTimeout(() => {
       const id = `HT-${String(db.contracts.length + 1).padStart(4, '0')}`
@@ -238,6 +255,7 @@ function submit(status) {
         quantity: form.quantity,
         unitPrice: form.unitPrice,
         amount: amount.value,
+        paymentDays: form.paymentDays,
         startDate: form.startDate,
         endDate: form.endDate,
         signDate: dayjs().format('YYYY-MM-DD'),

@@ -86,8 +86,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, Position } from '@element-plus/icons-vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
+import { createDispatches, creditCheck } from '@/mock/flow'
 import { formatNum } from '@/utils'
-import dayjs from 'dayjs'
 
 const route = useRoute()
 const loading = ref(true)
@@ -127,40 +127,23 @@ const dispatchStatusMap = {
 }
 
 function dispatch() {
+  const contract = find.contract(plan.value.contractId)
+  const check = creditCheck(contract?.shipperId, plan.value.quantity * (plan.value.unitPrice || 0))
+  if (!check.ok) {
+    ElMessageBox.alert(check.message, '信用校验未通过', { type: 'warning', confirmButtonText: '知道了' })
+    return
+  }
   ElMessageBox.confirm(
-    `为计划 ${plan.value.id} 生成 3 张调度单（自动匹配空闲车辆）？`,
+    `为计划 ${plan.value.id} 生成 3 张调度单（自动匹配空闲车辆，数量按批次均摊）？`,
     '计划调度',
     { type: 'info', confirmButtonText: '确认调度' }
   ).then(() => {
-    const idle = db.vehicles.filter((v) => v.status === 'idle')
-    const avail = db.drivers.filter((d) => d.status === 'available')
-    for (let i = 0; i < 3; i++) {
-      const vehicle = idle[i % idle.length]
-      const driver = avail[(db.dispatches.length + i) % avail.length]
-      if (!vehicle || !driver) break
-      db.dispatches.unshift({
-        id: `PD-${String(db.dispatches.length + 1).padStart(5, '0')}`,
-        planId: plan.value.id,
-        contractId: plan.value.contractId,
-        commodityId: plan.value.commodityId,
-        quantity: 35,
-        loadTerminalId: plan.value.loadTerminalId,
-        unloadTerminalId: plan.value.unloadTerminalId,
-        vehicleId: vehicle.id,
-        driverId: driver.id,
-        distance: 300,
-        status: 'pending',
-        dispatchTime: dayjs().format('YYYY-MM-DD HH:mm'),
-        loadTime: null,
-        unloadTime: null,
-        progress: 0,
-        speed: 0,
-        eta: dayjs().add(8, 'hour').format('YYYY-MM-DD HH:mm'),
-        fee: Math.round(35 * plan.value.unitPrice)
-      })
+    const { created, error } = createDispatches(plan.value, 3)
+    if (error) {
+      ElMessage.warning(error)
+      return
     }
-    plan.value.status = 'dispatched'
-    ElMessage.success('调度单已生成')
+    ElMessage.success(`已生成 ${created.length} 张调度单`)
   }).catch(() => {})
 }
 </script>

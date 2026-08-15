@@ -80,7 +80,7 @@
               <StatusTag :status="row.status" :map="statusMap" />
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="170" align="center" fixed="right">
+          <el-table-column label="操作" width="210" align="center" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" size="small" @click.stop="goDetail(row)">详情</el-button>
               <el-button
@@ -89,10 +89,25 @@
                 @click.stop="confirmLoad(row)"
               >确认装货</el-button>
               <el-button
+                v-if="row.status === 'loading'"
+                link type="primary" size="small"
+                @click.stop="depart(row)"
+              >发车</el-button>
+              <el-button
+                v-if="row.status === 'intransit'"
+                link type="success" size="small"
+                @click.stop="arrive(row)"
+              >到达</el-button>
+              <el-button
                 v-if="row.status === 'unloading'"
                 link type="success" size="small"
                 @click.stop="confirmUnload(row)"
               >确认卸货</el-button>
+              <el-button
+                v-if="row.status === 'exception'"
+                link type="warning" size="small"
+                @click.stop="resume(row)"
+              >恢复</el-button>
               <el-button
                 v-if="['pending', 'loading', 'intransit'].includes(row.status)"
                 link type="danger" size="small"
@@ -126,7 +141,14 @@ import { Search, Download, Refresh } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
-import { randomName } from '@/mock/base'
+import {
+  confirmLoad as flowConfirmLoad,
+  depart as flowDepart,
+  arrive as flowArrive,
+  confirmUnload as flowConfirmUnload,
+  reportException as flowReportException,
+  resumeDispatch
+} from '@/mock/flow'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
 
@@ -206,23 +228,30 @@ function confirmLoad(row) {
     '确认装货',
     { dangerouslyUseHTMLString: true, type: 'info', confirmButtonText: '确认装货' }
   ).then(() => {
-    row.status = 'loading'
-    row.loadTime = dayjs().format('YYYY-MM-DD HH:mm')
-    row.progress = 5
-    const vehicle = find.vehicle(row.vehicleId)
-    db.weighings.unshift({
-      id: `BZ-${String(db.weighings.length + 1).padStart(5, '0')}`,
-      dispatchId: row.id,
-      plate: vehicle?.plate || '-',
-      terminalId: row.loadTerminalId,
-      type: '进磅',
-      gross: +(13 + row.quantity).toFixed(2),
-      tare: 13,
-      net: row.quantity,
-      time: row.loadTime,
-      operator: randomName()
-    })
+    flowConfirmLoad(row)
     ElMessage.success('装货确认成功，进磅单已登记')
+  }).catch(() => {})
+}
+
+function depart(row) {
+  ElMessageBox.confirm(
+    `确认 ${find.vehicle(row.vehicleId)?.plate} 发车开始运输？`,
+    '发车确认',
+    { type: 'info', confirmButtonText: '确认发车' }
+  ).then(() => {
+    flowDepart(row)
+    ElMessage.success('已发车，进入在途状态')
+  }).catch(() => {})
+}
+
+function arrive(row) {
+  ElMessageBox.confirm(
+    `确认 ${find.vehicle(row.vehicleId)?.plate} 已到达卸货场站，开始卸货？`,
+    '到达确认',
+    { type: 'info', confirmButtonText: '确认到达' }
+  ).then(() => {
+    flowArrive(row)
+    ElMessage.success('已到达，进入卸货状态')
   }).catch(() => {})
 }
 
@@ -232,25 +261,19 @@ function confirmUnload(row) {
     '确认卸货',
     { dangerouslyUseHTMLString: true, type: 'success', confirmButtonText: '确认卸货' }
   ).then(() => {
-    row.status = 'completed'
-    row.unloadTime = dayjs().format('YYYY-MM-DD HH:mm')
-    row.progress = 100
-    row.speed = 0
-    const vehicle = find.vehicle(row.vehicleId)
-    const loss = +(row.quantity * 0.015).toFixed(2)
-    db.weighings.unshift({
-      id: `BZ-${String(db.weighings.length + 1).padStart(5, '0')}`,
-      dispatchId: row.id,
-      plate: vehicle?.plate || '-',
-      terminalId: row.unloadTerminalId,
-      type: '出磅',
-      gross: +(13 + row.quantity - loss).toFixed(2),
-      tare: 13,
-      net: +(row.quantity - loss).toFixed(2),
-      time: row.unloadTime,
-      operator: randomName()
-    })
+    flowConfirmUnload(row)
     ElMessage.success('卸货确认成功，本次运输已完成')
+  }).catch(() => {})
+}
+
+function resume(row) {
+  ElMessageBox.confirm(
+    `确认调度单 ${row.id} 恢复运输？`,
+    '恢复运输',
+    { type: 'warning', confirmButtonText: '确认恢复' }
+  ).then(() => {
+    resumeDispatch(row)
+    ElMessage.success('已恢复运输')
   }).catch(() => {})
 }
 
@@ -261,19 +284,7 @@ function reportException(row) {
     confirmButtonText: '上报',
     type: 'warning'
   }).then(({ value }) => {
-    row.status = 'exception'
-    db.exceptions.unshift({
-      id: `YC-${String(db.exceptions.length + 1).padStart(4, '0')}`,
-      dispatchId: row.id,
-      type: 'other',
-      level: 'medium',
-      status: 'pending',
-      occurTime: dayjs().format('YYYY-MM-DD HH:mm'),
-      handler: '',
-      description: value,
-      result: '',
-      cost: 0
-    })
+    flowReportException(row, value)
     ElMessage.warning('异常已上报，请前往异常处理模块跟进')
   }).catch(() => {})
 }

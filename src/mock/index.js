@@ -13,10 +13,11 @@ import './plan'
 import './dispatch'
 import './weighing'
 import './warehouse'
-import './settlement'
 import './exception'
+import './settlement' // 依赖异常单（异常损失扣减），需在 exception 之后
 import './safety'
 import './system'
+import './flow' // 业务流转中枢：导入时执行全量校准（计划/合同进度对齐实际执行）
 import { dashboard, workbenchTodos, notices } from './dashboard'
 
 export { db, dashboard, workbenchTodos, notices }

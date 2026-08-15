@@ -115,7 +115,7 @@
         <el-form label-width="90px" style="margin-top: 16px">
           <el-form-item label="调度车次">
             <el-input-number v-model="dispatchCount" :min="1" :max="10" />
-            <span class="dispatch-dialog__tip">每车按 35 吨估算</span>
+            <span class="dispatch-dialog__tip">每车约 {{ perTripQuantity }} 吨</span>
           </el-form-item>
           <el-form-item label="车辆来源">
             <el-radio-group v-model="vehicleSource">
@@ -147,6 +147,7 @@ import { Search, Plus, Download, Refresh } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
+import { createDispatches, creditCheck } from '@/mock/flow'
 import { formatNum } from '@/utils'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
@@ -230,11 +231,20 @@ const currentPlan = ref(null)
 const dispatchCount = ref(3)
 const vehicleSource = ref('auto')
 const selectedVehicles = ref([])
-const idleVehicles = computed(() => db.vehicles.filter((v) => v.status === 'idle' && v.type.includes('挂') || v.status === 'idle' && v.type.includes('自卸')))
+const idleVehicles = computed(() =>
+  db.vehicles.filter((v) => v.status === 'idle' && v.type !== '铁路敞车' && v.type !== '散货船')
+)
+
+/** 每车均摊数量（批次量 / 车次） */
+const perTripQuantity = computed(() => {
+  if (!currentPlan.value || !dispatchCount.value) return 0
+  return Math.max(1, Math.round(currentPlan.value.quantity / dispatchCount.value))
+})
 
 function openDispatch(row) {
   currentPlan.value = row
-  dispatchCount.value = 3
+  // 默认车次按单车 35 吨估算
+  dispatchCount.value = Math.min(10, Math.max(1, Math.round(row.quantity / 35)))
   vehicleSource.value = 'auto'
   selectedVehicles.value = []
   dispatchVisible.value = true
@@ -245,40 +255,27 @@ function confirmDispatch() {
     ElMessage.warning(`请至少选择 ${dispatchCount.value} 辆车`)
     return
   }
+  const plan = currentPlan.value
+  const contract = find.contract(plan.contractId)
+  const check = creditCheck(contract?.shipperId, plan.quantity * (plan.unitPrice || 0))
+  if (!check.ok) {
+    ElMessageBox.alert(check.message, '信用校验未通过', { type: 'warning', confirmButtonText: '知道了' })
+    return
+  }
   dispatching.value = true
   setTimeout(() => {
-    const plan = currentPlan.value
-    const pool = vehicleSource.value === 'auto' ? idleVehicles.value : db.vehicles.filter((v) => selectedVehicles.value.includes(v.id))
-    const availDrivers = db.drivers.filter((d) => d.status === 'available')
-    for (let i = 0; i < dispatchCount.value; i++) {
-      const vehicle = pool[i % pool.length]
-      const driver = availDrivers[(db.dispatches.length + i) % availDrivers.length]
-      if (!vehicle || !driver) break
-      db.dispatches.unshift({
-        id: `PD-${String(db.dispatches.length + 1).padStart(5, '0')}`,
-        planId: plan.id,
-        contractId: plan.contractId,
-        commodityId: plan.commodityId,
-        quantity: 35,
-        loadTerminalId: plan.loadTerminalId,
-        unloadTerminalId: plan.unloadTerminalId,
-        vehicleId: vehicle.id,
-        driverId: driver.id,
-        distance: 300,
-        status: 'pending',
-        dispatchTime: dayjs().format('YYYY-MM-DD HH:mm'),
-        loadTime: null,
-        unloadTime: null,
-        progress: 0,
-        speed: 0,
-        eta: dayjs().add(8, 'hour').format('YYYY-MM-DD HH:mm'),
-        fee: Math.round(35 * plan.unitPrice)
-      })
-    }
-    plan.status = 'dispatched'
+    const { created, error } = createDispatches(
+      plan,
+      dispatchCount.value,
+      vehicleSource.value === 'manual' ? selectedVehicles.value : []
+    )
     dispatching.value = false
     dispatchVisible.value = false
-    ElMessage.success(`已为计划 ${plan.id} 生成 ${dispatchCount.value} 张调度单`)
+    if (error) {
+      ElMessage.warning(error)
+      return
+    }
+    ElMessage.success(`已为计划 ${plan.id} 生成 ${created.length} 张调度单`)
   }, 400)
 }
 

@@ -39,6 +39,7 @@ export const db = reactive({
   warehouses: [],
   inventories: [],
   settlements: [],
+  payments: [],
   invoices: [],
   exceptions: [],
   accidents: [],

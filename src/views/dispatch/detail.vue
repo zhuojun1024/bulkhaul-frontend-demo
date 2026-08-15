@@ -16,8 +16,17 @@
           <el-button v-if="dispatch?.status === 'pending'" type="warning" :icon="Box" @click="confirmLoad">
             确认装货
           </el-button>
+          <el-button v-if="dispatch?.status === 'loading'" type="primary" :icon="Position" @click="depart">
+            发车
+          </el-button>
+          <el-button v-if="dispatch?.status === 'intransit'" type="success" plain :icon="Position" @click="arrive">
+            到达
+          </el-button>
           <el-button v-if="dispatch?.status === 'unloading'" type="success" :icon="CircleCheck" @click="confirmUnload">
             确认卸货
+          </el-button>
+          <el-button v-if="dispatch?.status === 'exception'" type="warning" plain :icon="RefreshRight" @click="resume">
+            恢复运输
           </el-button>
           <el-button v-if="dispatch && ['pending', 'loading', 'intransit'].includes(dispatch.status)" type="danger" plain :icon="Warning" @click="reportException">
             上报异常
@@ -133,10 +142,17 @@ defineOptions({ name: 'DispatchDetail' })
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft, Box, CircleCheck, Warning, Printer } from '@element-plus/icons-vue'
+import { ArrowLeft, Box, CircleCheck, Warning, Printer, Position, RefreshRight } from '@element-plus/icons-vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
-import { randomName } from '@/mock/base'
+import {
+  confirmLoad as flowConfirmLoad,
+  depart as flowDepart,
+  arrive as flowArrive,
+  confirmUnload as flowConfirmUnload,
+  reportException as flowReportException,
+  resumeDispatch
+} from '@/mock/flow'
 import { formatMoney } from '@/utils'
 import dayjs from 'dayjs'
 
@@ -176,45 +192,36 @@ const timeline = computed(() => {
 
 function confirmLoad() {
   ElMessageBox.confirm('确认已完成装货并登记进磅单？', '确认装货', { type: 'info' }).then(() => {
-    dispatch.value.status = 'loading'
-    dispatch.value.loadTime = dayjs().format('YYYY-MM-DD HH:mm')
-    dispatch.value.progress = 5
-    db.weighings.unshift({
-      id: `BZ-${String(db.weighings.length + 1).padStart(5, '0')}`,
-      dispatchId: dispatch.value.id,
-      plate: vehicle.value?.plate || '-',
-      terminalId: dispatch.value.loadTerminalId,
-      type: '进磅',
-      gross: +(13 + dispatch.value.quantity).toFixed(2),
-      tare: 13,
-      net: dispatch.value.quantity,
-      time: dispatch.value.loadTime,
-      operator: randomName()
-    })
+    flowConfirmLoad(dispatch.value)
     ElMessage.success('装货确认成功')
+  }).catch(() => {})
+}
+
+function depart() {
+  ElMessageBox.confirm(`确认 ${vehicle.value?.plate} 发车开始运输？`, '发车确认', { type: 'info' }).then(() => {
+    flowDepart(dispatch.value)
+    ElMessage.success('已发车，进入在途状态')
+  }).catch(() => {})
+}
+
+function arrive() {
+  ElMessageBox.confirm(`确认 ${vehicle.value?.plate} 已到达卸货场站，开始卸货？`, '到达确认', { type: 'info' }).then(() => {
+    flowArrive(dispatch.value)
+    ElMessage.success('已到达，进入卸货状态')
   }).catch(() => {})
 }
 
 function confirmUnload() {
   ElMessageBox.confirm('确认已完成卸货？', '确认卸货', { type: 'success' }).then(() => {
-    dispatch.value.status = 'completed'
-    dispatch.value.unloadTime = dayjs().format('YYYY-MM-DD HH:mm')
-    dispatch.value.progress = 100
-    dispatch.value.speed = 0
-    const loss = +(dispatch.value.quantity * 0.015).toFixed(2)
-    db.weighings.unshift({
-      id: `BZ-${String(db.weighings.length + 1).padStart(5, '0')}`,
-      dispatchId: dispatch.value.id,
-      plate: vehicle.value?.plate || '-',
-      terminalId: dispatch.value.unloadTerminalId,
-      type: '出磅',
-      gross: +(13 + dispatch.value.quantity - loss).toFixed(2),
-      tare: 13,
-      net: +(dispatch.value.quantity - loss).toFixed(2),
-      time: dispatch.value.unloadTime,
-      operator: randomName()
-    })
+    flowConfirmUnload(dispatch.value)
     ElMessage.success('卸货确认成功，本次运输完成')
+  }).catch(() => {})
+}
+
+function resume() {
+  ElMessageBox.confirm(`确认调度单 ${dispatch.value.id} 恢复运输？`, '恢复运输', { type: 'warning' }).then(() => {
+    resumeDispatch(dispatch.value)
+    ElMessage.success('已恢复运输')
   }).catch(() => {})
 }
 
@@ -223,19 +230,7 @@ function reportException() {
     inputPattern: /.{2,}/,
     inputErrorMessage: '描述至少 2 个字符'
   }).then(({ value }) => {
-    dispatch.value.status = 'exception'
-    db.exceptions.unshift({
-      id: `YC-${String(db.exceptions.length + 1).padStart(4, '0')}`,
-      dispatchId: dispatch.value.id,
-      type: 'other',
-      level: 'medium',
-      status: 'pending',
-      occurTime: dayjs().format('YYYY-MM-DD HH:mm'),
-      handler: '',
-      description: value,
-      result: '',
-      cost: 0
-    })
+    flowReportException(dispatch.value, value)
     ElMessage.warning('异常已上报')
   }).catch(() => {})
 }

@@ -147,6 +147,12 @@
             type="primary"
             @click="closeException(current)"
           >关闭归档</el-button>
+          <el-button
+            v-if="relatedDispatch?.status === 'exception'"
+            type="success"
+            plain
+            @click="resume"
+          >恢复运输</el-button>
         </div>
       </div>
     </el-drawer>
@@ -156,11 +162,12 @@
 <script setup>
 defineOptions({ name: 'Exception' })
 import { ref, reactive, computed, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Refresh } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db } from '@/mock'
+import { resumeDispatch } from '@/mock/flow'
 import { formatNum } from '@/utils'
 import { useTokens } from '@/utils/tokens'
 
@@ -246,6 +253,18 @@ const stepActive = computed(() => {
   return 4
 })
 
+/** 关联调度单（用于判断是否可恢复运输） */
+const relatedDispatch = computed(() =>
+  current.value ? db.dispatches.find((d) => d.id === current.value.dispatchId) : null
+)
+
+function resume() {
+  const d = relatedDispatch.value
+  if (!d || d.status !== 'exception') return
+  resumeDispatch(d)
+  ElMessage.success(`调度单 ${d.id} 已恢复运输`)
+}
+
 function accept() {
   if (!handleForm.handler) {
     ElMessage.warning('请先填写处理人')
@@ -274,6 +293,18 @@ function closeException(row) {
   if (current.value?.id === row.id) {
     handleForm.handler = row.handler
     handleForm.result = row.result
+  }
+  // 联动调度单：若仍处异常状态，询问是否恢复运输
+  const d = db.dispatches.find((x) => x.id === row.dispatchId)
+  if (d && d.status === 'exception') {
+    ElMessageBox.confirm(
+      `关联调度单 ${d.id} 仍处于异常状态，是否恢复运输？`,
+      '恢复运输',
+      { confirmButtonText: '恢复', cancelButtonText: '暂不', type: 'warning' }
+    ).then(() => {
+      resumeDispatch(d)
+      ElMessage.success(`调度单 ${d.id} 已恢复运输`)
+    }).catch(() => {})
   }
 }
 </script>

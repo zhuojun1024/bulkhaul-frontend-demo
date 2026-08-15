@@ -55,6 +55,21 @@
               <span>结算中金额</span>
               <b class="num text-warning">{{ formatMoney(pendingAmount) }}</b>
             </div>
+            <div class="biz-item">
+              <span>未付余额</span>
+              <b class="num text-warning">{{ formatMoney(outstanding) }}</b>
+            </div>
+            <div class="biz-item biz-item--block">
+              <div class="biz-item__line">
+                <span>授信占用（额度 {{ formatMoney(customer?.creditLimit) }}）</span>
+                <b class="num" :class="creditPct >= 100 ? 'text-danger' : ''">{{ creditPct }}%</b>
+              </div>
+              <el-progress
+                :percentage="Math.min(100, creditPct)"
+                :status="creditPct >= 100 ? 'exception' : creditPct >= 80 ? 'warning' : 'success'"
+                :stroke-width="6"
+              />
+            </div>
           </div>
         </div>
       </el-col>
@@ -128,6 +143,7 @@ import { useRoute } from 'vue-router'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
+import { outstandingOf } from '@/mock/flow'
 import { formatMoney, formatNum } from '@/utils'
 
 const route = useRoute()
@@ -144,6 +160,12 @@ const totalVolume = computed(() => contracts.value.reduce((s, c) => s + c.quanti
 const pendingAmount = computed(() =>
   settlements.value.filter((s) => s.status !== 'settled').reduce((s, x) => s + (x.totalAmount - x.paidAmount), 0)
 )
+const outstanding = computed(() => outstandingOf(customer.value?.id))
+const creditPct = computed(() => {
+  const limit = customer.value?.creditLimit
+  if (!limit) return 0
+  return Math.round((outstanding.value / limit) * 100)
+})
 
 const typeMap = { shipper: '发货方', consignee: '收货方', both: '双向客户' }
 const statusMap = {
@@ -236,5 +258,19 @@ function levelTag(level) {
 
 .text-warning {
   color: var(--color-warning) !important;
+}
+
+.text-danger {
+  color: var(--color-danger) !important;
+}
+
+.biz-item--block {
+  display: block;
+}
+
+.biz-item__line {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 6px;
 }
 </style>
