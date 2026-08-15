@@ -1,0 +1,267 @@
+{
+  "meta": {
+    "name": "大宗物流综合管理平台 Design Tokens",
+    "version": "1.0.0",
+    "style": "modern",
+    "brandColor": "#2b5ce6",
+    "baseFontSize": "14px",
+    "grid": "8pt",
+    "generated": "2026-08-15",
+    "generator": "ui-design-system skill (adapted for Element Plus)"
+  },
+  "colors": {
+    "primary": {
+      "50": "#f4f7fe",
+      "100": "#eaeffc",
+      "200": "#d5defa",
+      "300": "#b5c6f6",
+      "400": "#95aef2",
+      "500": "#2b5ce6",
+      "600": "#254ec4",
+      "700": "#1e40a1",
+      "800": "#162e73",
+      "900": "#0d1c45",
+      "DEFAULT": "#2b5ce6"
+    },
+    "neutral": {
+      "50": "#f7f8fa",
+      "100": "#f2f3f5",
+      "200": "#e5e6eb",
+      "300": "#c9cdd4",
+      "400": "#a0a2ad",
+      "500": "#86909c",
+      "600": "#6b7785",
+      "700": "#4e5969",
+      "800": "#323d47",
+      "900": "#1d2129",
+      "DEFAULT": "#86909c"
+    },
+    "semantic": {
+      "success": {
+        "scale": {
+          "50": "#f5fcf6",
+          "100": "#e6f8ea",
+          "200": "#c7eed0",
+          "300": "#99e1aa",
+          "400": "#6bd483",
+          "500": "#40c75f",
+          "600": "#00b42a",
+          "700": "#007e1d",
+          "800": "#005a15",
+          "900": "#00360d",
+          "DEFAULT": "#00b42a"
+        },
+        "base": "#00b42a",
+        "text": "#007e1d"
+      },
+      "warning": {
+        "scale": {
+          "50": "#fffaf5",
+          "100": "#fff2e6",
+          "200": "#ffe2c7",
+          "300": "#ffcb99",
+          "400": "#ffb46b",
+          "500": "#ff9e40",
+          "600": "#ff7d00",
+          "700": "#b25800",
+          "800": "#803e00",
+          "900": "#4c2600",
+          "DEFAULT": "#ff7d00"
+        },
+        "base": "#ff7d00",
+        "text": "#b25800"
+      },
+      "danger": {
+        "scale": {
+          "50": "#fff7f7",
+          "100": "#feecec",
+          "200": "#fdd5d5",
+          "300": "#fbb2b2",
+          "400": "#f99090",
+          "500": "#f86f6f",
+          "600": "#f53f3f",
+          "700": "#ac2c2c",
+          "800": "#7a2020",
+          "900": "#4a1313",
+          "DEFAULT": "#f53f3f"
+        },
+        "base": "#f53f3f",
+        "text": "#ac2c2c"
+      },
+      "info": {
+        "scale": {
+          "50": "#fafbfb",
+          "100": "#f3f4f5",
+          "200": "#e4e7e9",
+          "300": "#cfd3d7",
+          "400": "#b9bfc6",
+          "500": "#a4acb5",
+          "600": "#86909c",
+          "700": "#5e656d",
+          "800": "#43484e",
+          "900": "#282b2f",
+          "DEFAULT": "#86909c"
+        },
+        "base": "#86909c",
+        "text": "#5e656d"
+      }
+    },
+    "surface": {
+      "page": "#f4f6fa",
+      "card": "#ffffff",
+      "hover": "#f2f6ff",
+      "mask": "rgba(0, 0, 0, 0.5)",
+      "divider": "#e5e6eb"
+    },
+    "sidebar": {
+      "bg": "#101a33",
+      "active": "rgba(43, 92, 230, 0.9)"
+    }
+  },
+  "typography": {
+    "fontFamily": {
+      "sans": "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif",
+      "mono": "'JetBrains Mono', 'Fira Code', Consolas, Monaco, monospace",
+      "numeric": "'DIN Alternate', 'Bahnschrift', -apple-system, sans-serif"
+    },
+    "fontSize": {
+      "xs": "12px",
+      "sm": "13px",
+      "base": "14px",
+      "lg": "15px",
+      "xl": "16px",
+      "2xl": "18px",
+      "3xl": "20px",
+      "4xl": "24px",
+      "5xl": "30px"
+    },
+    "fontWeight": {
+      "regular": 400,
+      "medium": 500,
+      "semibold": 600,
+      "bold": 700
+    },
+    "lineHeight": {
+      "tight": 1.25,
+      "normal": 1.5,
+      "relaxed": 1.75
+    }
+  },
+  "spacing": {
+    "scale": {
+      "0": "0px",
+      "1": "1px",
+      "2": "2px",
+      "4": "4px",
+      "8": "8px",
+      "12": "12px",
+      "16": "16px",
+      "20": "20px",
+      "24": "24px",
+      "32": "32px",
+      "40": "40px",
+      "48": "48px",
+      "64": "64px"
+    },
+    "semantic": {
+      "xs": "4px",
+      "sm": "8px",
+      "md": "12px",
+      "lg": "16px",
+      "xl": "24px",
+      "2xl": "32px",
+      "3xl": "48px"
+    }
+  },
+  "borders": {
+    "radius": {
+      "sm": "4px",
+      "base": "6px",
+      "md": "8px",
+      "lg": "10px",
+      "full": "9999px"
+    },
+    "width": {
+      "thin": "1px",
+      "medium": "2px",
+      "thick": "4px"
+    }
+  },
+  "shadows": {
+    "sm": "0 1px 2px rgba(16, 24, 40, 0.05)",
+    "md": "0 2px 8px rgba(16, 24, 40, 0.08)",
+    "lg": "0 4px 16px rgba(16, 24, 40, 0.10)",
+    "xl": "0 8px 24px rgba(16, 24, 40, 0.12)",
+    "2xl": "0 16px 48px rgba(16, 24, 40, 0.16)",
+    "inner": "inset 0 2px 4px rgba(16, 24, 40, 0.06)"
+  },
+  "animation": {
+    "duration": {
+      "fast": "150ms",
+      "base": "250ms",
+      "slow": "350ms",
+      "slower": "500ms"
+    },
+    "easing": {
+      "standard": "cubic-bezier(0.645, 0.045, 0.355, 1)",
+      "ease-in": "cubic-bezier(0.32, 0, 0.67, 0)",
+      "ease-out": "cubic-bezier(0.33, 1, 0.68, 1)",
+      "ease-in-out": "cubic-bezier(0.65, 0, 0.35, 1)"
+    }
+  },
+  "zIndex": {
+    "base": 0,
+    "dropdown": 100,
+    "sticky": 200,
+    "overlay": 1000,
+    "modal": 1100,
+    "popover": 1200,
+    "tooltip": 1300,
+    "notification": 1400
+  },
+  "breakpoints": {
+    "xs": "480px",
+    "sm": "640px",
+    "md": "768px",
+    "lg": "1024px",
+    "xl": "1280px",
+    "2xl": "1536px"
+  },
+  "sizing": {
+    "sidebar": {
+      "expanded": "224px",
+      "collapsed": "64px"
+    },
+    "navbar": {
+      "height": "56px"
+    },
+    "tagsView": {
+      "height": "40px"
+    },
+    "button": {
+      "sm": "32px",
+      "md": "40px",
+      "lg": "48px"
+    },
+    "input": {
+      "sm": "32px",
+      "md": "40px",
+      "lg": "48px"
+    },
+    "icon": {
+      "sm": "16px",
+      "md": "20px",
+      "lg": "24px",
+      "xl": "32px"
+    }
+  },
+  "elementPlus": {
+    "colorPrimary": "#2b5ce6",
+    "colorPrimary-light-3": "#6b8dee",
+    "colorPrimary-light-5": "#95aef2",
+    "colorPrimary-light-7": "#bfcef8",
+    "colorPrimary-light-8": "#d5defa",
+    "colorPrimary-light-9": "#eaeffc",
+    "colorPrimary-dark-2": "#224ab8"
+  }
+}

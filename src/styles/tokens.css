@@ -1,0 +1,253 @@
+/* ==========================================================
+ * Design Tokens · 大宗物流综合管理平台
+ * ------------------------------------------------------------
+ * 品牌色  #2b5ce6    风格  modern    栅格  8pt    基础字号  14px
+ * 生成    2026-08-15 · ui-design-system skill
+ *
+ * 结构:
+ *   1. 原始令牌 —— 色阶 / 中性色 / 语义色阶
+ *   2. 语义令牌 —— 组件使用别名（与现有代码兼容）
+ *   3. 字体 / 间距 / 圆角 / 阴影 / 动效 / 层级 / 尺寸
+ *
+ * 使用规则:
+ *   - 组件样式只允许引用本文件的 var(--*)，禁止硬编码色值
+ *   - 背景用 50–100，基准色用 500/600，小字号文本用 700（AA）
+ * ========================================================== */
+
+:root {
+  /* ================= 1. 颜色 · 品牌主色 ================= */
+  /* 500 为品牌色；50–400 向白混合，600–900 向黑混合 */
+  --color-primary-50: #f4f7fe;
+  --color-primary-100: #eaeffc;
+  --color-primary-200: #d5defa;
+  --color-primary-300: #b5c6f6;
+  --color-primary-400: #95aef2;
+  --color-primary-500: #2b5ce6;
+  --color-primary-600: #254ec4;
+  --color-primary-700: #1e40a1;
+  --color-primary-800: #162e73;
+  --color-primary-900: #0d1c45;
+
+  /* ================= 1. 颜色 · 中性色（Arco 灰阶） ================= */
+  --color-neutral-50: #f7f8fa;
+  --color-neutral-100: #f2f3f5;
+  --color-neutral-200: #e5e6eb;
+  --color-neutral-300: #c9cdd4;
+  --color-neutral-400: #a0a2ad;
+  --color-neutral-500: #86909c;
+  --color-neutral-600: #6b7785;
+  --color-neutral-700: #4e5969;
+  --color-neutral-800: #323d47;
+  --color-neutral-900: #1d2129;
+
+  /* ================= 1. 颜色 · 语义色阶 ================= */
+  /* 基准色在 600（图标/标签/边框）；小字号文本请用 700（WCAG AA） */
+  --color-success-50: #f5fcf6;
+  --color-success-100: #e6f8ea;
+  --color-success-200: #c7eed0;
+  --color-success-300: #99e1aa;
+  --color-success-400: #6bd483;
+  --color-success-500: #40c75f;
+  --color-success-600: #00b42a;
+  --color-success-700: #007e1d;
+  --color-success-800: #005a15;
+  --color-success-900: #00360d;
+
+  --color-warning-50: #fffaf5;
+  --color-warning-100: #fff2e6;
+  --color-warning-200: #ffe2c7;
+  --color-warning-300: #ffcb99;
+  --color-warning-400: #ffb46b;
+  --color-warning-500: #ff9e40;
+  --color-warning-600: #ff7d00;
+  --color-warning-700: #b25800;
+  --color-warning-800: #803e00;
+  --color-warning-900: #4c2600;
+
+  --color-danger-50: #fff7f7;
+  --color-danger-100: #feecec;
+  --color-danger-200: #fdd5d5;
+  --color-danger-300: #fbb2b2;
+  --color-danger-400: #f99090;
+  --color-danger-500: #f86f6f;
+  --color-danger-600: #f53f3f;
+  --color-danger-700: #ac2c2c;
+  --color-danger-800: #7a2020;
+  --color-danger-900: #4a1313;
+
+  --color-info-50: #fafbfb;
+  --color-info-100: #f3f4f5;
+  --color-info-200: #e4e7e9;
+  --color-info-300: #cfd3d7;
+  --color-info-400: #b9bfc6;
+  --color-info-500: #a4acb5;
+  --color-info-600: #86909c;
+  --color-info-700: #5e656d;
+  --color-info-800: #43484e;
+  --color-info-900: #282b2f;
+
+  /* ================= 2. 语义令牌 · 品牌 ================= */
+  --color-primary: var(--color-primary-500);        /* 主色：按钮 / 链接 / 选中态 */
+  --color-primary-hover: var(--color-primary-600);  /* 悬停（加深） */
+  --color-primary-active: var(--color-primary-700); /* 按下 */
+  --color-primary-light: var(--color-primary-100);  /* 浅底：选中背景 / 表格 hover */
+  --color-primary-text: var(--color-primary-700);   /* 主色小字（链接、强调文本） */
+
+  /* ================= 2. 语义令牌 · 状态 ================= */
+  --color-success: var(--color-success-600);
+  --color-success-bg: var(--color-success-50);
+  --color-success-text: var(--color-success-700);
+
+  --color-warning: var(--color-warning-600);
+  --color-warning-bg: var(--color-warning-50);
+  --color-warning-text: var(--color-warning-700);
+
+  --color-danger: var(--color-danger-600);
+  --color-danger-bg: var(--color-danger-50);
+  --color-danger-text: var(--color-danger-700);
+
+  --color-info: var(--color-info-600);
+  --color-info-bg: var(--color-info-50);
+  --color-info-text: var(--color-info-700);
+
+  /* ================= 2. 语义令牌 · 图表补充色 ================= */
+  /* ECharts 分类色板补充色（语义色之外的第 6–8 序列色） */
+  --color-chart-purple: #722ed1;
+  --color-chart-cyan: #13c2c2;
+  --color-chart-pink: #eb2f96;
+
+  /* ================= 2. 语义令牌 · 表面 ================= */
+  --bg-page: #f4f6fa;
+  --bg-card: #ffffff;
+  --bg-hover: #f2f6ff;
+  --bg-mask: rgba(0, 0, 0, 0.5);
+  --border-color: var(--color-neutral-200);
+  --border-color-light: var(--color-neutral-100);
+
+  /* ================= 2. 语义令牌 · 文本 ================= */
+  --text-primary: var(--color-neutral-900);       /* 标题 */
+  --text-regular: var(--color-neutral-700);       /* 正文 */
+  --text-secondary: var(--color-neutral-500);     /* 次要（仅装饰性/低重要文本） */
+  --text-placeholder: var(--color-neutral-400);   /* 占位符 */
+  --text-disabled: var(--color-neutral-300);      /* 禁用 */
+  --text-inverse: #ffffff;                        /* 深色底上的文字 */
+
+  /* ================= 2. 语义令牌 · 布局 ================= */
+  --sidebar-bg: #101a33;
+  --sidebar-bg-active: rgba(43, 92, 230, 0.9);
+  --sidebar-text: #9aa5bd;
+  --sidebar-width: 224px;
+  --sidebar-width-collapsed: 64px;
+  --navbar-height: 56px;
+  --tagsview-height: 40px;
+
+  /* ================= 3. 字体 ================= */
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', Consolas, Monaco, monospace;
+  --font-numeric: 'DIN Alternate', 'Bahnschrift', -apple-system, sans-serif;
+
+  --text-size-xs: 12px;
+  --text-size-sm: 13px;
+  --text-size-base: 14px;
+  --text-size-lg: 15px;
+  --text-size-xl: 16px;
+  --text-size-2xl: 18px;
+  --text-size-3xl: 20px;
+  --text-size-4xl: 24px;
+  --text-size-5xl: 30px;
+
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  --line-height-tight: 1.25;
+  --line-height-normal: 1.5;
+  --line-height-relaxed: 1.75;
+
+  /* ================= 4. 间距（8pt 栅格） ================= */
+  --space-0: 0;
+  --space-1: 1px;
+  --space-2: 2px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-20: 20px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-40: 40px;
+  --space-48: 48px;
+  --space-64: 64px;
+
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 24px;
+  --space-2xl: 32px;
+  --space-3xl: 48px;
+
+  /* ================= 5. 圆角 / 边框 ================= */
+  --radius-sm: 4px;
+  --radius-base: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-full: 9999px;
+
+  --border-width: 1px;
+  --border-width-thick: 2px;
+
+  /* ================= 6. 阴影 ================= */
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.05);
+  --shadow-md: 0 2px 8px rgba(16, 24, 40, 0.08);
+  --shadow-lg: 0 4px 16px rgba(16, 24, 40, 0.1);
+  --shadow-xl: 0 8px 24px rgba(16, 24, 40, 0.12);
+  --shadow-2xl: 0 16px 48px rgba(16, 24, 40, 0.16);
+  --shadow-inner: inset 0 2px 4px rgba(16, 24, 40, 0.06);
+
+  /* ================= 7. 动效 ================= */
+  --duration-fast: 150ms;
+  --duration-base: 250ms;
+  --duration-slow: 350ms;
+  --duration-slower: 500ms;
+
+  --ease-standard: cubic-bezier(0.645, 0.045, 0.355, 1);
+  --ease-out: cubic-bezier(0.33, 1, 0.68, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+
+  --transition-base: all var(--duration-base) var(--ease-standard);
+  --transition-fast: all var(--duration-fast) var(--ease-standard);
+
+  /* ================= 8. 层级 ================= */
+  /* Element Plus 弹层自管 2000+ z-index，自定义元素请勿超过 1400 */
+  --z-base: 0;
+  --z-dropdown: 100;
+  --z-sticky: 200;
+  --z-overlay: 1000;
+  --z-modal: 1100;
+  --z-popover: 1200;
+  --z-tooltip: 1300;
+  --z-notification: 1400;
+
+  /* ================= 9. 组件尺寸 ================= */
+  --button-height-sm: 32px;
+  --button-height-md: 40px;
+  --button-height-lg: 48px;
+  --input-height-sm: 32px;
+  --input-height-md: 40px;
+  --input-height-lg: 48px;
+  --icon-size-sm: 16px;
+  --icon-size-md: 20px;
+  --icon-size-lg: 24px;
+  --icon-size-xl: 32px;
+
+  /* ================= 10. 断点（仅文档参考，CSS 变量不能用于媒体查询） ================= */
+  --breakpoint-xs: 480px;
+  --breakpoint-sm: 640px;
+  --breakpoint-md: 768px;
+  --breakpoint-lg: 1024px;
+  --breakpoint-xl: 1280px;
+  --breakpoint-2xl: 1536px;
+}
