@@ -20,6 +20,8 @@ db.users = Array.from({ length: 15 }, (_, i) => {
     username: i === 0 ? 'admin' : 'user' + String(i + 1).padStart(2, '0'),
     name: i === 0 ? '张建国' : randomName(),
     role,
+    // 演示环境统一密码
+    password: '123456',
     phone: '138' + String(randInt(10000000, 99999999)),
     email: (i === 0 ? 'admin' : 'user' + String(i + 1).padStart(2, '0')) + '@blms.com',
     status: i === 12 ? 'disabled' : 'active',

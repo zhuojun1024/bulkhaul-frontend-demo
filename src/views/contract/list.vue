@@ -110,12 +110,12 @@
             <template #default="{ row }">
               <el-button link type="primary" size="small" @click.stop="goDetail(row)">详情</el-button>
               <el-button
-                v-if="row.status === 'pending'"
+                v-if="row.status === 'pending' && can('contract-approve')"
                 link type="success" size="small"
-                @click.stop="approve(row)"
+                @click.stop="openApprove(row)"
               >审批</el-button>
               <el-button
-                v-if="row.status === 'executing'"
+                v-if="row.status === 'executing' && can('contract')"
                 link type="danger" size="small"
                 @click.stop="terminate(row)"
               >终止</el-button>
@@ -135,6 +135,34 @@
         </div>
       </div>
     </div>
+
+    <!-- 合同审批（通过 / 驳回） -->
+    <el-dialog v-model="approveDialog" title="合同审批" width="480px">
+      <div v-if="approveTarget">
+        <el-descriptions :column="1" border size="small" style="margin-bottom: 16px">
+          <el-descriptions-item label="合同编号">{{ approveTarget.id }}</el-descriptions-item>
+          <el-descriptions-item label="合同名称">{{ approveTarget.name }}</el-descriptions-item>
+          <el-descriptions-item label="金额">{{ formatMoney(approveTarget.amount) }}</el-descriptions-item>
+        </el-descriptions>
+        <el-form label-width="80px">
+          <el-form-item label="审批意见">
+            <el-input
+              v-model="approveComment"
+              type="textarea"
+              :rows="3"
+              placeholder="通过可留空（默认“同意”）；驳回必须填写原因"
+              maxlength="200"
+              show-word-limit
+            />
+          </el-form-item>
+        </el-form>
+      </div>
+      <template #footer>
+        <el-button @click="approveDialog = false">取消</el-button>
+        <el-button type="danger" plain @click="doReject">驳回</el-button>
+        <el-button type="success" @click="doApprove">通过</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -147,11 +175,14 @@ import { Search, Plus, Download, Refresh } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
+import { approveContract, rejectContract } from '@/mock/flow'
 import { formatMoney, formatNum } from '@/utils'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
+import { usePerm } from '@/permission'
 
 const tokens = useTokens()
+const { can } = usePerm()
 
 const router = useRouter()
 const loading = ref(true)
@@ -222,18 +253,31 @@ function progressColor(status) {
   return { executing: tokens.primary, completed: tokens.success, terminated: tokens.danger }[status] || tokens.neutral300
 }
 
-function approve(row) {
-  ElMessageBox.confirm(
-    `确认审批通过合同 ${row.id}？<br/>通过后合同将进入执行状态。`,
-    '合同审批',
-    { dangerouslyUseHTMLString: true, type: 'warning', confirmButtonText: '通过', cancelButtonText: '取消' }
-  )
-    .then(() => {
-      row.status = 'executing'
-      row.startDate = dayjs().format('YYYY-MM-DD')
-      ElMessage.success(`合同 ${row.id} 审批通过`)
-    })
-    .catch(() => {})
+/* ===== 审批（通过 / 驳回） ===== */
+const approveDialog = ref(false)
+const approveTarget = ref(null)
+const approveComment = ref('')
+
+function openApprove(row) {
+  approveTarget.value = row
+  approveComment.value = ''
+  approveDialog.value = true
+}
+
+function doApprove() {
+  approveContract(approveTarget.value, approveComment.value.trim())
+  approveDialog.value = false
+  ElMessage.success(`合同 ${approveTarget.value.id} 审批通过`)
+}
+
+function doReject() {
+  if (!approveComment.value.trim()) {
+    ElMessage.warning('驳回必须填写审批意见（原因）')
+    return
+  }
+  rejectContract(approveTarget.value, approveComment.value.trim())
+  approveDialog.value = false
+  ElMessage.success(`合同 ${approveTarget.value.id} 已驳回，回到草稿`)
 }
 
 function terminate(row) {

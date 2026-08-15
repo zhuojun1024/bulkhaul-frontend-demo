@@ -13,22 +13,22 @@
           </div>
         </div>
         <div class="dispatch-detail__actions">
-          <el-button v-if="dispatch?.status === 'pending'" type="warning" :icon="Box" @click="confirmLoad">
+          <el-button v-if="dispatch?.status === 'pending' && can('dispatch')" type="warning" :icon="Box" @click="confirmLoad">
             确认装货
           </el-button>
-          <el-button v-if="dispatch?.status === 'loading'" type="primary" :icon="Position" @click="depart">
+          <el-button v-if="dispatch?.status === 'loading' && can('dispatch')" type="primary" :icon="Position" @click="depart">
             发车
           </el-button>
-          <el-button v-if="dispatch?.status === 'intransit'" type="success" plain :icon="Position" @click="arrive">
+          <el-button v-if="dispatch?.status === 'intransit' && can('dispatch')" type="success" plain :icon="Position" @click="arrive">
             到达
           </el-button>
-          <el-button v-if="dispatch?.status === 'unloading'" type="success" :icon="CircleCheck" @click="confirmUnload">
+          <el-button v-if="dispatch?.status === 'unloading' && can('dispatch')" type="success" :icon="CircleCheck" @click="confirmUnload">
             确认卸货
           </el-button>
-          <el-button v-if="dispatch?.status === 'exception'" type="warning" plain :icon="RefreshRight" @click="resume">
+          <el-button v-if="dispatch?.status === 'exception' && can('dispatch')" type="warning" plain :icon="RefreshRight" @click="resume">
             恢复运输
           </el-button>
-          <el-button v-if="dispatch && ['pending', 'loading', 'intransit'].includes(dispatch.status)" type="danger" plain :icon="Warning" @click="reportException">
+          <el-button v-if="dispatch && ['pending', 'loading', 'intransit'].includes(dispatch.status) && can('exception')" type="danger" plain :icon="Warning" @click="reportException">
             上报异常
           </el-button>
           <el-button :icon="Printer" @click="printDispatch">打印调度单</el-button>
@@ -155,8 +155,10 @@ import {
 } from '@/mock/flow'
 import { formatMoney } from '@/utils'
 import dayjs from 'dayjs'
+import { usePerm } from '@/permission'
 
 const route = useRoute()
+const { can } = usePerm()
 const loading = ref(true)
 onMounted(() => setTimeout(() => (loading.value = false), 200))
 

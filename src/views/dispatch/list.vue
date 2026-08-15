@@ -83,33 +83,35 @@
           <el-table-column label="操作" width="210" align="center" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" size="small" @click.stop="goDetail(row)">详情</el-button>
+              <template v-if="can('dispatch')">
+                <el-button
+                  v-if="row.status === 'pending'"
+                  link type="warning" size="small"
+                  @click.stop="confirmLoad(row)"
+                >确认装货</el-button>
+                <el-button
+                  v-if="row.status === 'loading'"
+                  link type="primary" size="small"
+                  @click.stop="depart(row)"
+                >发车</el-button>
+                <el-button
+                  v-if="row.status === 'intransit'"
+                  link type="success" size="small"
+                  @click.stop="arrive(row)"
+                >到达</el-button>
+                <el-button
+                  v-if="row.status === 'unloading'"
+                  link type="success" size="small"
+                  @click.stop="confirmUnload(row)"
+                >确认卸货</el-button>
+                <el-button
+                  v-if="row.status === 'exception'"
+                  link type="warning" size="small"
+                  @click.stop="resume(row)"
+                >恢复</el-button>
+              </template>
               <el-button
-                v-if="row.status === 'pending'"
-                link type="warning" size="small"
-                @click.stop="confirmLoad(row)"
-              >确认装货</el-button>
-              <el-button
-                v-if="row.status === 'loading'"
-                link type="primary" size="small"
-                @click.stop="depart(row)"
-              >发车</el-button>
-              <el-button
-                v-if="row.status === 'intransit'"
-                link type="success" size="small"
-                @click.stop="arrive(row)"
-              >到达</el-button>
-              <el-button
-                v-if="row.status === 'unloading'"
-                link type="success" size="small"
-                @click.stop="confirmUnload(row)"
-              >确认卸货</el-button>
-              <el-button
-                v-if="row.status === 'exception'"
-                link type="warning" size="small"
-                @click.stop="resume(row)"
-              >恢复</el-button>
-              <el-button
-                v-if="['pending', 'loading', 'intransit'].includes(row.status)"
+                v-if="['pending', 'loading', 'intransit'].includes(row.status) && can('exception')"
                 link type="danger" size="small"
                 @click.stop="reportException(row)"
               >报异常</el-button>
@@ -151,8 +153,10 @@ import {
 } from '@/mock/flow'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
+import { usePerm } from '@/permission'
 
 const tokens = useTokens()
+const { can } = usePerm()
 
 const router = useRouter()
 const loading = ref(true)

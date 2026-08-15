@@ -82,12 +82,12 @@
             <template #default="{ row }">
               <el-button link type="primary" size="small" @click.stop="goDetail(row)">详情</el-button>
               <el-button
-                v-if="row.status === 'pending'"
+                v-if="row.status === 'pending' && can('dispatch')"
                 link type="warning" size="small"
                 @click.stop="openDispatch(row)"
               >调度</el-button>
               <el-button
-                v-if="row.status === 'pending'"
+                v-if="row.status === 'pending' && can('dispatch')"
                 link type="danger" size="small"
                 @click.stop="cancel(row)"
               >取消</el-button>
@@ -151,8 +151,10 @@ import { createDispatches, creditCheck } from '@/mock/flow'
 import { formatNum } from '@/utils'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
+import { usePerm } from '@/permission'
 
 const tokens = useTokens()
+const { can } = usePerm()
 
 const router = useRouter()
 const loading = ref(true)

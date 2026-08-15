@@ -15,7 +15,7 @@
           </div>
         </div>
         <div class="plan-detail__actions">
-          <el-button v-if="plan?.status === 'pending'" type="primary" :icon="Position" @click="dispatch">
+          <el-button v-if="plan?.status === 'pending' && can('dispatch')" type="primary" :icon="Position" @click="dispatch">
             立即调度
           </el-button>
         </div>
@@ -88,8 +88,10 @@ import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
 import { createDispatches, creditCheck } from '@/mock/flow'
 import { formatNum } from '@/utils'
+import { usePerm } from '@/permission'
 
 const route = useRoute()
+const { can } = usePerm()
 const loading = ref(true)
 onMounted(() => setTimeout(() => (loading.value = false), 200))
 

@@ -15,8 +15,18 @@ const terminals = [
   { id: 'T012', name: '日照港散货码头', type: 'both', region: '华东', address: '山东省日照市东港区', capacity: 35000 }
 ]
 
+/** 场站-仓库关联：有配套仓库的场站，装/卸货时联动出入库（见 flow.warehouseOut/warehouseIn） */
+const TERMINAL_WAREHOUSE = {
+  T001: 'WH001', // 秦皇岛港煤炭码头 → 1 号煤仓
+  T002: 'WH003', // 黄骅港煤炭码头 → 矿石堆场
+  T006: 'WH007', // 鄂尔多斯煤运站 → 煤炭储备库
+  T007: 'WH008', // 神府煤运装车站 → 神木煤炭储备库
+  T012: 'WH005' // 日照港散货码头 → 散货堆场
+}
+
 db.terminals = terminals.map((t, i) => ({
   ...t,
+  warehouseId: TERMINAL_WAREHOUSE[t.id] || null,
   contact: ['王', '张', '刘', '陈', '杨', '赵', '周', '吴', '徐', '孙', '马', '朱'][i] + '站长',
   phone: randomPhone(),
   status: i === 7 ? 'maintenance' : 'operating',

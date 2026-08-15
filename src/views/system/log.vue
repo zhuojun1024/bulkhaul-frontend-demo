@@ -37,7 +37,13 @@
               <span class="log-username">@{{ row.username }}</span>
             </template>
           </el-table-column>
-          <el-table-column prop="action" label="操作内容" min-width="160" />
+          <el-table-column prop="action" label="操作内容" min-width="140" />
+          <el-table-column label="详情" min-width="220" show-overflow-tooltip>
+            <template #default="{ row }">
+              <span v-if="row.detail">{{ row.detail }}</span>
+              <span v-else class="log-empty">—</span>
+            </template>
+          </el-table-column>
           <el-table-column label="模块" width="110" align="center">
             <template #default="{ row }">
               <el-tag size="small" effect="plain">{{ row.module }}</el-tag>
@@ -136,5 +142,9 @@ function exportCsv() {
   font-size: 12px;
   color: var(--text-secondary);
   margin-left: 4px;
+}
+
+.log-empty {
+  color: var(--text-secondary);
 }
 </style>

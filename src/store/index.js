@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { reactive, ref } from 'vue'
+import { db } from '@/mock'
 
 /** 应用全局状态（侧边栏折叠等） */
 export const useAppStore = defineStore('app', () => {
@@ -51,31 +52,37 @@ export const useTagsViewStore = defineStore('tagsView', () => {
   return { visitedTags, cachedViews, addTag, removeTag, closeOthers, closeAll }
 })
 
-/** 用户状态（mock 登录） */
+/** 用户状态（登录态与当前用户信息） */
 export const useUserStore = defineStore('user', () => {
   const token = ref(localStorage.getItem('blms_token') || '')
+  // 刷新后按已存用户名从 mock 用户表恢复（含角色，供菜单/按钮权限使用）
+  const savedUsername = localStorage.getItem('blms_user')
+  const savedUser = savedUsername ? db.users.find((u) => u.username === savedUsername && u.status === 'active') : null
   const userInfo = reactive(
-    token.value
-      ? {
-          name: '张建国',
-          role: '平台管理员',
-          avatar: '',
-          phone: '138****6688'
-        }
+    savedUser
+      ? { name: savedUser.name, username: savedUser.username, role: savedUser.role, phone: savedUser.phone }
       : {}
   )
 
   function login(user) {
-    localStorage.setItem('blms_token', 'mock-token-' + Date.now())
+    localStorage.setItem('blms_token', 'mock-token-' + user.username)
+    localStorage.setItem('blms_user', user.username)
     token.value = localStorage.getItem('blms_token')
-    userInfo.name = user?.name || '张建国'
-    userInfo.role = user?.role || '平台管理员'
+    userInfo.name = user.name
+    userInfo.username = user.username
+    userInfo.role = user.role
+    userInfo.phone = user.phone
     return Promise.resolve(true)
   }
 
   function logout() {
     localStorage.removeItem('blms_token')
+    localStorage.removeItem('blms_user')
     token.value = ''
+    userInfo.name = ''
+    userInfo.username = ''
+    userInfo.role = ''
+    userInfo.phone = ''
   }
 
   return { token, userInfo, login, logout }

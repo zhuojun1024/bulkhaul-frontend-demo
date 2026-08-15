@@ -42,15 +42,30 @@
 <script setup>
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { menuRoutes } from '@/router'
-import { useAppStore } from '@/store'
+import { menuRoutes as allMenuRoutes } from '@/router'
+import { useAppStore, useUserStore } from '@/store'
+import { menuAllowed } from '@/permission'
 import { storeToRefs } from 'pinia'
 
 const route = useRoute()
 const appStore = useAppStore()
+const userStore = useUserStore()
 const { collapsed } = storeToRefs(appStore)
 
 const activeMenu = computed(() => route.meta.activeMenu || route.path)
+
+/** 菜单级权限：按当前角色过滤菜单（空子菜单的父级一并隐藏） */
+const menuRoutes = computed(() =>
+  allMenuRoutes
+    .map((r) => {
+      if (r.children) {
+        const children = r.children.filter((c) => menuAllowed(userStore.userInfo.role, c.path))
+        return children.length ? { ...r, children } : null
+      }
+      return menuAllowed(userStore.userInfo.role, r.path) ? r : null
+    })
+    .filter(Boolean)
+)
 </script>
 
 <style scoped>

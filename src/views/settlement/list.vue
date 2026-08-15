@@ -1,9 +1,9 @@
 <template>
   <div class="page" v-loading="loading">
     <PageHeader title="结算管理" desc="按合同月度汇总运费，对账、结算与逾期跟踪">
-      <el-button type="primary" :icon="DocumentAdd" @click="openGenerate">生成结算单</el-button>
+      <el-button v-if="can('settlement')" type="primary" :icon="DocumentAdd" @click="openGenerate">生成结算单</el-button>
       <el-button :icon="Download" @click="exportCsv">导出</el-button>
-      <el-button :icon="Postcard" @click="$router.push('/settlement/invoice')">发票管理</el-button>
+      <el-button v-if="can('invoice')" :icon="Postcard" @click="$router.push('/settlement/invoice')">发票管理</el-button>
     </PageHeader>
 
     <div class="stat-row">
@@ -84,12 +84,12 @@
             <template #default="{ row }">
               <el-button link type="primary" size="small" @click.stop="goDetail(row)">详情</el-button>
               <el-button
-                v-if="row.status === 'pending'"
+                v-if="row.status === 'pending' && can('settlement')"
                 link type="warning" size="small"
                 @click.stop="startReconcile(row)"
               >对账</el-button>
               <el-button
-                v-if="row.status === 'reconciling'"
+                v-if="row.status === 'reconciling' && can('settlement')"
                 link type="success" size="small"
                 @click.stop="settle(row)"
               >结算</el-button>
@@ -154,11 +154,14 @@ import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
 import { settlementCandidates, generateSettlements, startReconcile as flowStartReconcile, confirmSettle } from '@/mock/flow'
+import { usePerm } from '@/permission'
 import { formatMoney, formatNum } from '@/utils'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
 
 const tokens = useTokens()
+
+const { can } = usePerm()
 
 const router = useRouter()
 const loading = ref(true)

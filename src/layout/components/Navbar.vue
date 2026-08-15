@@ -79,9 +79,10 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import screenfull from 'screenfull'
 import { useAppStore, useUserStore } from '@/store'
 import { storeToRefs } from 'pinia'
-import { db } from '@/mock'
+import { db, find } from '@/mock'
 import { fromNow } from '@/utils'
 import { useTokens } from '@/utils/tokens'
+import dayjs from 'dayjs'
 
 const tokens = useTokens()
 
@@ -133,6 +134,32 @@ const noticeList = computed(() => {
         path: '/settlement'
       })
     )
+  // 到站提醒：在途且 3 小时内到达
+  db.dispatches
+    .filter((d) => d.status === 'intransit' && d.eta && dayjs(d.eta).diff(dayjs(), 'hour') <= 3)
+    .slice(0, 2)
+    .forEach((d) =>
+      list.push({
+        id: 'ar' + d.id,
+        icon: 'Position',
+        color: tokens.success,
+        title: `车辆 ${find.vehicle(d.vehicleId)?.plate || d.vehicleId} 预计 ${d.eta.slice(11, 16)} 到达卸货场站`,
+        time: fromNow(d.eta),
+        path: '/dispatch'
+      })
+    )
+  // 待办提醒：待装货调度单
+  const pendingCount = db.dispatches.filter((d) => d.status === 'pending').length
+  if (pendingCount) {
+    list.push({
+      id: 'pd-pending',
+      icon: 'Van',
+      color: tokens.warning,
+      title: `${pendingCount} 张调度单待装货，请及时安排`,
+      time: '待办',
+      path: '/dispatch'
+    })
+  }
   return list.slice(0, 6)
 })
 

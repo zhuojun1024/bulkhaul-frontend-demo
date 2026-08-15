@@ -16,10 +16,16 @@
           </div>
         </div>
         <div class="settlement-detail__actions">
-          <el-button v-if="settlement?.status === 'pending'" type="warning" :icon="DocumentChecked" @click="startReconcile">
+          <el-button
+            v-if="settlement?.status === 'pending' && can('settlement')"
+            type="warning" :icon="DocumentChecked" @click="startReconcile"
+          >
             发起对账
           </el-button>
-          <el-button v-if="settlement?.status === 'reconciling'" type="success" :icon="CircleCheck" @click="settle">
+          <el-button
+            v-if="settlement?.status === 'reconciling' && can('settlement')"
+            type="success" :icon="CircleCheck" @click="settle"
+          >
             确认结算
           </el-button>
           <el-button :icon="Printer" @click="printBill">打印对账单</el-button>
@@ -97,7 +103,7 @@
               <el-descriptions-item label="开票日期">{{ invoice?.issueDate || '—' }}</el-descriptions-item>
             </el-descriptions>
             <el-button
-              v-if="settlement?.status === 'settled' && settlement?.invoiceStatus === 'not-issued'"
+              v-if="settlement?.status === 'settled' && settlement?.invoiceStatus === 'not-issued' && can('invoice')"
               type="primary"
               size="small"
               style="margin-top: 12px"
@@ -110,7 +116,7 @@
         <div class="panel">
           <div class="panel__header">
             <span class="panel__title">收款记录</span>
-            <el-button v-if="canRecordPayment" type="primary" size="small" :icon="Money" @click="openPayDialog">
+            <el-button v-if="canRecordPayment && can('settlement')" type="primary" size="small" :icon="Money" @click="openPayDialog">
               登记收款
             </el-button>
           </div>
@@ -217,11 +223,12 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, DocumentChecked, CircleCheck, Printer, Money } from '@element-plus/icons-vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
-import { startReconcile as flowStartReconcile, confirmSettle, recordPayment } from '@/mock/flow'
+import { startReconcile as flowStartReconcile, confirmSettle, recordPayment, issueInvoice as flowIssueInvoice } from '@/mock/flow'
+import { usePerm } from '@/permission'
 import { formatMoney, formatNum } from '@/utils'
-import dayjs from 'dayjs'
 
 const route = useRoute()
+const { can } = usePerm()
 const loading = ref(true)
 onMounted(() => setTimeout(() => (loading.value = false), 200))
 
@@ -324,19 +331,8 @@ function settle() {
 }
 
 function issueInvoice() {
-  const s = settlement.value
-  db.invoices.push({
-    id: `FP-${String(db.invoices.length + 1).padStart(4, '0')}`,
-    settlementId: s.id,
-    invoiceNo: '2410' + String(Math.floor(Math.random() * 900000000000) + 100000000000),
-    type: '增值税专用发票',
-    amount: s.totalAmount,
-    issueDate: dayjs().format('YYYY-MM-DD'),
-    status: 'issued',
-    remark: ''
-  })
-  s.invoiceStatus = 'issued'
-  ElMessage.success('发票已开具')
+  const no = flowIssueInvoice(settlement.value)
+  ElMessage.success(`发票已开具：${no}`)
 }
 
 function printBill() {

@@ -74,7 +74,7 @@
             <template #default="{ row }">
               <el-button link type="primary" size="small" @click.stop="openDrawer(row)">处理</el-button>
               <el-button
-                v-if="row.status !== 'closed'"
+                v-if="row.status !== 'closed' && can('exception')"
                 link type="success" size="small"
                 @click.stop="closeException(row)"
               >关闭</el-button>
@@ -133,22 +133,22 @@
 
         <div class="ex-drawer__footer">
           <el-button
-            v-if="current.status === 'pending'"
+            v-if="current.status === 'pending' && can('exception')"
             type="warning"
             @click="accept"
           >受理</el-button>
           <el-button
-            v-if="current.status === 'handling'"
+            v-if="current.status === 'handling' && can('exception')"
             type="success"
             @click="finish"
           >处置完成</el-button>
           <el-button
-            v-if="current.status !== 'closed'"
+            v-if="current.status !== 'closed' && can('exception')"
             type="primary"
             @click="closeException(current)"
           >关闭归档</el-button>
           <el-button
-            v-if="relatedDispatch?.status === 'exception'"
+            v-if="relatedDispatch?.status === 'exception' && can('exception')"
             type="success"
             plain
             @click="resume"
@@ -167,11 +167,13 @@ import { Search, Refresh } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db } from '@/mock'
-import { resumeDispatch } from '@/mock/flow'
+import { resumeDispatch, acceptException, finishException, closeException as flowCloseException } from '@/mock/flow'
 import { formatNum } from '@/utils'
 import { useTokens } from '@/utils/tokens'
+import { usePerm } from '@/permission'
 
 const tokens = useTokens()
+const { can } = usePerm()
 
 const loading = ref(true)
 onMounted(() => setTimeout(() => (loading.value = false), 300))
@@ -270,8 +272,7 @@ function accept() {
     ElMessage.warning('请先填写处理人')
     return
   }
-  current.value.handler = handleForm.handler
-  current.value.status = 'handling'
+  acceptException(current.value, handleForm.handler)
   ElMessage.success(`已受理，处理人：${handleForm.handler}`)
 }
 
@@ -280,15 +281,12 @@ function finish() {
     ElMessage.warning('请填写处理结果')
     return
   }
-  current.value.result = handleForm.result
-  current.value.cost = handleForm.cost
+  finishException(current.value, handleForm.result, handleForm.cost)
   ElMessage.success('处置完成，可关闭归档')
 }
 
 function closeException(row) {
-  row.status = 'closed'
-  if (!row.handler) row.handler = '系统'
-  if (!row.result) row.result = '已处理完毕'
+  flowCloseException(row)
   ElMessage.success(`异常单 ${row.id} 已关闭归档`)
   if (current.value?.id === row.id) {
     handleForm.handler = row.handler

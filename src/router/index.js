@@ -1,5 +1,7 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import Layout from '@/layout/index.vue'
+import { menuAllowed } from '@/permission'
+import { db } from '@/mock'
 
 /**
  * 菜单路由（侧边栏展示）
@@ -252,16 +254,27 @@ const router = createRouter({
   ]
 })
 
-/** 登录守卫：未登录跳转登录页，已登录访问登录页回工作台 */
+/** 登录守卫：未登录跳转登录页；已登录访问登录页回工作台；无菜单权限回工作台 */
 router.beforeEach((to, from, next) => {
   const token = localStorage.getItem('blms_token')
   if (to.path !== '/login' && !token) {
     next({ path: '/login', query: { redirect: to.fullPath } })
-  } else if (to.path === '/login' && token) {
-    next('/workbench')
-  } else {
-    next()
+    return
   }
+  if (to.path === '/login' && token) {
+    next('/workbench')
+    return
+  }
+  // 菜单级权限：详情页跟随所属菜单（meta.activeMenu），其余按自身路径校验
+  const role = localStorage.getItem('blms_user')
+    ? db.users.find((u) => u.username === localStorage.getItem('blms_user'))?.role
+    : ''
+  const menuPath = to.meta.activeMenu || to.path
+  if (role && menuPath !== '/workbench' && !menuAllowed(role, menuPath)) {
+    next('/workbench')
+    return
+  }
+  next()
 })
 
 export default router

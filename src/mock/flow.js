@@ -17,21 +17,64 @@ const contractOf = (id) => db.contracts.find((c) => c.id === id)
 /** 执行中状态（占用车辆/司机） */
 const ACTIVE = ['loading', 'intransit', 'unloading']
 
+/* ========== 审计日志 ========== */
+
+/** 当前操作人（登录时写入，审计日志使用） */
+let operator = { name: '张建国', username: 'admin' }
+export function setOperator(user) {
+  if (user && user.username) operator = { name: user.name || user.username, username: user.username }
+}
+
+/** 写审计日志（状态变更动作实时落日志） */
+export function logAction(module, action, detail, result = 'success') {
+  db.logs.unshift({
+    id: `LOG-${String(db.logs.length + 1).padStart(5, '0')}`,
+    time: dayjs().format('YYYY-MM-DD HH:mm:ss'),
+    user: operator.name,
+    username: operator.username,
+    action,
+    module,
+    detail: detail || '',
+    ip: '192.168.1.100',
+    result
+  })
+}
+
+/** 车辆皮重（10-16t，按车辆 id 确定性派生，与预置磅单口径一致） */
+export function tareOf(vehicle) {
+  if (!vehicle) return 13
+  const n = vehicle.id.split('').reduce((s, ch) => s + ch.charCodeAt(0), 0)
+  return +(10 + (n % 61) / 10).toFixed(2)
+}
+
 /** 登记磅单 */
 function pushWeighing(d, type, net, time) {
   const v = vehicleOf(d.vehicleId)
+  const tare = tareOf(v)
   db.weighings.unshift({
     id: `BZ-${String(db.weighings.length + 1).padStart(5, '0')}`,
     dispatchId: d.id,
     plate: v ? v.plate : '-',
     terminalId: type === '进磅' ? d.loadTerminalId : d.unloadTerminalId,
     type,
-    gross: +(13 + net).toFixed(2),
-    tare: 13,
+    gross: +(tare + net).toFixed(2),
+    tare,
     net: +net.toFixed(2),
     time,
     operator: randomName()
   })
+}
+
+/** 磅单补录：场站操作员对尚无该类型磅单的车次手工录单 */
+export function manualWeighing(dispatchId, type, net) {
+  const d = db.dispatches.find((x) => x.id === dispatchId)
+  if (!d) return { error: '调度单不存在' }
+  if (db.weighings.some((w) => w.dispatchId === dispatchId && w.type === type)) {
+    return { error: `该调度单已存在${type}磅单，不能重复补录` }
+  }
+  pushWeighing(d, type, net, dayjs().format('YYYY-MM-DD HH:mm'))
+  logAction('磅单记录', '磅单补录', `调度单 ${d.id} 补录${type}磅单，净重 ${net} 吨`)
+  return { ok: true }
 }
 
 /** 占用车辆/司机（派车、发车、恢复时） */
@@ -75,13 +118,48 @@ export function rollupContract(contractId) {
   if (c.progress >= 100) c.status = 'completed'
 }
 
-/** 确认装货：pending → loading，登记进磅单 */
+/** 仓储联动：确认装货 → 装货场站（有仓库时）出库，扣减最早批次与仓库占用 */
+function warehouseOut(d) {
+  const t = db.terminals.find((x) => x.id === d.loadTerminalId)
+  const wh = t && t.warehouseId ? db.warehouses.find((w) => w.id === t.warehouseId) : null
+  if (!wh || wh.status !== 'operating') return
+  const batch = db.inventories
+    .filter((i) => i.warehouseId === wh.id && i.commodityId === d.commodityId && i.status === 'normal' && i.quantity > 0)
+    .sort((a, b) => (a.inDate < b.inDate ? -1 : 1))[0]
+  if (batch) batch.quantity = Math.max(0, batch.quantity - d.quantity)
+  wh.used = Math.max(0, wh.used - d.quantity)
+  logAction('仓储管理', '出库', `调度单 ${d.id} 装货：${wh.name} 出库 ${d.quantity} 吨`)
+}
+
+/** 仓储联动：确认卸货 → 卸货场站（有仓库时）入库，按出磅净重生成新批次 */
+function warehouseIn(d) {
+  const t = db.terminals.find((x) => x.id === d.unloadTerminalId)
+  const wh = t && t.warehouseId ? db.warehouses.find((w) => w.id === t.warehouseId) : null
+  if (!wh || wh.status !== 'operating') return
+  const w = db.weighings.find((x) => x.dispatchId === d.id && x.type === '出磅')
+  const qty = w ? w.net : d.quantity
+  db.inventories.unshift({
+    id: `INV-${String(db.inventories.length + 1).padStart(4, '0')}`,
+    warehouseId: wh.id,
+    commodityId: d.commodityId,
+    batch: `B${dayjs().format('YYMMDD')}-${d.id.slice(-3)}`,
+    quantity: qty,
+    inDate: dayjs().format('YYYY-MM-DD'),
+    status: 'normal'
+  })
+  wh.used = Math.min(wh.capacity, wh.used + qty)
+  logAction('仓储管理', '入库', `调度单 ${d.id} 卸货：${wh.name} 入库 ${qty} 吨`)
+}
+
+/** 确认装货：pending → loading，登记进磅单，装货场站出库 */
 export function confirmLoad(d) {
   d.status = 'loading'
   d.loadTime = dayjs().format('YYYY-MM-DD HH:mm')
   d.progress = 5
   pushWeighing(d, '进磅', d.quantity, d.loadTime)
+  warehouseOut(d)
   rollupPlan(d.planId)
+  logAction('场站管理', '确认装货', `调度单 ${d.id} 确认装货（进磅 ${d.quantity} 吨）`)
 }
 
 /** 发车：loading → intransit，占用车辆司机 */
@@ -93,6 +171,7 @@ export function depart(d) {
   d.eta = dayjs().add(Math.round(hours * 60) + 30, 'minute').format('YYYY-MM-DD HH:mm')
   occupyResource(d)
   rollupPlan(d.planId)
+  logAction('调度管理', '车辆发车', `调度单 ${d.id} 发车，预计 ${d.eta} 到达`)
 }
 
 /** 到达：intransit → unloading */
@@ -102,9 +181,10 @@ export function arrive(d) {
   d.speed = 0
   d.eta = dayjs().add(randInt(30, 90), 'minute').format('YYYY-MM-DD HH:mm')
   rollupPlan(d.planId)
+  logAction('调度管理', '到达卸货场', `调度单 ${d.id} 到达，开始卸货`)
 }
 
-/** 确认卸货：unloading → completed，登记出磅单（含 1.5% 损耗），释放资源并回卷 */
+/** 确认卸货：unloading → completed，登记出磅单（含 1.5% 损耗），卸货场站入库，释放资源并回卷 */
 export function confirmUnload(d) {
   d.status = 'completed'
   d.unloadTime = dayjs().format('YYYY-MM-DD HH:mm')
@@ -112,27 +192,51 @@ export function confirmUnload(d) {
   d.speed = 0
   const loss = +(d.quantity * 0.015).toFixed(2)
   pushWeighing(d, '出磅', d.quantity - loss, d.unloadTime)
+  warehouseIn(d)
   releaseResource(d)
   rollupPlan(d.planId)
+  logAction('场站管理', '确认卸货', `调度单 ${d.id} 确认卸货（出磅 ${(d.quantity - loss).toFixed(2)} 吨，损耗 ${loss} 吨）`)
 }
 
-/** 上报异常：→ exception，生成异常单 */
-export function reportException(d, description) {
+/** 上报异常：→ exception，生成异常单；事故类同步生成事故记录 */
+export function reportException(d, description, type = 'other', level = 'medium') {
   d.status = 'exception'
   d.speed = 0
-  db.exceptions.unshift({
+  const e = {
     id: `YC-${String(db.exceptions.length + 1).padStart(4, '0')}`,
     dispatchId: d.id,
-    type: 'other',
-    level: 'medium',
+    type,
+    level,
     status: 'pending',
     occurTime: dayjs().format('YYYY-MM-DD HH:mm'),
     handler: '',
     description,
     result: '',
     cost: 0
-  })
+  }
+  db.exceptions.unshift(e)
+  if (type === 'accident') {
+    const v = vehicleOf(d.vehicleId)
+    const a = {
+      id: `SG-${String(db.accidents.length + 1).padStart(3, '0')}`,
+      time: dayjs().format('YYYY-MM-DD'),
+      type: '碰撞',
+      level: level === 'high' ? '重大' : level === 'medium' ? '较大' : '一般',
+      vehicleId: d.vehicleId,
+      plate: v ? v.plate : '-',
+      location: `调度单 ${d.id} 在途`,
+      description,
+      handling: '处置中',
+      loss: 0,
+      status: 'handling',
+      exceptionId: e.id
+    }
+    db.accidents.unshift(a)
+    e.accidentId = a.id
+  }
   rollupPlan(d.planId)
+  logAction('异常处理', '上报异常', `调度单 ${d.id} 上报异常（${type}），生成异常单 ${e.id}${type === 'accident' ? ' 及事故记录 ' + e.accidentId : ''}`)
+  return e
 }
 
 /** 恢复运输：exception → intransit(已装货) / loading(未装货) */
@@ -148,6 +252,47 @@ export function resumeDispatch(d) {
   }
   occupyResource(d)
   rollupPlan(d.planId)
+  logAction('异常处理', '恢复运输', `调度单 ${d.id} 恢复运输（${d.status === 'intransit' ? '在途' : '装货'}）`)
+}
+
+/* ===== 异常处置（受理/处置/关闭） ===== */
+
+/** 受理异常：pending → handling，指派处理人 */
+export function acceptException(e, handler) {
+  e.handler = handler
+  e.status = 'handling'
+  logAction('异常处理', '受理异常', `异常单 ${e.id} 受理，处理人 ${handler}`)
+}
+
+/** 处置完成：填写处置结果与损失金额 */
+export function finishException(e, result, cost) {
+  e.result = result
+  e.cost = cost || 0
+  if (e.accidentId) {
+    const a = db.accidents.find((x) => x.id === e.accidentId)
+    if (a) {
+      a.handling = result
+      a.loss = cost || 0
+    }
+  }
+  logAction('异常处理', '处置完成', `异常单 ${e.id} 处置完成，损失 ${cost || 0} 元`)
+}
+
+/** 关闭归档：closed；事故类同步结案并更新车辆状态 */
+export function closeException(e) {
+  e.status = 'closed'
+  if (!e.handler) e.handler = '系统'
+  if (!e.result) e.result = '已处理完毕'
+  if (e.accidentId) {
+    const a = db.accidents.find((x) => x.id === e.accidentId)
+    if (a) {
+      a.status = 'closed'
+      a.handling = a.handling || '已结案'
+      const v = vehicleOf(a.vehicleId)
+      if (v && v.status === 'idle') v.status = 'maintenance'
+    }
+  }
+  logAction('异常处理', '关闭异常单', `异常单 ${e.id} 关闭归档${e.accidentId ? `，事故 ${e.accidentId} 结案` : ''}`)
 }
 
 /** 计划调度：生成 count 张调度单，数量按批次均摊，距离取实际线路 */
@@ -189,6 +334,7 @@ export function createDispatches(p, count, vehicleIds = []) {
     created.push(d)
   }
   p.status = 'dispatched'
+  logAction('调度管理', '下发调度单', `计划 ${p.id} 生成 ${created.length} 张调度单`)
   return { created }
 }
 
@@ -278,6 +424,7 @@ export function generateSettlements(keys) {
     }
     created.push(s)
   }
+  if (created.length) logAction('结算管理', '生成结算单', `生成 ${created.length} 张结算单（${created.map((s) => s.billNo).join('、')}）`)
   return created
 }
 
@@ -325,6 +472,7 @@ export function buildReconciliation(s, date) {
 export function startReconcile(s) {
   buildReconciliation(s)
   s.status = 'reconciling'
+  logAction('结算管理', '发起对账', `账单 ${s.billNo} 三方比对完成，${s.reconciliation.diffCount} 车次不一致，损耗 ${s.reconciliation.lossQty} 吨`)
   return s.reconciliation
 }
 
@@ -342,6 +490,7 @@ export function confirmSettle(s) {
   s.status = 'settled'
   s.settleDate = dayjs().format('YYYY-MM-DD')
   s.paidAmount = 0
+  logAction('结算管理', '确认结算', `账单 ${s.billNo} 结算金额 ${formatMoney(s.totalAmount)}`)
 }
 
 /** 登记收款：写入收款流水并更新已付金额，超收按未付余额截断 */
@@ -357,6 +506,7 @@ export function recordPayment(s, amount, method) {
   })
   s.paidAmount += real
   recalcSettlementStatus(s)
+  logAction('结算管理', '登记收款', `账单 ${s.billNo} 收款 ${formatMoney(real)}（${method}）`)
   return real
 }
 
@@ -380,6 +530,42 @@ export function creditCheck(customerId, orderAmount) {
     }
   }
   return { ok: true, message: '' }
+}
+
+/* ===== 合同审批与开票 ===== */
+
+/** 审批通过：pending → executing，记录审批意见 */
+export function approveContract(c, comment) {
+  c.status = 'executing'
+  c.startDate = dayjs().format('YYYY-MM-DD')
+  c.approval = { approver: operator.name, time: dayjs().format('YYYY-MM-DD HH:mm'), comment: comment || '同意' }
+  logAction('合同管理', '审批合同', `合同 ${c.id} 审批通过${comment ? `：${comment}` : ''}`)
+}
+
+/** 审批驳回：pending → draft，必须带驳回原因 */
+export function rejectContract(c, reason) {
+  c.status = 'draft'
+  c.approval = { approver: operator.name, time: dayjs().format('YYYY-MM-DD HH:mm'), comment: `驳回：${reason}` }
+  logAction('合同管理', '审批合同', `合同 ${c.id} 审批驳回：${reason}`, 'fail')
+}
+
+/** 开具发票：结算单 not-issued → issued，生成发票记录 */
+export function issueInvoice(s) {
+  const fpSeq = db.invoices.length + 1
+  const invoiceNo = '2410' + String(100000000000 + ((s.id.charCodeAt(3) * 7919 + fpSeq * 104729) % 900000000000))
+  db.invoices.push({
+    id: `FP-${String(fpSeq).padStart(4, '0')}`,
+    settlementId: s.id,
+    invoiceNo,
+    type: '增值税专用发票',
+    amount: s.totalAmount,
+    issueDate: dayjs().format('YYYY-MM-DD'),
+    status: 'issued',
+    remark: ''
+  })
+  s.invoiceStatus = 'issued'
+  logAction('发票管理', '开具发票', `账单 ${s.billNo} 开具发票 ${invoiceNo}，金额 ${formatMoney(s.totalAmount)}`)
+  return invoiceNo
 }
 
 /** 启动时全量校准：计划/合同进度与调度实际执行对齐 */

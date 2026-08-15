@@ -1,6 +1,7 @@
 <template>
   <div class="page" v-loading="loading">
-    <PageHeader title="磅单记录" desc="进出磅称重记录，自动关联调度单，支持导出对账">
+    <PageHeader title="磅单记录" desc="进出磅称重记录，自动关联调度单，支持补录与导出对账">
+      <el-button v-if="can('weighing')" type="primary" :icon="Plus" @click="openManual">磅单补录</el-button>
       <el-button :icon="Download" @click="exportCsv">导出</el-button>
     </PageHeader>
 
@@ -81,6 +82,33 @@
         </div>
       </div>
     </div>
+
+    <!-- 磅单补录 -->
+    <el-dialog v-model="manualDialog" title="磅单补录" width="480px">
+      <el-form label-width="90px">
+        <el-form-item label="调度单号">
+          <el-select v-model="manual.dispatchId" filterable placeholder="请选择调度单" style="width: 100%" @change="onManualDispatch">
+            <el-option v-for="d in manualDispatchOptions" :key="d.id" :label="`${d.id}（${d.plate}）`" :value="d.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="磅单类型">
+          <el-radio-group v-model="manual.type">
+            <el-radio-button value="进磅">进磅</el-radio-button>
+            <el-radio-button value="出磅">出磅</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="净重(吨)">
+          <el-input-number v-model="manual.net" :min="0.1" :max="100" :precision="2" :step="0.5" style="width: 100%" />
+        </el-form-item>
+        <el-form-item label="皮重(吨)">
+          <span class="num">{{ manual.tare || '—' }}（按车辆档案自动带出）</span>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="manualDialog = false">取消</el-button>
+        <el-button type="primary" @click="submitManual">确认补录</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -89,16 +117,63 @@ defineOptions({ name: 'Weighing' })
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Search, Download, Refresh } from '@element-plus/icons-vue'
+import { Search, Download, Refresh, Plus } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import { db, find } from '@/mock'
+import { manualWeighing, tareOf } from '@/mock/flow'
 import { formatNum } from '@/utils'
 import dayjs from 'dayjs'
+import { usePerm } from '@/permission'
+
+const { can } = usePerm()
 
 const router = useRouter()
 const loading = ref(true)
 onMounted(() => setTimeout(() => (loading.value = false), 300))
+
+/* ===== 磅单补录 ===== */
+const manualDialog = ref(false)
+const manual = reactive({ dispatchId: '', type: '进磅', net: 35, tare: 0 })
+
+/** 可补录的调度单：尚无对应类型磅单 */
+const manualDispatchOptions = computed(() =>
+  db.dispatches
+    .filter((d) => !db.weighings.some((w) => w.dispatchId === d.id && w.type === manual.type))
+    .slice(0, 100)
+    .map((d) => ({ ...d, plate: find.vehicle(d.vehicleId)?.plate || '-' }))
+)
+
+function openManual() {
+  manual.dispatchId = ''
+  manual.type = '进磅'
+  manual.net = 35
+  manual.tare = 0
+  manualDialog.value = true
+}
+
+function onManualDispatch(id) {
+  const d = db.dispatches.find((x) => x.id === id)
+  if (!d) return
+  manual.tare = tareOf(find.vehicle(d.vehicleId))
+  // 默认值：进磅取调度量，出磅参考进磅净重
+  const inW = db.weighings.find((w) => w.dispatchId === id && w.type === '进磅')
+  manual.net = manual.type === '进磅' ? d.quantity : inW ? inW.net : d.quantity
+}
+
+function submitManual() {
+  if (!manual.dispatchId) {
+    ElMessage.warning('请选择调度单')
+    return
+  }
+  const { error } = manualWeighing(manual.dispatchId, manual.type, manual.net)
+  if (error) {
+    ElMessage.warning(error)
+    return
+  }
+  manualDialog.value = false
+  ElMessage.success('磅单已补录')
+}
 
 const filter = reactive({ keyword: '', type: '', terminalId: '', dateRange: [] })
 const page = ref(1)
