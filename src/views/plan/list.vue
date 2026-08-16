@@ -112,22 +112,32 @@
     <el-dialog v-model="dispatchVisible" title="计划调度" width="520px">
       <div v-if="currentPlan" class="dispatch-dialog">
         <el-alert :title="'计划 ' + currentPlan.id + '：' + (find.commodity(currentPlan.commodityId)?.name || '') + ' ' + formatNum(currentPlan.quantity) + ' 吨'" type="info" :closable="false" show-icon />
+        <el-alert
+          v-if="!isRoad"
+          :title="currentPlan.mode + '方式按运输单元执行（车号/船名/管段），无需匹配车辆与司机，不产生公路磅单'"
+          type="warning"
+          :closable="false"
+          show-icon
+          style="margin-top: 10px"
+        />
         <el-form label-width="90px" style="margin-top: 16px">
-          <el-form-item label="调度车次">
+          <el-form-item :label="isRoad ? '调度车次' : '运输单元数'">
             <el-input-number v-model="dispatchCount" :min="1" :max="10" />
-            <span class="dispatch-dialog__tip">每车约 {{ perTripQuantity }} 吨</span>
+            <span class="dispatch-dialog__tip">每{{ isRoad ? '车' : '单元' }}约 {{ perTripQuantity }} 吨</span>
           </el-form-item>
-          <el-form-item label="车辆来源">
-            <el-radio-group v-model="vehicleSource">
-              <el-radio value="auto">自动匹配空闲车辆</el-radio>
-              <el-radio value="manual">手动指定</el-radio>
-            </el-radio-group>
-          </el-form-item>
-          <el-form-item v-if="vehicleSource === 'manual'" label="选择车辆">
-            <el-select v-model="selectedVehicles" multiple filterable placeholder="选择车辆" style="width: 100%">
-              <el-option v-for="v in idleVehicles" :key="v.id" :label="v.plate + '（' + v.type + '）'" :value="v.id" />
-            </el-select>
-          </el-form-item>
+          <template v-if="isRoad">
+            <el-form-item label="车辆来源">
+              <el-radio-group v-model="vehicleSource">
+                <el-radio value="auto">自动匹配空闲车辆</el-radio>
+                <el-radio value="manual">手动指定</el-radio>
+              </el-radio-group>
+            </el-form-item>
+            <el-form-item v-if="vehicleSource === 'manual'" label="选择车辆">
+              <el-select v-model="selectedVehicles" multiple filterable placeholder="选择车辆" style="width: 100%">
+                <el-option v-for="v in idleVehicles" :key="v.id" :label="v.plate + '（' + v.type + '）'" :value="v.id" />
+              </el-select>
+            </el-form-item>
+          </template>
         </el-form>
       </div>
       <template #footer>
@@ -147,7 +157,7 @@ import { Search, Plus, Download, Refresh } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
-import { createDispatches, creditCheck } from '@/mock/flow'
+import { createDispatches, creditCheck, isRoadMode } from '@/mock/flow'
 import { formatNum } from '@/utils'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
@@ -237,7 +247,10 @@ const idleVehicles = computed(() =>
   db.vehicles.filter((v) => v.status === 'idle' && v.type !== '铁路敞车' && v.type !== '散货船')
 )
 
-/** 每车均摊数量（批次量 / 车次） */
+/** 公路口径（公路/多式联运）才需要匹配车辆司机 */
+const isRoad = computed(() => isRoadMode(currentPlan.value?.mode))
+
+/** 每车/每单元均摊数量（批次量 / 车次） */
 const perTripQuantity = computed(() => {
   if (!currentPlan.value || !dispatchCount.value) return 0
   return Math.max(1, Math.round(currentPlan.value.quantity / dispatchCount.value))
@@ -245,15 +258,15 @@ const perTripQuantity = computed(() => {
 
 function openDispatch(row) {
   currentPlan.value = row
-  // 默认车次按单车 35 吨估算
-  dispatchCount.value = Math.min(10, Math.max(1, Math.round(row.quantity / 35)))
+  // 公路口径默认车次按单车 35 吨估算；非公路口径默认单个运输单元
+  dispatchCount.value = isRoadMode(row.mode) ? Math.min(10, Math.max(1, Math.round(row.quantity / 35))) : 1
   vehicleSource.value = 'auto'
   selectedVehicles.value = []
   dispatchVisible.value = true
 }
 
 function confirmDispatch() {
-  if (vehicleSource.value === 'manual' && selectedVehicles.value.length < dispatchCount.value) {
+  if (isRoad.value && vehicleSource.value === 'manual' && selectedVehicles.value.length < dispatchCount.value) {
     ElMessage.warning(`请至少选择 ${dispatchCount.value} 辆车`)
     return
   }

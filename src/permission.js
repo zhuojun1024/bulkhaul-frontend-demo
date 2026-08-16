@@ -13,25 +13,26 @@ import { useUserStore } from '@/store'
  *  settlement 结算（生成/对账/结算/收款）  invoice 开票
  *  weighing   磅单补录           warehouse  库存锁定/解锁
  */
+/** 注意：路径必须与 router 实际注册路径一致（如 /contract，而非 /transport/contract） */
 export const ROLE_MENUS = {
   平台管理员: null,
   只读用户: null,
   调度员: [
     '/workbench',
     '/monitor',
-    '/transport/contract',
-    '/transport/plan',
-    '/transport/dispatch',
-    '/transport/track',
-    '/transport/exception',
-    '/resource/vehicle',
-    '/resource/driver',
-    '/resource/terminal',
-    '/resource/terminal/weighing'
+    '/contract',
+    '/plan',
+    '/dispatch',
+    '/track',
+    '/exception',
+    '/vehicle',
+    '/driver',
+    '/terminal',
+    '/terminal/weighing'
   ],
-  结算专员: ['/workbench', '/monitor', '/transport/contract', '/business/customer', '/business/settlement', '/business/settlement/invoice'],
-  场站操作员: ['/workbench', '/transport/dispatch', '/resource/terminal', '/resource/terminal/weighing', '/resource/warehouse', '/resource/warehouse/inventory'],
-  安全管理员: ['/workbench', '/transport/dispatch', '/transport/exception', '/safety']
+  结算专员: ['/workbench', '/monitor', '/contract', '/customer', '/settlement', '/settlement/invoice', '/report'],
+  场站操作员: ['/workbench', '/dispatch', '/terminal', '/terminal/weighing', '/warehouse', '/warehouse/inventory'],
+  安全管理员: ['/workbench', '/dispatch', '/exception', '/safety']
 }
 
 export const ROLE_ACTIONS = {

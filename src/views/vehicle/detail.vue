@@ -4,7 +4,7 @@
       <div class="vehicle-detail__head">
         <el-button :icon="ArrowLeft" circle @click="$router.back()" />
         <div class="vehicle-detail__icon">
-          <el-icon :size="30" color="var(--color-primary)"><Truck /></el-icon>
+          <el-icon :size="30" color="var(--color-primary)"><Van /></el-icon>
         </div>
         <div>
           <div class="vehicle-detail__name">

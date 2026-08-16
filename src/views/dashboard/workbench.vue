@@ -7,8 +7,8 @@
         <p class="welcome__date">
           {{ todayStr }} · {{ weekStr }}
           <el-tag size="small" effect="dark" class="welcome__weather">
-            <el-icon><Sunny /></el-icon>
-            北京 26℃ 晴 · 适宜运输
+            <el-icon><component :is="weatherIcon" /></el-icon>
+            {{ weather.city }} {{ weather.temp }}℃ {{ weather.cond }} · {{ weather.tip }}
           </el-tag>
         </p>
         <div class="welcome__stats">
@@ -85,7 +85,7 @@
             <el-link type="primary" :underline="false" @click="$router.push('/system/log')">更多</el-link>
           </div>
           <div class="panel__body">
-            <div v-for="n in notices" :key="n.id" class="notice-item">
+            <div v-for="n in db.announcements" :key="n.id" class="notice-item">
               <el-tag size="small" :type="noticeTagType(n.tag)" effect="light" class="notice-item__tag">
                 {{ n.tag }}
               </el-tag>
@@ -139,11 +139,11 @@
 defineOptions({ name: 'Workbench' })
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { Plus, Position, MapLocation, ArrowRight, Sunny } from '@element-plus/icons-vue'
+import { Plus, Position, MapLocation, ArrowRight } from '@element-plus/icons-vue'
 import StatCard from '@/components/StatCard.vue'
 import ChartCard from '@/components/ChartCard.vue'
 import StatusTag from '@/components/StatusTag.vue'
-import { db, find, dashboard, workbenchTodos, notices } from '@/mock'
+import { db, find, dashboard, workbenchTodos, weatherOf } from '@/mock'
 import { useUserStore } from '@/store'
 import { formatMoney, formatNum } from '@/utils'
 import dayjs from 'dayjs'
@@ -167,6 +167,8 @@ const greeting = computed(() => {
 })
 const todayStr = computed(() => dayjs().format('YYYY 年 MM 月 DD 日'))
 const weekStr = computed(() => '星期' + '日一二三四五六'[dayjs().day()])
+const weather = computed(() => weatherOf(dayjs().format('YYYY-MM-DD')))
+const weatherIcon = computed(() => (['小雨', '雷阵雨'].includes(weather.value.cond) ? 'Umbrella' : weather.value.cond === '阴' ? 'Cloudy' : 'Sunny'))
 
 /* ===== 指标 ===== */
 const todayDispatches = computed(() =>

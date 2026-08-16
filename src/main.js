@@ -9,10 +9,14 @@ import 'nprogress/nprogress.css'
 
 import App from './App.vue'
 import router from './router'
+import { enableAutoSave } from './mock/persist'
 import './styles/tokens.css'
 import './styles/index.css'
 
 NProgress.configure({ showSpinner: false, trickle: false })
+
+// 数据持久化：深度监听 db 变化，防抖写入 localStorage（浏览器环境生效）
+enableAutoSave()
 
 const app = createApp(App)
 

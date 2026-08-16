@@ -62,7 +62,10 @@
             <el-dropdown-item command="profile">
               <el-icon><User /></el-icon>个人信息
             </el-dropdown-item>
-            <el-dropdown-item command="logout" divided>
+            <el-dropdown-item command="reset" divided>
+              <el-icon><RefreshRight /></el-icon>重置演示数据
+            </el-dropdown-item>
+            <el-dropdown-item command="logout">
               <el-icon><SwitchButton /></el-icon>退出登录
             </el-dropdown-item>
           </el-dropdown-menu>
@@ -80,6 +83,7 @@ import screenfull from 'screenfull'
 import { useAppStore, useUserStore } from '@/store'
 import { storeToRefs } from 'pinia'
 import { db, find } from '@/mock'
+import { resetDb } from '@/mock/persist'
 import { fromNow } from '@/utils'
 import { useTokens } from '@/utils/tokens'
 import dayjs from 'dayjs'
@@ -186,6 +190,16 @@ function onCommand(cmd) {
       '个人信息',
       { dangerouslyUseHTMLString: true, confirmButtonText: '知道了' }
     )
+  } else if (cmd === 'reset') {
+    ElMessageBox.confirm(
+      '将清除本地保存的演示数据（localStorage）并恢复初始种子数据，页面将自动刷新。确定继续？',
+      '重置演示数据',
+      { type: 'warning', confirmButtonText: '重置', cancelButtonText: '取消' }
+    )
+      .then(() => {
+        resetDb()
+      })
+      .catch(() => {})
   } else if (cmd === 'logout') {
     ElMessageBox.confirm('确定要退出登录吗？', '提示', {
       type: 'warning',

@@ -121,7 +121,7 @@ import { Search, Download, Refresh, Plus } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import { db, find } from '@/mock'
-import { manualWeighing, tareOf } from '@/mock/flow'
+import { manualWeighing, tareOf, isRoadMode } from '@/mock/flow'
 import { formatNum } from '@/utils'
 import dayjs from 'dayjs'
 import { usePerm } from '@/permission'
@@ -136,10 +136,10 @@ onMounted(() => setTimeout(() => (loading.value = false), 300))
 const manualDialog = ref(false)
 const manual = reactive({ dispatchId: '', type: '进磅', net: 35, tare: 0 })
 
-/** 可补录的调度单：尚无对应类型磅单 */
+/** 可补录的调度单：仅公路口径（非公路方式无公路磅单），且尚无对应类型磅单 */
 const manualDispatchOptions = computed(() =>
   db.dispatches
-    .filter((d) => !db.weighings.some((w) => w.dispatchId === d.id && w.type === manual.type))
+    .filter((d) => isRoadMode(d.mode) && !db.weighings.some((w) => w.dispatchId === d.id && w.type === manual.type))
     .slice(0, 100)
     .map((d) => ({ ...d, plate: find.vehicle(d.vehicleId)?.plate || '-' }))
 )

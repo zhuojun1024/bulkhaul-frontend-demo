@@ -17,8 +17,13 @@
           <el-button v-if="contract?.status === 'pending'" type="success" :icon="Check" @click="approve">
             审批通过
           </el-button>
-          <el-button v-if="contract?.status === 'executing'" type="danger" plain :icon="CircleClose" @click="terminate">
-            终止合同
+          <template v-if="contract?.status === 'executing'">
+            <el-button type="warning" plain :icon="EditPen" @click="openChange">变更</el-button>
+            <el-button type="primary" plain :icon="Calendar" @click="openExtend">延期</el-button>
+            <el-button type="danger" plain :icon="CircleClose" @click="openTerminate">终止合同</el-button>
+          </template>
+          <el-button v-if="contract?.status === 'completed'" type="info" plain :icon="FolderChecked" @click="archive">
+            归档
           </el-button>
           <el-button :icon="Printer" @click="printContract">打印</el-button>
         </div>
@@ -111,11 +116,11 @@
             <div class="desc-title">调度执行记录</div>
             <el-table :data="dispatches" stripe size="small" max-height="400">
               <el-table-column prop="id" label="调度单号" width="110" />
-              <el-table-column label="车牌号" width="120">
-                <template #default="{ row }">{{ find.vehicle(row.vehicleId)?.plate }}</template>
+              <el-table-column label="车辆/单元" width="130">
+                <template #default="{ row }">{{ find.vehicle(row.vehicleId)?.plate || row.unitNo || '—' }}</template>
               </el-table-column>
               <el-table-column label="司机" width="90">
-                <template #default="{ row }">{{ find.driver(row.driverId)?.name }}</template>
+                <template #default="{ row }">{{ find.driver(row.driverId)?.name || '—' }}</template>
               </el-table-column>
               <el-table-column label="数量(吨)" width="90" align="right">
                 <template #default="{ row }">{{ row.quantity }}</template>
@@ -169,18 +174,108 @@
           </div>
         </div>
       </el-tab-pane>
+
+      <!-- 变更记录 -->
+      <el-tab-pane label="变更记录" name="changes">
+        <div class="panel">
+          <div class="panel__body">
+            <el-table :data="changes" stripe size="small">
+              <el-table-column prop="time" label="变更时间" width="160" />
+              <el-table-column prop="operator" label="操作人" width="100" align="center" />
+              <el-table-column prop="reason" label="原因" min-width="160" show-overflow-tooltip />
+              <el-table-column prop="content" label="变更内容" min-width="220" show-overflow-tooltip />
+            </el-table>
+            <el-empty v-if="!changes.length" description="暂无变更记录" :image-size="80" />
+          </div>
+        </div>
+      </el-tab-pane>
     </el-tabs>
+
+    <!-- 合同变更 -->
+    <el-dialog v-model="changeDialog" title="合同变更" width="480px">
+      <div v-if="contract">
+        <el-alert :title="'合同 ' + contract.id + '（' + contract.name + '）'" type="info" :closable="false" show-icon />
+        <el-form label-width="90px" style="margin-top: 16px">
+          <el-form-item label="合同数量">
+            <el-input-number v-model="changeForm.quantity" :min="0" :step="100" style="width: 100%" />
+          </el-form-item>
+          <el-form-item label="合同单价">
+            <el-input-number v-model="changeForm.unitPrice" :min="0" :step="1" style="width: 100%" />
+          </el-form-item>
+          <el-form-item label="截止日期">
+            <el-date-picker v-model="changeForm.endDate" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
+          </el-form-item>
+          <el-form-item label="变更原因" required>
+            <el-input v-model="changeForm.reason" type="textarea" :rows="2" maxlength="200" show-word-limit placeholder="请填写变更原因" />
+          </el-form-item>
+        </el-form>
+      </div>
+      <template #footer>
+        <el-button @click="changeDialog = false">取消</el-button>
+        <el-button type="primary" @click="doChange">确认变更</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 合同延期 -->
+    <el-dialog v-model="extendDialog" title="合同延期" width="440px">
+      <div v-if="contract">
+        <el-alert :title="'合同 ' + contract.id + '，当前截止 ' + contract.endDate" type="info" :closable="false" show-icon />
+        <el-form label-width="90px" style="margin-top: 16px">
+          <el-form-item label="延期至" required>
+            <el-date-picker v-model="extendForm.newDate" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
+          </el-form-item>
+          <el-form-item label="延期原因" required>
+            <el-input v-model="extendForm.reason" type="textarea" :rows="2" maxlength="200" show-word-limit placeholder="请填写延期原因" />
+          </el-form-item>
+        </el-form>
+      </div>
+      <template #footer>
+        <el-button @click="extendDialog = false">取消</el-button>
+        <el-button type="primary" @click="doExtend">确认延期</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 提前终止 -->
+    <el-dialog v-model="terminateDialog" title="提前终止合同" width="480px">
+      <div v-if="contract">
+        <el-alert
+          title="终止后合同不可再新建计划，待执行计划批次将一并取消"
+          type="warning"
+          :closable="false"
+          show-icon
+        />
+        <el-form label-width="110px" style="margin-top: 16px">
+          <el-form-item label="终止原因" required>
+            <el-input v-model="terminateForm.reason" type="textarea" :rows="2" maxlength="200" show-word-limit placeholder="请填写终止原因" />
+          </el-form-item>
+          <el-form-item label="提前结算">
+            <el-checkbox v-model="terminateForm.settleNow">对已完成车次生成提前结算单</el-checkbox>
+          </el-form-item>
+        </el-form>
+      </div>
+      <template #footer>
+        <el-button @click="terminateDialog = false">取消</el-button>
+        <el-button type="danger" @click="doTerminate">确认终止</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 defineOptions({ name: 'ContractDetail' })
-import { ref, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft, Check, CircleClose, Printer } from '@element-plus/icons-vue'
+import { ArrowLeft, Check, CircleClose, Printer, EditPen, Calendar, FolderChecked } from '@element-plus/icons-vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
+import {
+  approveContract,
+  changeContract,
+  extendContract,
+  terminateContract,
+  archiveContract
+} from '@/mock/flow'
 import { formatMoney, formatNum } from '@/utils'
 
 const route = useRoute()
@@ -208,7 +303,8 @@ const statusMap = {
   pending: { label: '待审批', type: 'warning' },
   executing: { label: '执行中', type: 'primary' },
   completed: { label: '已完成', type: 'success' },
-  terminated: { label: '已终止', type: 'danger' }
+  terminated: { label: '已终止', type: 'danger' },
+  archived: { label: '已归档', type: 'info' }
 }
 const planStatusMap = {
   pending: { label: '待执行', type: 'info' },
@@ -232,21 +328,98 @@ const settleStatusMap = {
   overdue: { label: '已逾期', type: 'danger' }
 }
 
+const changes = computed(() => contract.value?.changes || [])
+
 function approve() {
   ElMessageBox.confirm('确认审批通过该合同？', '合同审批', { type: 'warning' }).then(() => {
-    contract.value.status = 'executing'
+    approveContract(contract.value, '同意')
     ElMessage.success('审批通过，合同已进入执行状态')
   }).catch(() => {})
 }
 
-function terminate() {
-  ElMessageBox.prompt('请输入终止原因', '终止合同', {
-    inputPattern: /.{2,}/,
-    inputErrorMessage: '原因至少 2 个字符'
-  }).then(({ value }) => {
-    contract.value.status = 'terminated'
-    contract.value.remark = `【终止】${value}`
-    ElMessage.success('合同已终止')
+/* ===== 合同变更 ===== */
+const changeDialog = ref(false)
+const changeForm = reactive({ quantity: 0, unitPrice: 0, endDate: '', reason: '' })
+
+function openChange() {
+  changeForm.quantity = contract.value.quantity
+  changeForm.unitPrice = contract.value.unitPrice
+  changeForm.endDate = contract.value.endDate
+  changeForm.reason = ''
+  changeDialog.value = true
+}
+
+function doChange() {
+  if (!changeForm.reason.trim()) {
+    ElMessage.warning('请填写变更原因')
+    return
+  }
+  const { changed } = changeContract(
+    contract.value,
+    { quantity: changeForm.quantity, unitPrice: changeForm.unitPrice, endDate: changeForm.endDate },
+    changeForm.reason.trim()
+  )
+  changeDialog.value = false
+  if (!changed) {
+    ElMessage.info('合同要素未发生变化')
+    return
+  }
+  ElMessage.success('合同变更成功，金额已重算')
+}
+
+/* ===== 合同延期 ===== */
+const extendDialog = ref(false)
+const extendForm = reactive({ newDate: '', reason: '' })
+
+function openExtend() {
+  extendForm.newDate = ''
+  extendForm.reason = ''
+  extendDialog.value = true
+}
+
+function doExtend() {
+  if (!extendForm.newDate) {
+    ElMessage.warning('请选择延期截止日期')
+    return
+  }
+  if (extendForm.newDate <= contract.value.endDate) {
+    ElMessage.warning('延期日期必须晚于当前截止日期')
+    return
+  }
+  if (!extendForm.reason.trim()) {
+    ElMessage.warning('请填写延期原因')
+    return
+  }
+  extendContract(contract.value, extendForm.newDate, extendForm.reason.trim())
+  extendDialog.value = false
+  ElMessage.success(`合同已延期至 ${extendForm.newDate}`)
+}
+
+/* ===== 提前终止 ===== */
+const terminateDialog = ref(false)
+const terminateForm = reactive({ reason: '', settleNow: true })
+
+function openTerminate() {
+  terminateForm.reason = ''
+  terminateForm.settleNow = true
+  terminateDialog.value = true
+}
+
+function doTerminate() {
+  if (!terminateForm.reason.trim()) {
+    ElMessage.warning('请填写终止原因')
+    return
+  }
+  const billNo = terminateContract(contract.value, terminateForm.reason.trim(), terminateForm.settleNow)
+  terminateDialog.value = false
+  ElMessage.success(billNo ? `合同已终止，已完成车次生成提前结算单 ${billNo}` : '合同已终止')
+}
+
+/* ===== 归档 ===== */
+function archive() {
+  ElMessageBox.confirm('确认归档该合同？归档后为只读存档。', '合同归档', { type: 'info' }).then(() => {
+    archiveContract(contract.value)
+    ElMessage.success('合同已归档')
   }).catch(() => {})
 }
 

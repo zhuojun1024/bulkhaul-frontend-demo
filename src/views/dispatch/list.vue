@@ -48,11 +48,14 @@
               <span class="link" @click.stop="goDetail(row)">{{ row.id }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="车牌号" width="120">
-            <template #default="{ row }">{{ find.vehicle(row.vehicleId)?.plate }}</template>
+          <el-table-column label="车辆/单元" width="130">
+            <template #default="{ row }">
+              <span v-if="row.unitNo" :title="row.mode + ' · 运输单元'">{{ row.unitNo }}</span>
+              <span v-else>{{ find.vehicle(row.vehicleId)?.plate || '—' }}</span>
+            </template>
           </el-table-column>
           <el-table-column label="司机" width="90">
-            <template #default="{ row }">{{ find.driver(row.driverId)?.name }}</template>
+            <template #default="{ row }">{{ find.driver(row.driverId)?.name || '—' }}</template>
           </el-table-column>
           <el-table-column label="商品" width="90" align="center">
             <template #default="{ row }">{{ find.commodity(row.commodityId)?.name }}</template>
@@ -149,7 +152,8 @@ import {
   arrive as flowArrive,
   confirmUnload as flowConfirmUnload,
   reportException as flowReportException,
-  resumeDispatch
+  resumeDispatch,
+  isRoadMode
 } from '@/mock/flow'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
@@ -194,8 +198,9 @@ const filtered = computed(() =>
     if (filter.keyword) {
       const kw = filter.keyword.toLowerCase()
       const plate = (find.vehicle(d.vehicleId)?.plate || '').toLowerCase()
+      const unit = (d.unitNo || '').toLowerCase()
       const driver = find.driver(d.driverId)?.name || ''
-      if (!d.id.toLowerCase().includes(kw) && !plate.includes(kw) && !driver.includes(filter.keyword)) return false
+      if (!d.id.toLowerCase().includes(kw) && !plate.includes(kw) && !unit.includes(kw) && !driver.includes(filter.keyword)) return false
     }
     if (filter.dateRange && filter.dateRange.length === 2) {
       const day = d.dispatchTime.slice(0, 10)
@@ -226,20 +231,26 @@ function progressColor(status) {
   return { loading: tokens.warning, intransit: tokens.primary, unloading: tokens.warning, completed: tokens.success, exception: tokens.danger }[status] || tokens.neutral300
 }
 
+/** 执行主体展示：公路口径取车牌，非公路口径取运输单元号 */
+const unitLabel = (d) => find.vehicle(d.vehicleId)?.plate || d.unitNo || d.id
+
 function confirmLoad(row) {
+  const road = isRoadMode(row.mode)
   ElMessageBox.confirm(
-    `确认 ${find.vehicle(row.vehicleId)?.plate} 已完成装货？<br/>将自动登记进磅单。`,
+    road
+      ? `确认 ${unitLabel(row)} 已完成装货？<br/>将自动登记进磅单。`
+      : `确认 ${unitLabel(row)} 已完成装货？`,
     '确认装货',
-    { dangerouslyUseHTMLString: true, type: 'info', confirmButtonText: '确认装货' }
+    { dangerouslyUseHTMLString: road, type: 'info', confirmButtonText: '确认装货' }
   ).then(() => {
     flowConfirmLoad(row)
-    ElMessage.success('装货确认成功，进磅单已登记')
+    ElMessage.success(road ? '装货确认成功，进磅单已登记' : '装货确认成功')
   }).catch(() => {})
 }
 
 function depart(row) {
   ElMessageBox.confirm(
-    `确认 ${find.vehicle(row.vehicleId)?.plate} 发车开始运输？`,
+    `确认 ${unitLabel(row)} 发车开始运输？`,
     '发车确认',
     { type: 'info', confirmButtonText: '确认发车' }
   ).then(() => {
@@ -250,7 +261,7 @@ function depart(row) {
 
 function arrive(row) {
   ElMessageBox.confirm(
-    `确认 ${find.vehicle(row.vehicleId)?.plate} 已到达卸货场站，开始卸货？`,
+    `确认 ${unitLabel(row)} 已到达卸货场站，开始卸货？`,
     '到达确认',
     { type: 'info', confirmButtonText: '确认到达' }
   ).then(() => {
@@ -260,10 +271,13 @@ function arrive(row) {
 }
 
 function confirmUnload(row) {
+  const road = isRoadMode(row.mode)
   ElMessageBox.confirm(
-    `确认 ${find.vehicle(row.vehicleId)?.plate} 已完成卸货？<br/>将自动登记出磅单并结算运费。`,
+    road
+      ? `确认 ${unitLabel(row)} 已完成卸货？<br/>将自动登记出磅单并结算运费。`
+      : `确认 ${unitLabel(row)} 已完成卸货？<br/>将按调度量结算运费。`,
     '确认卸货',
-    { dangerouslyUseHTMLString: true, type: 'success', confirmButtonText: '确认卸货' }
+    { dangerouslyUseHTMLString: road, type: 'success', confirmButtonText: '确认卸货' }
   ).then(() => {
     flowConfirmUnload(row)
     ElMessage.success('卸货确认成功，本次运输已完成')
@@ -294,15 +308,16 @@ function reportException(row) {
 }
 
 function exportCsv() {
-  const headers = ['调度单号', '车牌号', '司机', '商品', '数量(吨)', '装货场站', '卸货场站', '下发时间', '状态']
+  const headers = ['调度单号', '车辆/单元', '司机', '商品', '数量(吨)', '装货场站', '卸货场站', '方式', '下发时间', '状态']
   const rows = filtered.value.map((d) => [
     d.id,
-    find.vehicle(d.vehicleId)?.plate || '',
+    unitLabel(d),
     find.driver(d.driverId)?.name || '',
     find.commodity(d.commodityId)?.name || '',
     d.quantity,
     find.terminal(d.loadTerminalId)?.name || '',
     find.terminal(d.unloadTerminalId)?.name || '',
+    d.mode || '公路',
     d.dispatchTime,
     statusMap[d.status].label
   ])

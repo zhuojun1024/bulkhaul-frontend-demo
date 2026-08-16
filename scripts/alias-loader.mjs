@@ -1,7 +1,14 @@
-/** 临时测试用：解析 @/utils 别名与无扩展名相对导入（Node ESM 兼容 webpack 风格） */
+/** 临时测试用：解析 @/ 别名与无扩展名相对导入（Node ESM 兼容 webpack 风格） */
+const ALIASES = {
+  '@/utils': '../src/utils/index.js',
+  '@/mock': '../src/mock/index.js',
+  '@/store': '../src/store/index.js',
+  '@/permission': '../src/permission.js'
+}
+
 export async function resolve(specifier, context, nextResolve) {
-  if (specifier === '@/utils') {
-    return { url: new URL('../src/utils/index.js', import.meta.url).href, shortCircuit: true }
+  if (ALIASES[specifier]) {
+    return { url: new URL(ALIASES[specifier], import.meta.url).href, shortCircuit: true }
   }
   if ((specifier.startsWith('./') || specifier.startsWith('../')) && !specifier.endsWith('.js')) {
     try {

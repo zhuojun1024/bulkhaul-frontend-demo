@@ -31,6 +31,9 @@
           <el-button v-if="dispatch && ['pending', 'loading', 'intransit'].includes(dispatch.status) && can('exception')" type="danger" plain :icon="Warning" @click="reportException">
             上报异常
           </el-button>
+          <el-button v-if="dispatch?.driverId" type="primary" plain :icon="Cellphone" @click="openDriverApp">
+            司机端视图
+          </el-button>
           <el-button :icon="Printer" @click="printDispatch">打印调度单</el-button>
         </div>
       </div>
@@ -77,6 +80,13 @@
                 <el-progress :percentage="dispatch?.progress || 0" :stroke-width="8" />
               </el-descriptions-item>
               <el-descriptions-item label="预计到达">{{ dispatch?.eta || '—' }}</el-descriptions-item>
+              <el-descriptions-item label="电子签收">
+                <template v-if="dispatch?.receipt">
+                  <el-tag size="small" type="success" effect="light">{{ dispatch.receipt.code }}</el-tag>
+                  <span class="receipt-text">{{ dispatch.receipt.signer }} · {{ dispatch.receipt.time }}</span>
+                </template>
+                <span v-else>—</span>
+              </el-descriptions-item>
             </el-descriptions>
           </div>
         </div>
@@ -85,25 +95,36 @@
       <!-- 右侧：车辆司机 + 磅单 -->
       <el-col :span="10">
         <div class="panel">
-          <div class="panel__header"><span class="panel__title">车辆与司机</span></div>
+          <div class="panel__header"><span class="panel__title">{{ isRoad ? '车辆与司机' : '运输单元' }}</span></div>
           <div class="panel__body">
-            <div class="vehicle-card">
+            <template v-if="isRoad">
+              <div class="vehicle-card">
+                <div class="vehicle-card__icon">
+                  <el-icon :size="28" color="var(--color-primary)"><Van /></el-icon>
+                </div>
+                <div class="vehicle-card__info">
+                  <div class="vehicle-card__plate">{{ vehicle?.plate }}</div>
+                  <div class="vehicle-card__sub">{{ vehicle?.type }} · 核定载重 {{ vehicle?.capacity }} 吨 · {{ vehicle?.owner }}</div>
+                </div>
+              </div>
+              <el-divider />
+              <div class="vehicle-card">
+                <div class="vehicle-card__icon">
+                  <el-icon :size="28" color="var(--color-success)"><User /></el-icon>
+                </div>
+                <div class="vehicle-card__info">
+                  <div class="vehicle-card__plate">{{ driver?.name }}</div>
+                  <div class="vehicle-card__sub">{{ driver?.phone }} · {{ driver?.licenseType }} 证 · 累计 {{ driver?.totalTrips }} 趟</div>
+                </div>
+              </div>
+            </template>
+            <div v-else class="vehicle-card">
               <div class="vehicle-card__icon">
-                <el-icon :size="28" color="var(--color-primary)"><Truck /></el-icon>
+                <el-icon :size="28" color="var(--color-primary)"><Box /></el-icon>
               </div>
               <div class="vehicle-card__info">
-                <div class="vehicle-card__plate">{{ vehicle?.plate }}</div>
-                <div class="vehicle-card__sub">{{ vehicle?.type }} · 核定载重 {{ vehicle?.capacity }} 吨 · {{ vehicle?.owner }}</div>
-              </div>
-            </div>
-            <el-divider />
-            <div class="vehicle-card">
-              <div class="vehicle-card__icon">
-                <el-icon :size="28" color="var(--color-success)"><User /></el-icon>
-              </div>
-              <div class="vehicle-card__info">
-                <div class="vehicle-card__plate">{{ driver?.name }}</div>
-                <div class="vehicle-card__sub">{{ driver?.phone }} · {{ driver?.licenseType }} 证 · 累计 {{ driver?.totalTrips }} 趟</div>
+                <div class="vehicle-card__plate">{{ dispatch?.unitNo || '—' }}</div>
+                <div class="vehicle-card__sub">{{ dispatch?.mode }} · 按运输单元执行，不占用车辆与司机资源</div>
               </div>
             </div>
           </div>
@@ -129,7 +150,7 @@
               </el-table-column>
               <el-table-column prop="time" label="时间" min-width="130" />
             </el-table>
-            <el-empty v-if="!weighings.length" description="暂无磅单" :image-size="60" />
+            <el-empty v-if="!weighings.length" :description="isRoad ? '暂无磅单' : '该方式无公路磅单，结算按调度量执行'" :image-size="60" />
           </div>
         </div>
       </el-col>
@@ -140,9 +161,9 @@
 <script setup>
 defineOptions({ name: 'DispatchDetail' })
 import { ref, computed, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft, Box, CircleCheck, Warning, Printer, Position, RefreshRight } from '@element-plus/icons-vue'
+import { ArrowLeft, Box, CircleCheck, Warning, Printer, Position, RefreshRight, Cellphone } from '@element-plus/icons-vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
 import {
@@ -151,13 +172,15 @@ import {
   arrive as flowArrive,
   confirmUnload as flowConfirmUnload,
   reportException as flowReportException,
-  resumeDispatch
+  resumeDispatch,
+  isRoadMode
 } from '@/mock/flow'
 import { formatMoney } from '@/utils'
 import dayjs from 'dayjs'
 import { usePerm } from '@/permission'
 
 const route = useRoute()
+const router = useRouter()
 const { can } = usePerm()
 const loading = ref(true)
 onMounted(() => setTimeout(() => (loading.value = false), 200))
@@ -167,6 +190,16 @@ const commodity = computed(() => find.commodity(dispatch.value?.commodityId))
 const vehicle = computed(() => find.vehicle(dispatch.value?.vehicleId))
 const driver = computed(() => find.driver(dispatch.value?.driverId))
 const weighings = computed(() => db.weighings.filter((w) => w.dispatchId === dispatch.value?.id))
+
+/** 公路口径（公路/多式联运）才有车辆司机与公路磅单 */
+const isRoad = computed(() => isRoadMode(dispatch.value?.mode))
+/** 执行主体：车牌优先，非公路口径取运输单元号 */
+const unitText = computed(() => vehicle.value?.plate || dispatch.value?.unitNo || '—')
+
+/** 司机端视图：携带司机与聚焦单号进入 H5 演示页 */
+function openDriverApp() {
+  router.push({ path: '/driver-app', query: { driverId: dispatch.value.driverId, focus: dispatch.value.id } })
+}
 
 const statusMap = {
   pending: { label: '待装货', type: 'info' },
@@ -181,8 +214,22 @@ const timeline = computed(() => {
   const d = dispatch.value
   if (!d) return []
   const steps = [
-    { title: '调度下发', time: d.dispatchTime, desc: `调度员向 ${vehicle.value?.plate}（司机 ${driver.value?.name}）下发运输指令`, done: true, type: 'primary' },
-    { title: '装货过磅', time: d.loadTime, desc: d.loadTime ? `于${find.terminal(d.loadTerminalId)?.name}完成装货，净重 ${d.quantity} 吨` : '车辆到达装货场站排队中', done: !!d.loadTime, type: d.loadTime ? 'primary' : 'info' },
+    {
+      title: '调度下发',
+      time: d.dispatchTime,
+      desc: isRoad.value
+        ? `调度员向 ${vehicle.value?.plate}（司机 ${driver.value?.name}）下发运输指令`
+        : `调度员向 ${d.unitNo} 下发运输指令（按运输单元执行）`,
+      done: true,
+      type: 'primary'
+    },
+    {
+      title: isRoad.value ? '装货过磅' : '装货确认',
+      time: d.loadTime,
+      desc: d.loadTime ? `于${find.terminal(d.loadTerminalId)?.name}完成装货，净重 ${d.quantity} 吨` : isRoad.value ? '车辆到达装货场站排队中' : '运输单元到达装货场站排队中',
+      done: !!d.loadTime,
+      type: d.loadTime ? 'primary' : 'info'
+    },
     { title: '在途运输', time: d.eta ? `预计 ${d.eta} 到达` : '', desc: d.status === 'intransit' ? `当前进度 ${d.progress}%，实时车速 ${d.speed} km/h` : d.status === 'pending' ? '等待装货' : '运输中', done: d.status === 'intransit' || d.status === 'unloading' || d.status === 'completed', type: 'primary' },
     { title: '卸货完成', time: d.unloadTime, desc: d.unloadTime ? `于${find.terminal(d.unloadTerminalId)?.name}完成卸货` : '—', done: !!d.unloadTime, type: d.unloadTime ? 'success' : 'info' }
   ]
@@ -200,14 +247,14 @@ function confirmLoad() {
 }
 
 function depart() {
-  ElMessageBox.confirm(`确认 ${vehicle.value?.plate} 发车开始运输？`, '发车确认', { type: 'info' }).then(() => {
+  ElMessageBox.confirm(`确认 ${unitText.value} 发车开始运输？`, '发车确认', { type: 'info' }).then(() => {
     flowDepart(dispatch.value)
     ElMessage.success('已发车，进入在途状态')
   }).catch(() => {})
 }
 
 function arrive() {
-  ElMessageBox.confirm(`确认 ${vehicle.value?.plate} 已到达卸货场站，开始卸货？`, '到达确认', { type: 'info' }).then(() => {
+  ElMessageBox.confirm(`确认 ${unitText.value} 已到达卸货场站，开始卸货？`, '到达确认', { type: 'info' }).then(() => {
     flowArrive(dispatch.value)
     ElMessage.success('已到达，进入卸货状态')
   }).catch(() => {})
@@ -252,7 +299,7 @@ function printDispatch() {
   <h1>大宗货物运输调度单</h1>
   <div class="no">单号：${d.id} &nbsp; 下发时间：${d.dispatchTime}</div>
   <table>
-    <tr><th>车牌号</th><td>${vehicle.value?.plate}</td><th>司机</th><td>${driver.value?.name} ${driver.value?.phone}</td></tr>
+    <tr><th>车辆/单元</th><td>${vehicle.value?.plate || d.unitNo || '—'}</td><th>司机</th><td>${driver.value ? driver.value.name + ' ' + driver.value.phone : '—（按运输单元执行）'}</td></tr>
     <tr><th>商品</th><td>${commodity.value?.name}</td><th>数量</th><td>${d.quantity} 吨</td></tr>
     <tr><th>装货场站</th><td>${find.terminal(d.loadTerminalId)?.name}</td><th>卸货场站</th><td>${find.terminal(d.unloadTerminalId)?.name}</td></tr>
     <tr><th>装货时间</th><td>${d.loadTime || '待装货'}</td><th>卸货时间</th><td>${d.unloadTime || '—'}</td></tr>
@@ -350,5 +397,11 @@ function printDispatch() {
 .net {
   font-weight: 700;
   color: var(--color-primary);
+}
+
+.receipt-text {
+  margin-left: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 </style>

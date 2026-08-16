@@ -17,6 +17,27 @@ const contractOf = (id) => db.contracts.find((c) => c.id === id)
 /** 执行中状态（占用车辆/司机） */
 const ACTIVE = ['loading', 'intransit', 'unloading']
 
+/** 公路口径运输方式（派车+磅单）；铁路/水运/管道按运输单元执行，不占车辆司机、无公路磅单 */
+export const ROAD_MODES = ['公路', '多式联运']
+export const isRoadMode = (mode) => ROAD_MODES.includes(mode || '公路')
+
+/** 运输单元编号（铁路车号/船舶名/管段），按 方式+调度单号 确定性派生 */
+export function unitNoOf(mode, seedStr) {
+  let n = 0
+  for (const ch of String(seedStr)) n = (n * 31 + ch.charCodeAt(0)) % 100000
+  if (mode === '铁路') return `X${1000 + (n % 9000)}次`
+  if (mode === '水运') return `冀散货${100 + (n % 899)}`
+  if (mode === '管道') return `管线${['一', '二', '三', '四'][n % 4]}线`
+  return `联运${2026000 + (n % 999)}`
+}
+
+/** 发票号码：按种子串确定性派生 20 位（与全局种子随机体系一致，不用 Math.random） */
+export function genInvoiceNo(seedStr) {
+  let n = 0
+  for (const ch of String(seedStr)) n = (n * 31 + ch.charCodeAt(0)) % 2147483647
+  return '2410' + String(100000000000 + (n % 900000000000))
+}
+
 /* ========== 审计日志 ========== */
 
 /** 当前操作人（登录时写入，审计日志使用） */
@@ -65,10 +86,11 @@ function pushWeighing(d, type, net, time) {
   })
 }
 
-/** 磅单补录：场站操作员对尚无该类型磅单的车次手工录单 */
+/** 磅单补录：场站操作员对尚无该类型磅单的车次手工录单（仅公路口径车次） */
 export function manualWeighing(dispatchId, type, net) {
   const d = db.dispatches.find((x) => x.id === dispatchId)
   if (!d) return { error: '调度单不存在' }
+  if (!isRoadMode(d.mode)) return { error: `${d.mode} 车次按运输单元执行，无公路磅单，无需补录` }
   if (db.weighings.some((w) => w.dispatchId === dispatchId && w.type === type)) {
     return { error: `该调度单已存在${type}磅单，不能重复补录` }
   }
@@ -151,15 +173,21 @@ function warehouseIn(d) {
   logAction('仓储管理', '入库', `调度单 ${d.id} 卸货：${wh.name} 入库 ${qty} 吨`)
 }
 
-/** 确认装货：pending → loading，登记进磅单，装货场站出库 */
+/** 确认装货：pending → loading，公路车次登记进磅单，装货场站出库 */
 export function confirmLoad(d) {
   d.status = 'loading'
   d.loadTime = dayjs().format('YYYY-MM-DD HH:mm')
   d.progress = 5
-  pushWeighing(d, '进磅', d.quantity, d.loadTime)
+  if (isRoadMode(d.mode)) pushWeighing(d, '进磅', d.quantity, d.loadTime)
   warehouseOut(d)
   rollupPlan(d.planId)
-  logAction('场站管理', '确认装货', `调度单 ${d.id} 确认装货（进磅 ${d.quantity} 吨）`)
+  logAction(
+    '场站管理',
+    '确认装货',
+    isRoadMode(d.mode)
+      ? `调度单 ${d.id} 确认装货（进磅 ${d.quantity} 吨）`
+      : `调度单 ${d.id} 确认装货（${d.mode} ${d.unitNo || ''}，${d.quantity} 吨）`
+  )
 }
 
 /** 发车：loading → intransit，占用车辆司机 */
@@ -184,18 +212,27 @@ export function arrive(d) {
   logAction('调度管理', '到达卸货场', `调度单 ${d.id} 到达，开始卸货`)
 }
 
-/** 确认卸货：unloading → completed，登记出磅单（含 1.5% 损耗），卸货场站入库，释放资源并回卷 */
+/** 确认卸货：unloading → completed，公路车次登记出磅单（含 1.5% 损耗），卸货场站入库，释放资源并回卷 */
 export function confirmUnload(d) {
   d.status = 'completed'
   d.unloadTime = dayjs().format('YYYY-MM-DD HH:mm')
   d.progress = 100
   d.speed = 0
-  const loss = +(d.quantity * 0.015).toFixed(2)
-  pushWeighing(d, '出磅', d.quantity - loss, d.unloadTime)
+  let loss = 0
+  if (isRoadMode(d.mode)) {
+    loss = +(d.quantity * 0.015).toFixed(2)
+    pushWeighing(d, '出磅', d.quantity - loss, d.unloadTime)
+  }
   warehouseIn(d)
   releaseResource(d)
   rollupPlan(d.planId)
-  logAction('场站管理', '确认卸货', `调度单 ${d.id} 确认卸货（出磅 ${(d.quantity - loss).toFixed(2)} 吨，损耗 ${loss} 吨）`)
+  logAction(
+    '场站管理',
+    '确认卸货',
+    isRoadMode(d.mode)
+      ? `调度单 ${d.id} 确认卸货（出磅 ${(d.quantity - loss).toFixed(2)} 吨，损耗 ${loss} 吨）`
+      : `调度单 ${d.id} 确认卸货（${d.mode} ${d.unitNo || ''}，${d.quantity} 吨，无磅单损耗）`
+  )
 }
 
 /** 上报异常：→ exception，生成异常单；事故类同步生成事故记录 */
@@ -295,46 +332,83 @@ export function closeException(e) {
   logAction('异常处理', '关闭异常单', `异常单 ${e.id} 关闭归档${e.accidentId ? `，事故 ${e.accidentId} 结案` : ''}`)
 }
 
-/** 计划调度：生成 count 张调度单，数量按批次均摊，距离取实际线路 */
+/** 计划调度：生成 count 张调度单，数量按批次均摊，距离取实际线路
+ *  公路/多式联运 → 匹配车辆+司机；铁路/水运/管道 → 按运输单元派车（车号/船名/管段），不占车辆司机 */
 export function createDispatches(p, count, vehicleIds = []) {
-  const road = db.vehicles.filter((v) => v.type !== '铁路敞车' && v.type !== '散货船')
-  const pool = vehicleIds.length
-    ? road.filter((v) => vehicleIds.includes(v.id))
-    : road.filter((v) => v.status === 'idle')
-  const avail = db.drivers.filter((x) => x.status === 'available')
-  if (!pool.length || !avail.length) return { created: [], error: '无可用车辆或司机' }
   const route = ROUTES.find((r) => r.from === p.loadTerminalId && r.to === p.unloadTerminalId)
   const per = Math.max(1, Math.round(p.quantity / count))
+  const road = isRoadMode(p.mode)
   const created = []
-  for (let i = 0; i < count; i++) {
-    const v = pool[i % pool.length]
-    const dr = avail[(db.dispatches.length + i) % avail.length]
-    if (!v || !dr) break
-    const d = {
-      id: `PD-${String(db.dispatches.length + 1).padStart(5, '0')}`,
-      planId: p.id,
-      contractId: p.contractId,
-      commodityId: p.commodityId,
-      quantity: per,
-      loadTerminalId: p.loadTerminalId,
-      unloadTerminalId: p.unloadTerminalId,
-      vehicleId: v.id,
-      driverId: dr.id,
-      distance: route ? route.distance : 300,
-      status: 'pending',
-      dispatchTime: dayjs().format('YYYY-MM-DD HH:mm'),
-      loadTime: null,
-      unloadTime: null,
-      progress: 0,
-      speed: 0,
-      eta: dayjs().add(8, 'hour').format('YYYY-MM-DD HH:mm'),
-      fee: Math.round(per * p.unitPrice)
+  if (road) {
+    const pool = vehicleIds.length
+      ? db.vehicles.filter((v) => v.type !== '铁路敞车' && v.type !== '散货船' && vehicleIds.includes(v.id))
+      : db.vehicles.filter((v) => v.type !== '铁路敞车' && v.type !== '散货船' && v.status === 'idle')
+    const avail = db.drivers.filter((x) => x.status === 'available')
+    if (!pool.length || !avail.length) return { created, error: '无可用车辆或司机' }
+    for (let i = 0; i < count; i++) {
+      const v = pool[i % pool.length]
+      const dr = avail[(db.dispatches.length + i) % avail.length]
+      if (!v || !dr) break
+      const d = {
+        id: `PD-${String(db.dispatches.length + 1).padStart(5, '0')}`,
+        planId: p.id,
+        contractId: p.contractId,
+        commodityId: p.commodityId,
+        quantity: per,
+        mode: p.mode,
+        loadTerminalId: p.loadTerminalId,
+        unloadTerminalId: p.unloadTerminalId,
+        vehicleId: v.id,
+        driverId: dr.id,
+        unitNo: p.mode === '多式联运' ? unitNoOf('多式联运', `PD-${db.dispatches.length + 1}`) : '',
+        distance: route ? route.distance : 300,
+        status: 'pending',
+        dispatchTime: dayjs().format('YYYY-MM-DD HH:mm'),
+        loadTime: null,
+        unloadTime: null,
+        progress: 0,
+        speed: 0,
+        eta: dayjs().add(8, 'hour').format('YYYY-MM-DD HH:mm'),
+        fee: Math.round(per * p.unitPrice)
+      }
+      db.dispatches.unshift(d)
+      created.push(d)
     }
-    db.dispatches.unshift(d)
-    created.push(d)
+  } else {
+    for (let i = 0; i < count; i++) {
+      const id = `PD-${String(db.dispatches.length + 1).padStart(5, '0')}`
+      const d = {
+        id,
+        planId: p.id,
+        contractId: p.contractId,
+        commodityId: p.commodityId,
+        quantity: per,
+        mode: p.mode,
+        loadTerminalId: p.loadTerminalId,
+        unloadTerminalId: p.unloadTerminalId,
+        vehicleId: null,
+        driverId: null,
+        unitNo: unitNoOf(p.mode, id),
+        distance: route ? route.distance : 300,
+        status: 'pending',
+        dispatchTime: dayjs().format('YYYY-MM-DD HH:mm'),
+        loadTime: null,
+        unloadTime: null,
+        progress: 0,
+        speed: 0,
+        eta: dayjs().add(8, 'hour').format('YYYY-MM-DD HH:mm'),
+        fee: Math.round(per * p.unitPrice)
+      }
+      db.dispatches.unshift(d)
+      created.push(d)
+    }
   }
   p.status = 'dispatched'
-  logAction('调度管理', '下发调度单', `计划 ${p.id} 生成 ${created.length} 张调度单`)
+  logAction(
+    '调度管理',
+    '下发调度单',
+    `计划 ${p.id} 生成 ${created.length} 张调度单（${p.mode}${road ? '' : '，按运输单元执行' }）`
+  )
   return { created }
 }
 
@@ -443,7 +517,7 @@ export function buildReconciliation(s, date) {
       const diff = ref != null ? +(settleQty - ref).toFixed(2) : 0
       return {
         dispatchId: d.id,
-        plate: vehicleOf(d.vehicleId)?.plate || '-',
+        plate: vehicleOf(d.vehicleId)?.plate || d.unitNo || '-',
         dispatchQty: d.quantity,
         inNet,
         outNet,
@@ -532,6 +606,35 @@ export function creditCheck(customerId, orderAmount) {
   return { ok: true, message: '' }
 }
 
+/** 合同剩余可计划量：合同总量 - 未取消计划批次量之和（新建计划校验用） */
+export function contractRemaining(contractId) {
+  const c = contractOf(contractId)
+  if (!c) return 0
+  const planned = db.plans
+    .filter((p) => p.contractId === contractId && p.status !== 'cancelled')
+    .reduce((s, p) => s + p.quantity, 0)
+  return Math.max(0, c.quantity - planned)
+}
+
+/* ===== 司机端（接单 / 电子签收） ===== */
+
+/** 司机接单：标记已接单（不改状态机，装货确认前司机需先接单） */
+export function acceptDispatch(d) {
+  d.accepted = true
+  logAction('司机端', '司机接单', `调度单 ${d.id} 司机 ${driverOf(d.driverId)?.name || '-'} 接单`)
+}
+
+/** 司机端电子签收：卸货完成后生成签收单（签收人+时间+签收码） */
+export function signReceipt(d, signer) {
+  d.receipt = {
+    code: 'QS-' + d.id.slice(-5),
+    signer: signer || '收货方',
+    time: dayjs().format('YYYY-MM-DD HH:mm')
+  }
+  logAction('司机端', '电子签收', `调度单 ${d.id} 电子签收，签收人 ${d.receipt.signer}（${d.receipt.code}）`)
+  return d.receipt
+}
+
 /* ===== 合同审批与开票 ===== */
 
 /** 审批通过：pending → executing，记录审批意见 */
@@ -549,10 +652,73 @@ export function rejectContract(c, reason) {
   logAction('合同管理', '审批合同', `合同 ${c.id} 审批驳回：${reason}`, 'fail')
 }
 
-/** 开具发票：结算单 not-issued → issued，生成发票记录 */
+/* ===== 合同全生命周期（变更 / 延期 / 提前终止 / 归档） ===== */
+
+function pushChange(c, reason, content) {
+  c.changes = c.changes || []
+  c.changes.push({ time: dayjs().format('YYYY-MM-DD HH:mm'), operator: operator.name, reason, content })
+}
+
+/** 合同变更：调整数量/单价/截止日期，记录变更历史 */
+export function changeContract(c, fields, reason) {
+  const changes = []
+  if (fields.quantity != null && fields.quantity !== c.quantity) {
+    changes.push(`数量 ${c.quantity}→${fields.quantity} 吨`)
+    c.quantity = fields.quantity
+  }
+  if (fields.unitPrice != null && fields.unitPrice !== c.unitPrice) {
+    changes.push(`单价 ${c.unitPrice}→${fields.unitPrice} 元/吨`)
+    c.unitPrice = fields.unitPrice
+  }
+  if (fields.endDate && fields.endDate !== c.endDate) {
+    changes.push(`截止日期 ${c.endDate}→${fields.endDate}`)
+    c.endDate = fields.endDate
+  }
+  c.amount = Math.round(c.quantity * c.unitPrice)
+  if (!changes.length) return { changed: false }
+  pushChange(c, reason, changes.join('；'))
+  logAction('合同管理', '合同变更', `合同 ${c.id} 变更：${changes.join('；')}（${reason}）`)
+  return { changed: true, changes }
+}
+
+/** 合同延期：延长截止日期，记录变更历史 */
+export function extendContract(c, newDate, reason) {
+  const old = c.endDate
+  c.endDate = newDate
+  pushChange(c, reason, `延期 ${old} → ${newDate}`)
+  logAction('合同管理', '合同延期', `合同 ${c.id} 延期至 ${newDate}（${reason}）`)
+}
+
+/** 提前终止：executing → terminated；未取消计划批次一并取消；已完成未入账单车次生成提前结算单 */
+export function terminateContract(c, reason, settleNow = true) {
+  c.status = 'terminated'
+  pushChange(c, reason, `提前终止（${reason}）`)
+  for (const p of db.plans.filter((x) => x.contractId === c.id && x.status === 'pending')) {
+    p.status = 'cancelled'
+  }
+  let billNo = null
+  if (settleNow) {
+    const keys = settlementCandidates().filter((g) => g.contractId === c.id).map((g) => g.key)
+    if (keys.length) {
+      const created = generateSettlements(keys)
+      billNo = created[0] ? created[0].billNo : null
+    }
+  }
+  logAction('合同管理', '终止合同', `合同 ${c.id} 提前终止（${reason}）${billNo ? `，已完成车次生成提前结算单 ${billNo}` : ''}`)
+  return billNo
+}
+
+/** 合同归档：completed → archived（只读存档） */
+export function archiveContract(c) {
+  c.status = 'archived'
+  pushChange(c, '合同执行完毕', '归档')
+  logAction('合同管理', '合同归档', `合同 ${c.id} 归档`)
+}
+
+/** 开具发票：结算单 not-issued → issued，生成发票记录（号码按种子确定性派生） */
 export function issueInvoice(s) {
   const fpSeq = db.invoices.length + 1
-  const invoiceNo = '2410' + String(100000000000 + ((s.id.charCodeAt(3) * 7919 + fpSeq * 104729) % 900000000000))
+  const invoiceNo = genInvoiceNo(s.id + '-' + fpSeq)
   db.invoices.push({
     id: `FP-${String(fpSeq).padStart(4, '0')}`,
     settlementId: s.id,
@@ -570,6 +736,15 @@ export function issueInvoice(s) {
 
 /** 启动时全量校准：计划/合同进度与调度实际执行对齐 */
 export function recalcAll() {
+  // 多式联运口径校准：调度单补运输方式；铁路/水运/管道按运输单元执行，不绑定车辆/司机
+  for (const d of db.dispatches) {
+    if (!d.mode) d.mode = contractOf(d.contractId)?.mode || '公路'
+    if (!isRoadMode(d.mode)) {
+      d.vehicleId = null
+      d.driverId = null
+      if (!d.unitNo) d.unitNo = unitNoOf(d.mode, d.id)
+    }
+  }
   for (const p of db.plans) {
     if (p.status === 'cancelled') continue
     const ds = db.dispatches.filter((x) => x.planId === p.id)

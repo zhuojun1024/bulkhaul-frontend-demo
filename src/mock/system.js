@@ -30,6 +30,15 @@ db.users = Array.from({ length: 15 }, (_, i) => {
   }
 })
 
+/** 平台公告（数据源化：由 mock 统一提供，后续可替换为真实接口） */
+db.announcements = [
+  { id: 'G001', title: '关于 8 月份煤炭运输旺季运力保障的通知', date: dayjs(NOW).subtract(1, 'day').format('MM-DD'), tag: '重要' },
+  { id: 'G002', title: '秦皇岛港 1 号煤仓 8 月 20 日检修，预计影响 2 天', date: dayjs(NOW).subtract(2, 'day').format('MM-DD'), tag: '场站' },
+  { id: 'G003', title: '新版磅单系统上线，请各场站操作员完成培训', date: dayjs(NOW).subtract(4, 'day').format('MM-DD'), tag: '系统' },
+  { id: 'G004', title: '汛期安全行车提示：关注 G6/G18 沿线雨情预警', date: dayjs(NOW).subtract(6, 'day').format('MM-DD'), tag: '安全' },
+  { id: 'G005', title: '7 月结算单已全部完成对账，请各客户核对', date: dayjs(NOW).subtract(8, 'day').format('MM-DD'), tag: '结算' }
+]
+
 /** 操作日志 */
 const actions = [
   ['登录系统', '系统'],

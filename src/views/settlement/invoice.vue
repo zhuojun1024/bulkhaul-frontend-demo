@@ -125,6 +125,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
+import { genInvoiceNo } from '@/mock/flow'
 import { formatMoney, formatNum } from '@/utils'
 import dayjs from 'dayjs'
 
@@ -177,7 +178,8 @@ function goSettlement(row) {
 }
 
 function issue(row) {
-  row.invoiceNo = '2410' + String(Math.floor(Math.random() * 900000000000) + 100000000000)
+  // 发票号按 结算单ID-发票ID 确定性派生，刷新/重开结果一致
+  row.invoiceNo = genInvoiceNo(row.settlementId + '-' + row.id)
   row.issueDate = dayjs().format('YYYY-MM-DD')
   row.status = 'issued'
   const s = find.settlement(row.settlementId)

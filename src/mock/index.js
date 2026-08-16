@@ -18,9 +18,13 @@ import './settlement' // 依赖异常单（异常损失扣减），需在 except
 import './safety'
 import './system'
 import './flow' // 业务流转中枢：导入时执行全量校准（计划/合同进度对齐实际执行）
-import { dashboard, workbenchTodos, notices } from './dashboard'
+import { dashboard, workbenchTodos, weatherOf } from './dashboard'
+import { hydrateDb } from './persist'
 
-export { db, dashboard, workbenchTodos, notices }
+// 持久化：种子数据加载完成后，若存在同版本快照则恢复（刷新不丢数据）
+hydrateDb()
+
+export { db, dashboard, workbenchTodos, weatherOf }
 export { MAP_NODES, ROUTES } from './base'
 
 /** 常用查找函数 */

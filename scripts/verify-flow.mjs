@@ -2,7 +2,7 @@
  * 临时冒烟测试：验证 mock 数据一致性与调度状态机闭环
  * 运行：node --import ./scripts/register.mjs scripts/verify-flow.mjs
  */
-import { db } from '../src/mock/index.js'
+import { db, dashboard, weatherOf } from '../src/mock/index.js'
 import { NOW } from '../src/mock/base.js'
 import dayjs from 'dayjs'
 import {
@@ -26,8 +26,19 @@ import {
   rejectContract,
   approveContract,
   manualWeighing,
-  tareOf
+  tareOf,
+  contractRemaining,
+  isRoadMode,
+  genInvoiceNo,
+  acceptDispatch,
+  signReceipt,
+  changeContract,
+  extendContract,
+  terminateContract,
+  archiveContract
 } from '../src/mock/flow.js'
+import { monthlyReport, customerReport, commodityReport, terminalReport } from '../src/mock/report.js'
+import { menuAllowed } from '../src/permission.js'
 
 let pass = 0
 let fail = 0
@@ -102,7 +113,8 @@ check('单车运量在 30-40 吨区间', db.dispatches.every((d) => d.quantity >
 check('调度单数量合理（200-500）', db.dispatches.length >= 200 && db.dispatches.length <= 500)
 
 console.log('== 2. 状态机全流程（新数据） ==')
-const contract = db.contracts.find((c) => c.status === 'executing')
+// 取公路口径执行中合同（铁路/水运/管道按运输单元执行，无车辆司机）
+const contract = db.contracts.find((c) => c.status === 'executing' && ['公路', '多式联运'].includes(c.mode))
 const plan = {
   id: 'YH-TEST',
   contractId: contract.id,
@@ -264,7 +276,9 @@ if (pendingContract) {
 }
 
 // P2-7 磅单补录 + 皮重按车辆派生（10-16t）
-const mwDispatch = db.dispatches.find((d) => !db.weighings.some((w) => w.dispatchId === d.id && w.type === '进磅'))
+const mwDispatch = db.dispatches.find(
+  (d) => ['公路', '多式联运'].includes(d.mode || '公路') && !db.weighings.some((w) => w.dispatchId === d.id && w.type === '进磅')
+)
 if (mwDispatch) {
   const r = manualWeighing(mwDispatch.id, '进磅', mwDispatch.quantity)
   check('磅单补录成功', r.ok === true && db.weighings.some((w) => w.dispatchId === mwDispatch.id && w.type === '进磅'))
@@ -274,6 +288,145 @@ if (mwDispatch) {
 const v1 = db.vehicles[0]
 check('皮重按车辆派生且在 10-16t 区间', tareOf(v1) >= 10 && tareOf(v1) <= 16 && tareOf(v1) === tareOf(v1))
 check('交互磅单皮重与预置口径一致（10-16t）', db.weighings.every((w) => w.tare >= 10 && w.tare <= 16))
+
+console.log('== 7. P3 产品完整度 ==')
+
+// P3-2 合同剩余可计划量
+const rc = db.contracts.find((c) => c.status === 'executing')
+if (rc) {
+  const planned = db.plans
+    .filter((p) => p.contractId === rc.id && p.status !== 'cancelled')
+    .reduce((s, p) => s + p.quantity, 0)
+  check(
+    '合同剩余可计划量 = 合同总量 - 未取消计划量',
+    contractRemaining(rc.id) === Math.max(0, rc.quantity - planned)
+  )
+}
+
+// P3-4 多式联运：非公路方式按运输单元执行
+const nonRoad = db.contracts.find((c) => c.status === 'executing' && !isRoadMode(c.mode))
+if (nonRoad) {
+  const p = {
+    id: 'YH-TEST-NR',
+    contractId: nonRoad.id,
+    commodityId: nonRoad.commodityId,
+    quantity: 2000,
+    loadTerminalId: nonRoad.loadTerminalId,
+    unloadTerminalId: nonRoad.unloadTerminalId,
+    mode: nonRoad.mode,
+    planDate: dayjs().format('YYYY-MM-DD'),
+    unitPrice: nonRoad.unitPrice,
+    status: 'pending',
+    progress: 0,
+    remark: '测试'
+  }
+  const { created, error } = createDispatches(p, 2)
+  check(
+    `非公路方式（${nonRoad.mode}）按运输单元派车成功`,
+    !error && created.length === 2
+  )
+  check(
+    '非公路车次无车辆/司机，带运输单元号',
+    created.every((d) => d.vehicleId === null && d.driverId === null && !!d.unitNo && d.mode === nonRoad.mode)
+  )
+  for (const d of created) {
+    confirmLoad(d)
+    depart(d)
+    arrive(d)
+    confirmUnload(d)
+  }
+  check(
+    '非公路车次全流程完成且不产生公路磅单',
+    created.every((d) => d.status === 'completed' && !db.weighings.some((w) => w.dispatchId === d.id))
+  )
+  // 清理测试数据
+  for (const d of created) db.dispatches.splice(db.dispatches.indexOf(d), 1)
+  db.plans.splice(db.plans.indexOf(p), 1)
+} else {
+  console.log('  - 跳过多式联运（无执行中的非公路合同）')
+}
+check('manualWeighing 拦截非公路车次', (() => {
+  const nr = db.dispatches.find((d) => !isRoadMode(d.mode || '公路'))
+  return nr ? !!manualWeighing(nr.id, '进磅', 35).error : true
+})())
+
+// P3-5 司机端：接单 + 电子签收
+const rd = db.dispatches.find((d) => d.status === 'pending' && d.driverId)
+if (rd) {
+  acceptDispatch(rd)
+  check('司机接单标记 accepted', rd.accepted === true)
+  signReceipt(rd, '测试签收人')
+  check(
+    '电子签收单生成（QS- 码 + 签收人）',
+    !!rd.receipt && rd.receipt.code.startsWith('QS-') && rd.receipt.signer === '测试签收人' && !!rd.receipt.time
+  )
+} else {
+  console.log('  - 跳过司机端（无待装货公路车次）')
+}
+
+// P3-7 合同生命周期：变更 / 延期 / 终止 / 归档
+const ec = db.contracts.find((c) => c.status === 'executing')
+if (ec) {
+  const r1 = changeContract(ec, { quantity: ec.quantity + 1000 }, '需求增加')
+  check(
+    '合同变更重算金额并记录历史',
+    r1.changed === true && ec.amount === Math.round(ec.quantity * ec.unitPrice) && (ec.changes || []).length > 0
+  )
+  const newEnd = dayjs().add(90, 'day').format('YYYY-MM-DD')
+  extendContract(ec, newEnd, '工期顺延')
+  check('合同延期更新截止日期并记录历史', ec.endDate === newEnd && (ec.changes || []).length > 1)
+}
+const tc = db.contracts.find((c) => c.status === 'executing' && c.id !== ec?.id)
+if (tc) {
+  const billNo = terminateContract(tc, '客户经营调整', false)
+  check(
+    '提前终止：状态 terminated 且待执行计划全部取消',
+    tc.status === 'terminated' &&
+      db.plans.filter((x) => x.contractId === tc.id && x.status === 'pending').length === 0 &&
+      (typeof billNo === 'string' || billNo === null)
+  )
+}
+const ac = db.contracts.find((c) => c.status === 'completed')
+if (ac) {
+  archiveContract(ac)
+  check('合同归档：状态 archived 且记录历史', ac.status === 'archived' && (ac.changes || []).length > 0)
+} else {
+  console.log('  - 跳过归档（无已完成合同）')
+}
+
+// P3-8 KPI 口径
+const kpi = dashboard.kpi
+check('准时交付率在 0-100 区间', kpi.onTimeRate >= 0 && kpi.onTimeRate <= 100)
+const usable = db.vehicles.filter((v) => v.status !== 'scrapped').length
+const inuse = db.vehicles.filter((v) => v.status === 'inuse').length
+check(
+  '车辆利用率 = 运输中车辆 / 非报废车辆',
+  kpi.utilization === (usable ? Math.round((inuse / usable) * 1000) / 10 : 0)
+)
+
+// P3-9 发票号确定性派生
+const invNo = genInvoiceNo('SET-TEST-1')
+check(
+  '发票号确定性派生（16 位数字，2410 开头，与种子口径一致）',
+  invNo === genInvoiceNo('SET-TEST-1') && /^\d{16}$/.test(invNo) && invNo.startsWith('2410')
+)
+check('不同结算单发票号不同', genInvoiceNo('SET-A') !== genInvoiceNo('SET-B'))
+
+// P3-10 公告 / 天气数据源化
+check('公告数据源化（db.announcements）', Array.isArray(db.announcements) && db.announcements.length >= 3)
+const w1 = weatherOf('2026-08-16')
+const w2 = weatherOf('2026-08-16')
+check('天气按日期确定性派生', w1.city && w1.cond && w1.temp > 0 && w1.cond === w2.cond && w1.temp === w2.temp)
+
+// P3-8 报表中心
+check('月度报表覆盖近 6 个月', monthlyReport().length === 6)
+check('客户报表含授信占用口径', customerReport().every((c) => typeof c.creditPct === 'number' && typeof c.outstanding === 'number'))
+check('商品报表含磅单损耗率', commodityReport().every((c) => typeof c.lossRate === 'number'))
+check('场站报表含装卸吞吐', terminalReport().every((t) => typeof t.loadTrips === 'number' && typeof t.unloadTrips === 'number'))
+
+// RBAC：报表中心权限 + 路径一致性
+check('报表中心权限：结算专员可访问、调度员不可访问', menuAllowed('结算专员', '/report') === true && menuAllowed('调度员', '/report') === false)
+check('RBAC 路径与实际路由一致（调度员可访问 /contract）', menuAllowed('调度员', '/contract') === true)
 
 console.log(`\n结果：${pass} 通过，${fail} 失败`)
 process.exit(fail ? 1 : 0)

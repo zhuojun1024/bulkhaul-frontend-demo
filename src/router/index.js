@@ -125,6 +125,12 @@ export const menuRoutes = [
         name: 'Invoice',
         component: () => import('@/views/settlement/invoice.vue'),
         meta: { title: '发票管理', icon: 'Postcard' }
+      },
+      {
+        path: '/report',
+        name: 'Report',
+        component: () => import('@/views/report/index.vue'),
+        meta: { title: '报表中心', icon: 'DataAnalysis' }
       }
     ]
   },
@@ -215,6 +221,13 @@ const hiddenRoutes = [
     name: 'SettlementDetail',
     component: () => import('@/views/settlement/detail.vue'),
     meta: { title: '结算详情', activeMenu: '/settlement' }
+  },
+  {
+    // 司机端（H5 演示）：模拟司机接单/确认/电子签收，从调度详情页进入
+    path: '/driver-app',
+    name: 'DriverApp',
+    component: () => import('@/views/driver/app.vue'),
+    meta: { title: '司机端' }
   }
 ]
 
@@ -266,11 +279,12 @@ router.beforeEach((to, from, next) => {
     return
   }
   // 菜单级权限：详情页跟随所属菜单（meta.activeMenu），其余按自身路径校验
+  // /workbench 与 /driver-app（司机端演示）对所有登录角色开放
   const role = localStorage.getItem('blms_user')
     ? db.users.find((u) => u.username === localStorage.getItem('blms_user'))?.role
     : ''
   const menuPath = to.meta.activeMenu || to.path
-  if (role && menuPath !== '/workbench' && !menuAllowed(role, menuPath)) {
+  if (role && menuPath !== '/workbench' && menuPath !== '/driver-app' && !menuAllowed(role, menuPath)) {
     next('/workbench')
     return
   }

@@ -43,6 +43,7 @@
               <span class="legend-item"><i class="dot dot--orange" />延误</span>
               <span class="legend-item"><i class="dot dot--red" />异常</span>
               <span class="legend-item"><i class="dot dot--gray" />场站</span>
+              <span class="legend-item"><i class="dot dot--fence" />电子围栏</span>
             </div>
           </div>
           <div class="track-map-wrap">
@@ -92,6 +93,26 @@
                 <text :x="t.x" :y="t.y - 14" text-anchor="middle" class="map-label">{{ t.label }}</text>
               </g>
 
+              <!-- 电子围栏（选中车辆的卸货场范围） -->
+              <circle
+                v-if="destNode"
+                :cx="destNode.x" :cy="destNode.y" :r="FENCE_RADIUS"
+                class="fence-circle"
+                :class="{ 'fence-circle--in': inFence }"
+              />
+
+              <!-- 轨迹回放：已走过轨迹 + 回放点 -->
+              <polyline v-if="playTrail" :points="playTrail" class="replay-trail" />
+              <g v-if="playPoint">
+                <circle :cx="playPoint.x" :cy="playPoint.y" r="11" :fill="tokens.primary" opacity="0.22" />
+                <circle
+                  :cx="playPoint.x" :cy="playPoint.y" r="5.5"
+                  :fill="tokens.primary"
+                  style="stroke: var(--text-inverse)"
+                  stroke-width="1.5"
+                />
+              </g>
+
               <!-- 车辆 -->
               <g
                 v-for="v in vehicleDots"
@@ -129,6 +150,40 @@
                 <div><span>预计到达</span>{{ selected.eta }}</div>
               </div>
               <el-progress :percentage="selected.progress" :stroke-width="8" :color="selected.color" />
+
+              <!-- 轨迹回放控制 -->
+              <div class="track-float__replay">
+                <div class="track-float__replay-head">
+                  <span>轨迹回放</span>
+                  <el-select v-model="play.speed" size="small" style="width: 62px">
+                    <el-option :value="1" label="1x" />
+                    <el-option :value="2" label="2x" />
+                    <el-option :value="4" label="4x" />
+                  </el-select>
+                </div>
+                <div class="track-float__replay-bar">
+                  <el-button size="small" :icon="play.playing ? VideoPause : VideoPlay" circle @click="togglePlay" />
+                  <el-slider v-model="play.index" :min="0" :max="20" :show-tooltip="false" class="replay-slider" />
+                  <span class="replay-index num">{{ play.index + 1 }}/21</span>
+                </div>
+              </div>
+
+              <!-- 电子围栏预警 -->
+              <div class="track-float__fences">
+                <div v-if="deviated" class="fence-alert fence-alert--warn">
+                  <el-icon><Warning /></el-icon>轨迹偏离线路 {{ maxDeviation }}m，请核查
+                </div>
+                <div v-else class="fence-alert fence-alert--ok">
+                  <el-icon><CircleCheck /></el-icon>轨迹处于线路电子围栏内
+                </div>
+                <div v-if="selected.delayed" class="fence-alert fence-alert--warn">
+                  <el-icon><AlarmClock /></el-icon>已超预计到达时间（ETA {{ selected.eta }}）
+                </div>
+                <div v-if="inFence" class="fence-alert fence-alert--ok">
+                  <el-icon><Aim /></el-icon>已进入卸货场电子围栏
+                </div>
+              </div>
+
               <div class="track-float__actions">
                 <el-button size="small" type="primary" plain @click="$router.push(`/dispatch/${selected.dispatchId}`)">
                   调度详情
@@ -190,8 +245,8 @@
 
 <script setup>
 defineOptions({ name: 'Track' })
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import { VideoPlay, Close } from '@element-plus/icons-vue'
+import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { VideoPlay, VideoPause, Close, Warning, CircleCheck, AlarmClock, Aim } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import { db, find, MAP_NODES, ROUTES } from '@/mock'
@@ -300,6 +355,111 @@ const filteredVehicles = computed(() => {
 })
 
 const selected = computed(() => vehicleList.value.find((v) => v.id === selectedId.value) || null)
+const selectedDispatch = computed(() => db.dispatches.find((d) => d.id === selectedId.value) || null)
+
+/* ===== 轨迹回放 + 电子围栏 ===== */
+/** 电子围栏半径（地图坐标单位）与偏离阈值 */
+const FENCE_RADIUS = 36
+const DEVIATE_LIMIT = 15
+
+/**
+ * 轨迹点：沿线段均匀取 21 点，叠加按单号确定性派生的横向偏移（基础偏移 + 正弦波动），
+ * 与实时点位同一口径（hashOffset 基础偏移），保证回放轨迹与实时位置一致
+ */
+function trackPointsOf(d) {
+  const from = MAP_NODES[d.loadTerminalId]
+  const to = MAP_NODES[d.unloadTerminalId]
+  const dx = to.x - from.x
+  const dy = to.y - from.y
+  const len = Math.sqrt(dx * dx + dy * dy) || 1
+  const nx = -dy / len
+  const ny = dx / len
+  const base = hashOffset(d.id) * 5
+  const phase = (hashOffset(d.id) % 6) * 0.7
+  const pts = []
+  for (let i = 0; i <= 20; i++) {
+    const p = i / 20
+    const off = base + 8 * Math.sin(i * 0.6 + phase)
+    pts.push({ x: from.x + dx * p + nx * off, y: from.y + dy * p + ny * off })
+  }
+  return pts
+}
+
+const play = reactive({ index: 0, playing: false, speed: 1 })
+let playTimer = null
+
+watch(selectedId, (id) => {
+  const d = db.dispatches.find((x) => x.id === id)
+  // 回放游标初始对齐当前实时进度
+  play.index = d ? Math.round((d.progress / 100) * 20) : 0
+  play.playing = false
+  syncPlayTimer()
+})
+
+function togglePlay() {
+  if (!play.playing && play.index >= 20) play.index = 0
+  play.playing = !play.playing
+  syncPlayTimer()
+}
+
+function syncPlayTimer() {
+  clearInterval(playTimer)
+  if (play.playing) {
+    playTimer = setInterval(() => {
+      if (play.index >= 20) {
+        play.playing = false
+        syncPlayTimer()
+        return
+      }
+      play.index += 1
+    }, 300 / play.speed)
+  }
+}
+
+const destNode = computed(() => (selectedDispatch.value ? MAP_NODES[selectedDispatch.value.unloadTerminalId] : null))
+
+const playPoint = computed(() => {
+  if (!selectedDispatch.value) return null
+  const pts = trackPointsOf(selectedDispatch.value)
+  return pts[Math.min(play.index, pts.length - 1)]
+})
+
+const playTrail = computed(() => {
+  if (!selectedDispatch.value) return ''
+  return trackPointsOf(selectedDispatch.value)
+    .slice(0, play.index + 1)
+    .map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`)
+    .join(' ')
+})
+
+/** 回放点是否进入卸货场电子围栏 */
+const inFence = computed(() => {
+  if (!playPoint.value || !destNode.value) return false
+  const dx = playPoint.value.x - destNode.value.x
+  const dy = playPoint.value.y - destNode.value.y
+  return Math.sqrt(dx * dx + dy * dy) <= FENCE_RADIUS
+})
+
+/** 轨迹最大偏离：轨迹点到线路直线的最大垂直距离 */
+const maxDeviation = computed(() => {
+  const d = selectedDispatch.value
+  if (!d) return 0
+  const from = MAP_NODES[d.loadTerminalId]
+  const to = MAP_NODES[d.unloadTerminalId]
+  const dx = to.x - from.x
+  const dy = to.y - from.y
+  const len2 = dx * dx + dy * dy || 1
+  let max = 0
+  for (const p of trackPointsOf(d)) {
+    const t = ((p.x - from.x) * dx + (p.y - from.y) * dy) / len2
+    const px = from.x + dx * t
+    const py = from.y + dy * t
+    max = Math.max(max, Math.sqrt((p.x - px) ** 2 + (p.y - py) ** 2))
+  }
+  return Math.round(max)
+})
+
+const deviated = computed(() => maxDeviation.value > DEVIATE_LIMIT)
 
 /* ===== 顶部指标 ===== */
 const intransitList = computed(() => vehicleList.value.filter((v) => v.status === 'intransit'))
@@ -326,7 +486,10 @@ onMounted(() => {
     }
   }, 3000)
 })
-onBeforeUnmount(() => clearInterval(timer))
+onBeforeUnmount(() => {
+  clearInterval(timer)
+  clearInterval(playTimer)
+})
 </script>
 
 <style scoped>
@@ -367,6 +530,10 @@ onBeforeUnmount(() => clearInterval(timer))
 .dot--orange { background: var(--color-warning); }
 .dot--red { background: var(--color-danger); }
 .dot--gray { background: var(--color-info); }
+.dot--fence {
+  background: transparent;
+  border: 1.5px dashed var(--color-primary);
+}
 
 .track-map-wrap {
   position: relative;
@@ -402,6 +569,28 @@ onBeforeUnmount(() => clearInterval(timer))
 .map-vehicle--selected circle:nth-child(2) {
   stroke: var(--text-primary);
   stroke-width: 3;
+}
+
+/* 电子围栏 */
+.fence-circle {
+  fill: rgba(43, 92, 230, 0.06);
+  stroke: var(--color-primary);
+  stroke-width: 1.5;
+  stroke-dasharray: 6 4;
+}
+
+.fence-circle--in {
+  fill: rgba(43, 92, 230, 0.18);
+}
+
+/* 轨迹回放 */
+.replay-trail {
+  fill: none;
+  stroke: var(--color-primary);
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.65;
 }
 
 /* 选中浮层 */
@@ -447,6 +636,67 @@ onBeforeUnmount(() => clearInterval(timer))
   display: flex;
   gap: 8px;
   margin-top: 12px;
+}
+
+/* 轨迹回放控制 */
+.track-float__replay {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: var(--color-neutral-50);
+  border-radius: 8px;
+}
+
+.track-float__replay-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.track-float__replay-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.replay-slider {
+  flex: 1;
+}
+
+.replay-index {
+  font-size: 12px;
+  color: var(--text-secondary);
+  min-width: 34px;
+  text-align: right;
+}
+
+/* 电子围栏预警 */
+.track-float__fences {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.fence-alert {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 6px;
+}
+
+.fence-alert--warn {
+  background: color-mix(in srgb, var(--color-warning) 10%, var(--bg-card));
+  color: var(--color-warning);
+}
+
+.fence-alert--ok {
+  background: color-mix(in srgb, var(--color-success) 10%, var(--bg-card));
+  color: var(--color-success);
 }
 
 /* 右侧列表 */
