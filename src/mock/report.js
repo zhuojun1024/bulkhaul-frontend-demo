@@ -25,7 +25,7 @@ export function monthlyReport() {
       volume: +done.reduce((s, d) => s + d.quantity, 0).toFixed(1),
       settleAmount: settlements.reduce((s, x) => s + x.totalAmount, 0),
       paidAmount: payments.reduce((s, x) => s + x.amount, 0),
-      overdueCount: settlements.filter((s) => s.status === 'overdue').length
+      overdueCount: settlements.filter((s) => s.status === 'overdue' && s.period === m).length
     }
   })
 }

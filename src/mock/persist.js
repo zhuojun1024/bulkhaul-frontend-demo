@@ -9,7 +9,8 @@ import { db } from './base'
  * 快照带版本号，结构升级后自动丢弃旧快照。
  */
 const KEY = 'blms_db_snapshot'
-const VERSION = 1
+// 结构升级（调度单增加 accepted、事故与异常单建立关联等）后递增，自动丢弃旧快照
+const VERSION = 2
 
 const canUse = typeof window !== 'undefined' && !!window.localStorage
 

@@ -5,6 +5,7 @@ import { useUserStore } from '@/store'
  * 角色权限（RBAC）
  * 菜单级：ROLE_MENUS 控制侧边栏可见菜单与路由访问；null 表示全部菜单
  * 按钮级：ROLE_ACTIONS 控制关键操作按钮；null 表示全部操作，[] 表示只读
+ * 默认策略：未注册角色（含空角色）一律拒绝（deny），避免新增/停用角色绕过权限
  *
  * 操作码：
  *  contract   新建/终止合同      contract-approve 合同审批（通过/驳回）
@@ -44,17 +45,19 @@ export const ROLE_ACTIONS = {
   安全管理员: ['dispatch', 'exception', 'safety']
 }
 
-/** 当前用户是否可见指定菜单路径 */
+/** 当前用户是否可见指定菜单路径（未注册角色默认拒绝） */
 export function menuAllowed(role, path) {
   const menus = ROLE_MENUS[role]
-  if (menus === undefined || menus === null) return true
+  if (menus === null) return true
+  if (menus === undefined) return false
   return menus.includes(path)
 }
 
-/** 当前用户是否可执行指定操作 */
+/** 当前用户是否可执行指定操作（未注册角色默认拒绝） */
 export function actionAllowed(role, action) {
   const actions = ROLE_ACTIONS[role]
-  if (actions === undefined || actions === null) return true
+  if (actions === null) return true
+  if (actions === undefined) return false
   return actions.includes(action)
 }
 

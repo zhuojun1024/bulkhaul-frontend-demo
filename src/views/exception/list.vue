@@ -263,7 +263,11 @@ const relatedDispatch = computed(() =>
 function resume() {
   const d = relatedDispatch.value
   if (!d || d.status !== 'exception') return
-  resumeDispatch(d)
+  const r = resumeDispatch(d)
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
   ElMessage.success(`调度单 ${d.id} 已恢复运输`)
 }
 
@@ -300,7 +304,11 @@ function closeException(row) {
       '恢复运输',
       { confirmButtonText: '恢复', cancelButtonText: '暂不', type: 'warning' }
     ).then(() => {
-      resumeDispatch(d)
+      const r = resumeDispatch(d)
+      if (r && r.error) {
+        ElMessage.error(r.error)
+        return
+      }
       ElMessage.success(`调度单 ${d.id} 已恢复运输`)
     }).catch(() => {})
   }

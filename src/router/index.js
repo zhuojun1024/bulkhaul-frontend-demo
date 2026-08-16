@@ -278,13 +278,20 @@ router.beforeEach((to, from, next) => {
     next('/workbench')
     return
   }
+  // 账号校验：已停用/已删除的账号视为未登录，清除登录态回登录页
+  const savedName = localStorage.getItem('blms_user')
+  const user = savedName ? db.users.find((u) => u.username === savedName && u.status === 'active') : null
+  if (!user && to.path !== '/login') {
+    localStorage.removeItem('blms_token')
+    localStorage.removeItem('blms_user')
+    next({ path: '/login', query: { redirect: to.fullPath } })
+    return
+  }
   // 菜单级权限：详情页跟随所属菜单（meta.activeMenu），其余按自身路径校验
   // /workbench 与 /driver-app（司机端演示）对所有登录角色开放
-  const role = localStorage.getItem('blms_user')
-    ? db.users.find((u) => u.username === localStorage.getItem('blms_user'))?.role
-    : ''
+  // 未知/空角色默认拒绝（deny），仅能停留在工作台
   const menuPath = to.meta.activeMenu || to.path
-  if (role && menuPath !== '/workbench' && menuPath !== '/driver-app' && !menuAllowed(role, menuPath)) {
+  if (user && menuPath !== '/workbench' && menuPath !== '/driver-app' && !menuAllowed(user.role, menuPath)) {
     next('/workbench')
     return
   }

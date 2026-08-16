@@ -90,6 +90,9 @@
         <el-form-item label="账号" required>
           <el-input v-model="form.username" placeholder="登录账号" :disabled="!!editingId" />
         </el-form-item>
+        <el-form-item v-if="!editingId" label="密码" required>
+          <el-input v-model="form.password" type="password" show-password placeholder="默认 123456（演示环境统一密码）" />
+        </el-form-item>
         <el-form-item label="角色" required>
           <el-select v-model="form.role" style="width: 100%">
             <el-option v-for="r in db.roles" :key="r.id" :label="r.name" :value="r.name" />
@@ -165,7 +168,7 @@ function removeUser(row) {
 /* ===== 新增/编辑 ===== */
 const dialogVisible = ref(false)
 const editingId = ref('')
-const form = reactive({ name: '', username: '', role: '调度员', phone: '', email: '' })
+const form = reactive({ name: '', username: '', password: '123456', role: '调度员', phone: '', email: '' })
 
 function openDialog(row) {
   if (row) {
@@ -173,25 +176,44 @@ function openDialog(row) {
     Object.assign(form, { name: row.name, username: row.username, role: row.role, phone: row.phone, email: row.email })
   } else {
     editingId.value = ''
-    Object.assign(form, { name: '', username: '', role: '调度员', phone: '', email: '' })
+    Object.assign(form, { name: '', username: '', password: '123456', role: '调度员', phone: '', email: '' })
   }
   dialogVisible.value = true
 }
 
+/** 取不冲突的用户 id（避免删除用户后长度回退导致 id 重复） */
+function nextUserId() {
+  const max = db.users.reduce((m, u) => {
+    const n = parseInt(String(u.id).replace(/\D/g, ''), 10)
+    return Number.isNaN(n) ? m : Math.max(m, n)
+  }, 0)
+  return `U${String(max + 1).padStart(3, '0')}`
+}
+
 function save() {
-  if (!form.name || !form.username) {
+  const username = form.username.trim()
+  if (!form.name.trim() || !username) {
     ElMessage.warning('请填写姓名和账号')
     return
   }
   if (editingId.value) {
     const row = db.users.find((u) => u.id === editingId.value)
-    Object.assign(row, { name: form.name, role: form.role, phone: form.phone, email: form.email })
+    Object.assign(row, { name: form.name.trim(), role: form.role, phone: form.phone, email: form.email })
     ElMessage.success('用户已更新')
   } else {
+    if (db.users.some((u) => u.username === username)) {
+      ElMessage.warning(`账号 ${username} 已存在，请更换登录账号`)
+      return
+    }
+    if (!form.password) {
+      ElMessage.warning('请设置登录密码')
+      return
+    }
     db.users.push({
-      id: `U${String(db.users.length + 1).padStart(3, '0')}`,
-      username: form.username,
-      name: form.name,
+      id: nextUserId(),
+      username,
+      name: form.name.trim(),
+      password: form.password,
       role: form.role,
       phone: form.phone || '-',
       email: form.email || '-',
@@ -199,7 +221,7 @@ function save() {
       lastLogin: '-',
       createdAt: dayjs().format('YYYY-MM-DD')
     })
-    ElMessage.success('用户已创建')
+    ElMessage.success('用户已创建，可使用该账号登录')
   }
   dialogVisible.value = false
 }

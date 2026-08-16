@@ -173,8 +173,11 @@ function warehouseIn(d) {
   logAction('仓储管理', '入库', `调度单 ${d.id} 卸货：${wh.name} 入库 ${qty} 吨`)
 }
 
-/** 确认装货：pending → loading，公路车次登记进磅单，装货场站出库 */
+/** 确认装货：pending → loading，公路车次登记进磅单，装货场站出库
+ *  前置守卫：须处于"待装货"态；公路车次须司机已接单（与司机端规则一致） */
 export function confirmLoad(d) {
+  if (d.status !== 'pending') return { error: `调度单 ${d.id} 当前非"待装货"状态，无法确认装货` }
+  if (isRoadMode(d.mode) && d.driverId && !d.accepted) return { error: `司机尚未接单，请先由司机接单后再确认装货` }
   d.status = 'loading'
   d.loadTime = dayjs().format('YYYY-MM-DD HH:mm')
   d.progress = 5
@@ -192,6 +195,7 @@ export function confirmLoad(d) {
 
 /** 发车：loading → intransit，占用车辆司机 */
 export function depart(d) {
+  if (d.status !== 'loading') return { error: `调度单 ${d.id} 当前非"装货中"状态，无法发车` }
   d.status = 'intransit'
   d.progress = 10
   d.speed = randInt(40, 68)
@@ -204,6 +208,7 @@ export function depart(d) {
 
 /** 到达：intransit → unloading */
 export function arrive(d) {
+  if (d.status !== 'intransit') return { error: `调度单 ${d.id} 当前非"在途"状态，无法确认到达` }
   d.status = 'unloading'
   d.progress = 96
   d.speed = 0
@@ -214,6 +219,7 @@ export function arrive(d) {
 
 /** 确认卸货：unloading → completed，公路车次登记出磅单（含 1.5% 损耗），卸货场站入库，释放资源并回卷 */
 export function confirmUnload(d) {
+  if (d.status !== 'unloading') return { error: `调度单 ${d.id} 当前非"卸货中"状态，无法确认卸货` }
   d.status = 'completed'
   d.unloadTime = dayjs().format('YYYY-MM-DD HH:mm')
   d.progress = 100
@@ -237,6 +243,9 @@ export function confirmUnload(d) {
 
 /** 上报异常：→ exception，生成异常单；事故类同步生成事故记录 */
 export function reportException(d, description, type = 'other', level = 'medium') {
+  if (!['pending', 'loading', 'intransit', 'unloading'].includes(d.status)) {
+    return { error: `调度单 ${d.id} 当前非执行中状态，无法上报异常` }
+  }
   d.status = 'exception'
   d.speed = 0
   const e = {
@@ -278,6 +287,7 @@ export function reportException(d, description, type = 'other', level = 'medium'
 
 /** 恢复运输：exception → intransit(已装货) / loading(未装货) */
 export function resumeDispatch(d) {
+  if (d.status !== 'exception') return { error: `调度单 ${d.id} 当前非"异常"状态，无法恢复运输` }
   if (d.loadTime) {
     d.status = 'intransit'
     d.progress = Math.max(10, Math.min(d.progress || 10, 90))
@@ -363,6 +373,7 @@ export function createDispatches(p, count, vehicleIds = []) {
         unitNo: p.mode === '多式联运' ? unitNoOf('多式联运', `PD-${db.dispatches.length + 1}`) : '',
         distance: route ? route.distance : 300,
         status: 'pending',
+        accepted: false,
         dispatchTime: dayjs().format('YYYY-MM-DD HH:mm'),
         loadTime: null,
         unloadTime: null,
@@ -391,6 +402,7 @@ export function createDispatches(p, count, vehicleIds = []) {
         unitNo: unitNoOf(p.mode, id),
         distance: route ? route.distance : 300,
         status: 'pending',
+        accepted: false,
         dispatchTime: dayjs().format('YYYY-MM-DD HH:mm'),
         loadTime: null,
         unloadTime: null,
@@ -559,12 +571,13 @@ export function recalcSettlementStatus(s) {
   s.status = due && unpaid && dayjs().isAfter(due) ? 'overdue' : 'settled'
 }
 
-/** 确认结算：对账中 → 已结算，进入收款（账期由合同约定） */
+/** 确认结算：对账中 → 已结算，进入收款（账期由合同约定）
+ *  保留预付款：不清零已累积的 paidAmount（对账前已收预付），与收款流水保持一致 */
 export function confirmSettle(s) {
+  if (s.status !== 'reconciling') return { error: `账单 ${s.billNo} 当前非"对账中"状态，无法确认结算` }
   s.status = 'settled'
   s.settleDate = dayjs().format('YYYY-MM-DD')
-  s.paidAmount = 0
-  logAction('结算管理', '确认结算', `账单 ${s.billNo} 结算金额 ${formatMoney(s.totalAmount)}`)
+  logAction('结算管理', '确认结算', `账单 ${s.billNo} 结算金额 ${formatMoney(s.totalAmount)}，累计已付 ${formatMoney(s.paidAmount)}`)
 }
 
 /** 登记收款：写入收款流水并更新已付金额，超收按未付余额截断 */

@@ -151,22 +151,30 @@ function progressColor(status) {
 }
 
 /* ===== 操作（调用 flow 中枢，与 PC 端同一套状态机） ===== */
+/** 状态机守卫拦截提示（flow 返回 { error } 时） */
+function guardError(r) {
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return true
+  }
+  return false
+}
 function onAccept(d) {
   acceptDispatch(d)
   ElMessage.success('接单成功')
 }
 function onLoad(d) {
   ElMessageBox.confirm(`确认已完成装货（${d.quantity} 吨）？`, '确认装货', { type: 'info' }).then(() => {
-    flowConfirmLoad(d)
+    if (guardError(flowConfirmLoad(d))) return
     ElMessage.success('装货确认成功，进磅单已登记')
   }).catch(() => {})
 }
 function onDepart(d) {
-  flowDepart(d)
+  if (guardError(flowDepart(d))) return
   ElMessage.success('已发车，进入在途状态')
 }
 function onArrive(d) {
-  flowArrive(d)
+  if (guardError(flowArrive(d))) return
   ElMessage.success('已到达卸货场站')
 }
 
@@ -187,7 +195,7 @@ function submitSign() {
     ElMessage.warning('请填写签收人姓名')
     return
   }
-  flowConfirmUnload(signTarget.value)
+  if (guardError(flowConfirmUnload(signTarget.value))) return
   signReceipt(signTarget.value, signer.value.trim())
   signDialog.value = false
   ElMessage.success('卸货完成，电子签收单已生成')

@@ -38,7 +38,7 @@ import {
   archiveContract
 } from '../src/mock/flow.js'
 import { monthlyReport, customerReport, commodityReport, terminalReport } from '../src/mock/report.js'
-import { menuAllowed } from '../src/permission.js'
+import { menuAllowed, actionAllowed } from '../src/permission.js'
 
 let pass = 0
 let fail = 0
@@ -136,6 +136,10 @@ check('计划状态 → dispatched', plan.status === 'dispatched')
 const d = created[0]
 const v = db.vehicles.find((x) => x.id === d.vehicleId)
 const dr = db.drivers.find((x) => x.id === d.driverId)
+// P0-6 状态机守卫：新派车单未接单不可确认装货（与司机端规则一致）
+const blockedLoad = confirmLoad(created[1])
+check('守卫：未接单公路车次不可确认装货', !!blockedLoad?.error && created[1].status === 'pending')
+acceptDispatch(d)
 confirmLoad(d)
 check('确认装货 → loading + 进磅单', d.status === 'loading' && db.weighings.some((w) => w.dispatchId === d.id && w.type === '进磅'))
 depart(d)
@@ -155,6 +159,7 @@ check('合同进度随执行上升', contract.progress > 0)
 
 console.log('== 3. 异常闭环 ==')
 const d2 = created[1]
+acceptDispatch(d2)
 confirmLoad(d2)
 depart(d2)
 reportException(d2, '测试异常')
@@ -224,6 +229,7 @@ check('信用校验：超出授信额度的订单被拒', creditCheck(c1.id, c1.
 console.log('== 6. 模块互联（P2） ==')
 // P2-3 审计日志：状态变更动作实时写日志
 const logBefore = db.logs.length
+acceptDispatch(created[2])
 confirmLoad(created[2])
 depart(created[2])
 check('状态变更动作写入审计日志（含操作人/详情）', db.logs.length > logBefore && db.logs[0].user && !!db.logs[0].detail)
@@ -427,6 +433,69 @@ check('场站报表含装卸吞吐', terminalReport().every((t) => typeof t.load
 // RBAC：报表中心权限 + 路径一致性
 check('报表中心权限：结算专员可访问、调度员不可访问', menuAllowed('结算专员', '/report') === true && menuAllowed('调度员', '/report') === false)
 check('RBAC 路径与实际路由一致（调度员可访问 /contract）', menuAllowed('调度员', '/contract') === true)
+
+console.log('== 8. P0 回归（状态机守卫 / 预付款保留 / RBAC 默认拒绝 / 报表口径 / 事故关联） ==')
+
+// 状态机守卫：非法流转被拦截且状态不变
+check('守卫：在途车次不可确认装货/重复发车', (() => {
+  const a = confirmLoad(d2)
+  const b = depart(d2)
+  return !!a?.error && !!b?.error && d2.status === 'intransit'
+})())
+const excD = db.dispatches.find((x) => x.status === 'exception')
+check('守卫：异常车次不可发车/确认卸货', (() => {
+  if (!excD) return true
+  const a = depart(excD)
+  const b = confirmUnload(excD)
+  return !!a?.error && !!b?.error && excD.status === 'exception'
+})())
+check('守卫：已完成车次不可再流转', (() => {
+  const a = confirmUnload(d)
+  const b = reportException(d, '已完成再报异常')
+  return !!a?.error && !!b?.error && d.status === 'completed'
+})())
+
+// P0-4：对账前预付在确认结算后保留（不清零），与收款流水一致
+const preS = db.settlements.find((s) => s.status === 'reconciling' && s.paidAmount > 0)
+if (preS) {
+  const pre = preS.paidAmount
+  confirmSettle(preS)
+  check('确认结算保留预付款（已付金额不清零）', preS.status === 'settled' && preS.paidAmount === pre)
+  check(
+    '预付款与收款流水合计一致',
+    db.payments.filter((p) => p.settlementId === preS.id).reduce((a, p) => a + p.amount, 0) === preS.paidAmount
+  )
+} else {
+  console.log('  - 跳过预付款保留（无带预付的对账中账单）')
+}
+
+// P0-7：月度报表逾期数按月过滤（各月之和 = 全量逾期账单数）
+const mr = monthlyReport()
+check(
+  '月度报表逾期数按月过滤（各月之和 = 全量逾期账单数）',
+  mr.reduce((sum, m) => sum + m.overdueCount, 0) === db.settlements.filter((s) => s.status === 'overdue').length
+)
+
+// P0-1：RBAC 默认拒绝（未知/空角色无任何菜单与操作），null 角色仍为全权限
+check(
+  'RBAC 默认拒绝：未知/空角色无菜单无操作',
+  menuAllowed('未知角色', '/contract') === false &&
+    menuAllowed('', '/contract') === false &&
+    actionAllowed('未知角色', 'dispatch') === false &&
+    actionAllowed('', 'dispatch') === false
+)
+check(
+  'RBAC：平台管理员(null)仍为全权限',
+  menuAllowed('平台管理员', '/contract') === true && actionAllowed('平台管理员', 'dispatch') === true
+)
+
+// P0-5：种子事故类异常与事故记录双向关联
+const linkedAccExceptions = db.exceptions.filter((e) => e.type === 'accident' && e.accidentId)
+check(
+  '种子事故类异常与事故记录双向关联',
+  linkedAccExceptions.length > 0 &&
+    linkedAccExceptions.every((e) => db.accidents.some((a) => a.id === e.accidentId && a.exceptionId === e.id))
+)
 
 console.log(`\n结果：${pass} 通过，${fail} 失败`)
 process.exit(fail ? 1 : 0)

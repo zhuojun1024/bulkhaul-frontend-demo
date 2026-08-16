@@ -325,7 +325,11 @@ function settle() {
     '确认结算',
     { dangerouslyUseHTMLString: true, type: 'success', confirmButtonText: '确认结算' }
   ).then(() => {
-    confirmSettle(s)
+    const r = confirmSettle(s)
+    if (r && r.error) {
+      ElMessage.error(r.error)
+      return
+    }
     ElMessage.success('结算完成，进入收款')
   }).catch(() => {})
 }

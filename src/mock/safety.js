@@ -33,6 +33,29 @@ db.accidents = Array.from({ length: 15 }, (_, i) => {
   }
 })
 
+/** 种子联动：事故类异常单与事故记录双向关联（exceptionId/accidentId），对齐车辆/级别/时间，消除两模块孤岛 */
+const levelToAccident = { high: '重大', medium: '较大', low: '一般' }
+db.exceptions
+  .filter((e) => e.type === 'accident' && !e.accidentId)
+  .forEach((e, i) => {
+    const a = db.accidents[i]
+    if (!a || a.exceptionId) return
+    const d = db.dispatches.find((x) => x.id === e.dispatchId)
+    a.exceptionId = e.id
+    e.accidentId = a.id
+    a.time = e.occurTime.slice(0, 10)
+    a.level = levelToAccident[e.level] || a.level
+    a.loss = e.cost || a.loss
+    if (e.status === 'closed') {
+      a.status = 'closed'
+      a.handling = e.result || a.handling
+    }
+    if (d && d.vehicleId) {
+      a.vehicleId = d.vehicleId
+      a.plate = db.vehicles.find((v) => v.id === d.vehicleId)?.plate || a.plate
+    }
+  })
+
 /** 安全培训 */
 db.trainings = Array.from({ length: 12 }, (_, i) => {
   const date = dayjs(NOW).add(i < 8 ? -randInt(5, 180) : randInt(3, 45), 'day')

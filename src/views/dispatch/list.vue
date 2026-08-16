@@ -116,7 +116,7 @@
               <el-button
                 v-if="['pending', 'loading', 'intransit'].includes(row.status) && can('exception')"
                 link type="danger" size="small"
-                @click.stop="reportException(row)"
+                @click.stop="openReport(row)"
               >报异常</el-button>
             </template>
           </el-table-column>
@@ -134,6 +134,33 @@
         </div>
       </div>
     </div>
+
+    <!-- 上报异常（类型 + 级别 + 描述） -->
+    <el-dialog v-model="excDialog" title="上报异常" width="480px">
+      <div v-if="excTarget">
+        <el-alert :title="'调度单 ' + excTarget.id + '（' + unitLabel(excTarget) + '）'" type="warning" :closable="false" show-icon />
+        <el-form label-width="80px" style="margin-top: 16px">
+          <el-form-item label="异常类型" required>
+            <el-select v-model="excForm.type" style="width: 100%">
+              <el-option v-for="(v, k) in excTypeMap" :key="k" :label="v" :value="k" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="级别" required>
+            <el-select v-model="excForm.level" style="width: 100%">
+              <el-option v-for="(v, k) in excLevelMap" :key="k" :label="v.label" :value="k" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="描述" required>
+            <el-input v-model="excForm.description" type="textarea" :rows="3" maxlength="200" show-word-limit placeholder="请简述异常情况" />
+          </el-form-item>
+        </el-form>
+        <div v-if="excForm.type === 'accident'" class="exc-tip">事故类异常将同步生成事故记录，进入安全管理模块跟踪。</div>
+      </div>
+      <template #footer>
+        <el-button @click="excDialog = false">取消</el-button>
+        <el-button type="danger" @click="submitException">上报</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -234,6 +261,15 @@ function progressColor(status) {
 /** 执行主体展示：公路口径取车牌，非公路口径取运输单元号 */
 const unitLabel = (d) => find.vehicle(d.vehicleId)?.plate || d.unitNo || d.id
 
+/** 状态机守卫拦截提示（flow 返回 { error } 时） */
+function guardError(r) {
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return true
+  }
+  return false
+}
+
 function confirmLoad(row) {
   const road = isRoadMode(row.mode)
   ElMessageBox.confirm(
@@ -243,7 +279,7 @@ function confirmLoad(row) {
     '确认装货',
     { dangerouslyUseHTMLString: road, type: 'info', confirmButtonText: '确认装货' }
   ).then(() => {
-    flowConfirmLoad(row)
+    if (guardError(flowConfirmLoad(row))) return
     ElMessage.success(road ? '装货确认成功，进磅单已登记' : '装货确认成功')
   }).catch(() => {})
 }
@@ -254,7 +290,7 @@ function depart(row) {
     '发车确认',
     { type: 'info', confirmButtonText: '确认发车' }
   ).then(() => {
-    flowDepart(row)
+    if (guardError(flowDepart(row))) return
     ElMessage.success('已发车，进入在途状态')
   }).catch(() => {})
 }
@@ -265,7 +301,7 @@ function arrive(row) {
     '到达确认',
     { type: 'info', confirmButtonText: '确认到达' }
   ).then(() => {
-    flowArrive(row)
+    if (guardError(flowArrive(row))) return
     ElMessage.success('已到达，进入卸货状态')
   }).catch(() => {})
 }
@@ -279,7 +315,7 @@ function confirmUnload(row) {
     '确认卸货',
     { dangerouslyUseHTMLString: road, type: 'success', confirmButtonText: '确认卸货' }
   ).then(() => {
-    flowConfirmUnload(row)
+    if (guardError(flowConfirmUnload(row))) return
     ElMessage.success('卸货确认成功，本次运输已完成')
   }).catch(() => {})
 }
@@ -290,21 +326,42 @@ function resume(row) {
     '恢复运输',
     { type: 'warning', confirmButtonText: '确认恢复' }
   ).then(() => {
-    resumeDispatch(row)
+    if (guardError(resumeDispatch(row))) return
     ElMessage.success('已恢复运输')
   }).catch(() => {})
 }
 
-function reportException(row) {
-  ElMessageBox.prompt('请简述异常情况', `上报异常 - ${row.id}`, {
-    inputPattern: /.{2,}/,
-    inputErrorMessage: '描述至少 2 个字符',
-    confirmButtonText: '上报',
-    type: 'warning'
-  }).then(({ value }) => {
-    flowReportException(row, value)
-    ElMessage.warning('异常已上报，请前往异常处理模块跟进')
-  }).catch(() => {})
+/* ===== 上报异常（类型 + 级别 + 描述，事故类联动安全模块） ===== */
+const excDialog = ref(false)
+const excTarget = ref(null)
+const excForm = reactive({ type: 'other', level: 'medium', description: '' })
+const excTypeMap = { delay: '延误', accident: '事故', damage: '货损', quality: '质量', overload: '超载', other: '其他' }
+const excLevelMap = {
+  low: { label: '低', type: 'info' },
+  medium: { label: '中', type: 'warning' },
+  high: { label: '高', type: 'danger' }
+}
+
+function openReport(row) {
+  excTarget.value = row
+  excForm.type = 'other'
+  excForm.level = 'medium'
+  excForm.description = ''
+  excDialog.value = true
+}
+
+function submitException() {
+  if (!excForm.description.trim() || excForm.description.trim().length < 2) {
+    ElMessage.warning('描述至少 2 个字符')
+    return
+  }
+  const r = flowReportException(excTarget.value, excForm.description.trim(), excForm.type, excForm.level)
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
+  excDialog.value = false
+  ElMessage.warning('异常已上报，请前往异常处理模块跟进')
 }
 
 function exportCsv() {
@@ -338,6 +395,11 @@ function exportCsv() {
   display: grid;
   grid-template-columns: repeat(6, 1fr);
   gap: 12px;
+}
+
+.exc-tip {
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 
 .stat-chip {

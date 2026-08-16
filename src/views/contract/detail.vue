@@ -14,15 +14,15 @@
           </div>
         </div>
         <div class="contract-detail__actions">
-          <el-button v-if="contract?.status === 'pending'" type="success" :icon="Check" @click="approve">
-            审批通过
+          <el-button v-if="contract?.status === 'pending' && can('contract-approve')" type="success" :icon="Check" @click="openApprove">
+            审批
           </el-button>
-          <template v-if="contract?.status === 'executing'">
+          <template v-if="contract?.status === 'executing' && can('contract')">
             <el-button type="warning" plain :icon="EditPen" @click="openChange">变更</el-button>
             <el-button type="primary" plain :icon="Calendar" @click="openExtend">延期</el-button>
             <el-button type="danger" plain :icon="CircleClose" @click="openTerminate">终止合同</el-button>
           </template>
-          <el-button v-if="contract?.status === 'completed'" type="info" plain :icon="FolderChecked" @click="archive">
+          <el-button v-if="contract?.status === 'completed' && can('contract')" type="info" plain :icon="FolderChecked" @click="archive">
             归档
           </el-button>
           <el-button :icon="Printer" @click="printContract">打印</el-button>
@@ -191,6 +191,34 @@
       </el-tab-pane>
     </el-tabs>
 
+    <!-- 合同审批（通过 / 驳回） -->
+    <el-dialog v-model="approveDialog" title="合同审批" width="480px">
+      <div v-if="contract">
+        <el-descriptions :column="1" border size="small" style="margin-bottom: 16px">
+          <el-descriptions-item label="合同编号">{{ contract.id }}</el-descriptions-item>
+          <el-descriptions-item label="合同名称">{{ contract.name }}</el-descriptions-item>
+          <el-descriptions-item label="金额">{{ formatMoney(contract.amount) }}</el-descriptions-item>
+        </el-descriptions>
+        <el-form label-width="80px">
+          <el-form-item label="审批意见">
+            <el-input
+              v-model="approveComment"
+              type="textarea"
+              :rows="3"
+              placeholder="通过可留空（默认“同意”）；驳回必须填写原因"
+              maxlength="200"
+              show-word-limit
+            />
+          </el-form-item>
+        </el-form>
+      </div>
+      <template #footer>
+        <el-button @click="approveDialog = false">取消</el-button>
+        <el-button type="danger" plain @click="doReject">驳回</el-button>
+        <el-button type="success" @click="doApprove">通过</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 合同变更 -->
     <el-dialog v-model="changeDialog" title="合同变更" width="480px">
       <div v-if="contract">
@@ -271,13 +299,16 @@ import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
 import {
   approveContract,
+  rejectContract,
   changeContract,
   extendContract,
   terminateContract,
   archiveContract
 } from '@/mock/flow'
 import { formatMoney, formatNum } from '@/utils'
+import { usePerm } from '@/permission'
 
+const { can } = usePerm()
 const route = useRoute()
 const loading = ref(true)
 const activeTab = ref('base')
@@ -330,11 +361,29 @@ const settleStatusMap = {
 
 const changes = computed(() => contract.value?.changes || [])
 
-function approve() {
-  ElMessageBox.confirm('确认审批通过该合同？', '合同审批', { type: 'warning' }).then(() => {
-    approveContract(contract.value, '同意')
-    ElMessage.success('审批通过，合同已进入执行状态')
-  }).catch(() => {})
+/* ===== 审批（通过 / 驳回，与列表页同一弹窗口径） ===== */
+const approveDialog = ref(false)
+const approveComment = ref('')
+
+function openApprove() {
+  approveComment.value = ''
+  approveDialog.value = true
+}
+
+function doApprove() {
+  approveContract(contract.value, approveComment.value.trim())
+  approveDialog.value = false
+  ElMessage.success(`合同 ${contract.value.id} 审批通过，已进入执行状态`)
+}
+
+function doReject() {
+  if (!approveComment.value.trim()) {
+    ElMessage.warning('驳回必须填写审批意见（原因）')
+    return
+  }
+  rejectContract(contract.value, approveComment.value.trim())
+  approveDialog.value = false
+  ElMessage.success(`合同 ${contract.value.id} 已驳回，回到草稿`)
 }
 
 /* ===== 合同变更 ===== */

@@ -128,6 +128,8 @@ for (const plan of executablePlans) {
       driverId: driver.id,
       distance: route.distance,
       status,
+      // 种子待装货车次视为司机已接单（历史下发）；新派车单由司机端接单后流转
+      accepted: status === 'pending',
       dispatchTime: dispatchTime.format('YYYY-MM-DD HH:mm'),
       loadTime: loadTime ? loadTime.format('YYYY-MM-DD HH:mm') : null,
       unloadTime: unloadTime ? unloadTime.format('YYYY-MM-DD HH:mm') : null,

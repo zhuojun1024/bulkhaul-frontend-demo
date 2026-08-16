@@ -28,7 +28,7 @@
           <el-button v-if="dispatch?.status === 'exception' && can('dispatch')" type="warning" plain :icon="RefreshRight" @click="resume">
             恢复运输
           </el-button>
-          <el-button v-if="dispatch && ['pending', 'loading', 'intransit'].includes(dispatch.status) && can('exception')" type="danger" plain :icon="Warning" @click="reportException">
+          <el-button v-if="dispatch && ['pending', 'loading', 'intransit'].includes(dispatch.status) && can('exception')" type="danger" plain :icon="Warning" @click="openReport">
             上报异常
           </el-button>
           <el-button v-if="dispatch?.driverId" type="primary" plain :icon="Cellphone" @click="openDriverApp">
@@ -155,12 +155,39 @@
         </div>
       </el-col>
     </el-row>
+
+    <!-- 上报异常（类型 + 级别 + 描述） -->
+    <el-dialog v-model="excDialog" title="上报异常" width="480px">
+      <div v-if="dispatch">
+        <el-alert :title="'调度单 ' + dispatch.id + '（' + unitText + '）'" type="warning" :closable="false" show-icon />
+        <el-form label-width="80px" style="margin-top: 16px">
+          <el-form-item label="异常类型" required>
+            <el-select v-model="excForm.type" style="width: 100%">
+              <el-option v-for="(v, k) in excTypeMap" :key="k" :label="v" :value="k" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="级别" required>
+            <el-select v-model="excForm.level" style="width: 100%">
+              <el-option v-for="(v, k) in excLevelMap" :key="k" :label="v.label" :value="k" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="描述" required>
+            <el-input v-model="excForm.description" type="textarea" :rows="3" maxlength="200" show-word-limit placeholder="请简述异常情况" />
+          </el-form-item>
+        </el-form>
+        <div v-if="excForm.type === 'accident'" class="exc-tip">事故类异常将同步生成事故记录，进入安全管理模块跟踪。</div>
+      </div>
+      <template #footer>
+        <el-button @click="excDialog = false">取消</el-button>
+        <el-button type="danger" @click="submitException">上报</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 defineOptions({ name: 'DispatchDetail' })
-import { ref, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, Box, CircleCheck, Warning, Printer, Position, RefreshRight, Cellphone } from '@element-plus/icons-vue'
@@ -239,49 +266,79 @@ const timeline = computed(() => {
   return steps
 })
 
+/** 状态机守卫拦截提示（flow 返回 { error } 时） */
+function guardError(r) {
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return true
+  }
+  return false
+}
+
 function confirmLoad() {
   ElMessageBox.confirm('确认已完成装货并登记进磅单？', '确认装货', { type: 'info' }).then(() => {
-    flowConfirmLoad(dispatch.value)
+    if (guardError(flowConfirmLoad(dispatch.value))) return
     ElMessage.success('装货确认成功')
   }).catch(() => {})
 }
 
 function depart() {
   ElMessageBox.confirm(`确认 ${unitText.value} 发车开始运输？`, '发车确认', { type: 'info' }).then(() => {
-    flowDepart(dispatch.value)
+    if (guardError(flowDepart(dispatch.value))) return
     ElMessage.success('已发车，进入在途状态')
   }).catch(() => {})
 }
 
 function arrive() {
   ElMessageBox.confirm(`确认 ${unitText.value} 已到达卸货场站，开始卸货？`, '到达确认', { type: 'info' }).then(() => {
-    flowArrive(dispatch.value)
+    if (guardError(flowArrive(dispatch.value))) return
     ElMessage.success('已到达，进入卸货状态')
   }).catch(() => {})
 }
 
 function confirmUnload() {
   ElMessageBox.confirm('确认已完成卸货？', '确认卸货', { type: 'success' }).then(() => {
-    flowConfirmUnload(dispatch.value)
+    if (guardError(flowConfirmUnload(dispatch.value))) return
     ElMessage.success('卸货确认成功，本次运输完成')
   }).catch(() => {})
 }
 
 function resume() {
   ElMessageBox.confirm(`确认调度单 ${dispatch.value.id} 恢复运输？`, '恢复运输', { type: 'warning' }).then(() => {
-    resumeDispatch(dispatch.value)
+    if (guardError(resumeDispatch(dispatch.value))) return
     ElMessage.success('已恢复运输')
   }).catch(() => {})
 }
 
-function reportException() {
-  ElMessageBox.prompt('请简述异常情况', '上报异常', {
-    inputPattern: /.{2,}/,
-    inputErrorMessage: '描述至少 2 个字符'
-  }).then(({ value }) => {
-    flowReportException(dispatch.value, value)
-    ElMessage.warning('异常已上报')
-  }).catch(() => {})
+/* ===== 上报异常（类型 + 级别 + 描述，事故类联动安全模块） ===== */
+const excDialog = ref(false)
+const excForm = reactive({ type: 'other', level: 'medium', description: '' })
+const excTypeMap = { delay: '延误', accident: '事故', damage: '货损', quality: '质量', overload: '超载', other: '其他' }
+const excLevelMap = {
+  low: { label: '低', type: 'info' },
+  medium: { label: '中', type: 'warning' },
+  high: { label: '高', type: 'danger' }
+}
+
+function openReport() {
+  excForm.type = 'other'
+  excForm.level = 'medium'
+  excForm.description = ''
+  excDialog.value = true
+}
+
+function submitException() {
+  if (!excForm.description.trim() || excForm.description.trim().length < 2) {
+    ElMessage.warning('描述至少 2 个字符')
+    return
+  }
+  const r = flowReportException(dispatch.value, excForm.description.trim(), excForm.type, excForm.level)
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
+  excDialog.value = false
+  ElMessage.warning('异常已上报，请前往异常处理模块跟进')
 }
 
 function printDispatch() {
@@ -320,6 +377,11 @@ function printDispatch() {
 <style scoped>
 .dispatch-detail__header {
   padding: 16px 20px;
+}
+
+.exc-tip {
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 
 .dispatch-detail__head {
