@@ -261,8 +261,15 @@ function settle(row) {
     r && r.diffCount
       ? `<br/><span style="color:var(--color-danger)">${r.diffCount} 车次结算量与磅单不一致，请确认后再结算。</span>`
       : ''
+  const receiptWarn =
+    r && r.missingReceiptCount
+      ? `<br/><span style="color:var(--color-danger)">${r.missingReceiptCount} 车次公路车次尚无电子签收单（收货凭证），建议补齐签收后再结算。</span>`
+      : ''
+  const confirmWarn = row.customerConfirmed
+    ? ''
+    : `<br/><span style="color:var(--color-danger)">客户尚未确认对账结果，需客户在客户门户确认后方可结算。</span>`
   ElMessageBox.confirm(
-    `确认结算 ${row.billNo}？<br/>结算金额 ${formatMoney(row.totalAmount)}，结算后进入收款。${lossWarn}${diffWarn}`,
+    `确认结算 ${row.billNo}？<br/>结算金额 ${formatMoney(row.totalAmount)}，结算后进入收款。${lossWarn}${diffWarn}${receiptWarn}${confirmWarn}`,
     '确认结算',
     { dangerouslyUseHTMLString: true, type: 'success', confirmButtonText: '确认结算' }
   ).then(() => {

@@ -200,6 +200,13 @@
               <span class="num" :class="row.status === 'diff' ? 'text-danger' : ''">{{ row.diff > 0 ? '+' : '' }}{{ row.diff }}</span>
             </template>
           </el-table-column>
+          <el-table-column label="签收" width="90" align="center">
+            <template #default="{ row }">
+              <el-tag v-if="row.hasReceipt === null" size="small" type="info" effect="plain">不适用</el-tag>
+              <el-tag v-else-if="row.hasReceipt" size="small" type="success" effect="plain">已签收</el-tag>
+              <el-tag v-else size="small" type="danger" effect="plain">未签收</el-tag>
+            </template>
+          </el-table-column>
           <el-table-column label="结果" width="100" align="center">
             <template #default="{ row }">
               <el-tag size="small" :type="row.status === 'diff' ? 'warning' : 'success'" effect="plain">
@@ -369,8 +376,15 @@ function settle() {
     r && r.diffCount
       ? `<br/><span style="color:var(--color-danger)">${r.diffCount} 车次结算量与磅单不一致，请确认后再结算。</span>`
       : ''
+  const receiptWarn =
+    r && r.missingReceiptCount
+      ? `<br/><span style="color:var(--color-danger)">${r.missingReceiptCount} 车次公路车次尚无电子签收单（收货凭证），建议补齐签收后再结算。</span>`
+      : ''
+  const confirmWarn = s.customerConfirmed
+    ? ''
+    : `<br/><span style="color:var(--color-danger)">客户尚未确认对账结果，需客户在客户门户确认后方可结算。</span>`
   ElMessageBox.confirm(
-    `确认结算 ${s.billNo}？结算金额 ${formatMoney(s.totalAmount)}，账期 ${paymentDays.value || 30} 天，到期未付清将标记逾期。${lossWarn}${diffWarn}`,
+    `确认结算 ${s.billNo}？结算金额 ${formatMoney(s.totalAmount)}，账期 ${paymentDays.value || 30} 天，到期未付清将标记逾期。${lossWarn}${diffWarn}${receiptWarn}${confirmWarn}`,
     '确认结算',
     { dangerouslyUseHTMLString: true, type: 'success', confirmButtonText: '确认结算' }
   ).then(() => {
@@ -384,8 +398,12 @@ function settle() {
 }
 
 function issueInvoice() {
-  const no = flowIssueInvoice(settlement.value)
-  ElMessage.success(`发票已开具：${no}`)
+  const r = flowIssueInvoice(settlement.value)
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
+  ElMessage.success(`发票已开具：${r}`)
 }
 
 function printBill() {

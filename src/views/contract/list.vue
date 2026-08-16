@@ -117,6 +117,7 @@
               <template v-if="row.status === 'executing' && can('contract')">
                 <el-button link type="warning" size="small" @click.stop="openChange(row)">变更</el-button>
                 <el-button link type="primary" size="small" @click.stop="openExtend(row)">延期</el-button>
+                <el-button v-if="canCompleteRow(row)" link type="success" size="small" @click.stop="complete(row)">完结</el-button>
                 <el-button link type="danger" size="small" @click.stop="openTerminate(row)">终止</el-button>
               </template>
               <el-button
@@ -256,6 +257,7 @@ import {
   rejectContract,
   changeContract,
   extendContract,
+  completeContract,
   terminateContract,
   archiveContract
 } from '@/mock/flow'
@@ -376,6 +378,28 @@ function doReject() {
   }
   approveDialog.value = false
   ElMessage.success(`合同 ${approveTarget.value.id} ${r.step}驳回，回到草稿（重新提交后重走审批链）`)
+}
+
+/* ===== 合同完结（手动关单：计划全部完成后可用） ===== */
+function canCompleteRow(row) {
+  return row.status === 'executing' && !db.plans.some((p) => p.contractId === row.id && p.status !== 'cancelled' && p.status !== 'completed')
+}
+
+function complete(row) {
+  ElMessageBox.confirm(
+    `确认完结合同 ${row.id}？完结后合同转为"已完成"（进度置 100%），可继续归档。`,
+    '合同完结',
+    { type: 'warning', confirmButtonText: '确认完结' }
+  )
+    .then(() => {
+      const r = completeContract(row)
+      if (r && r.error) {
+        ElMessage.error(r.error)
+        return
+      }
+      ElMessage.success('合同已完结')
+    })
+    .catch(() => {})
 }
 
 /* ===== 合同变更 ===== */
@@ -501,7 +525,7 @@ function exportCsv() {
 <style scoped>
 .stat-row {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   gap: 12px;
 }
 

@@ -136,7 +136,8 @@ for (const plan of executablePlans) {
       progress,
       speed: status === 'intransit' ? speed : 0,
       eta: eta ? eta.format('YYYY-MM-DD HH:mm') : null,
-      fee: Math.round(quantity * plan.unitPrice)
+      fee: Math.round(quantity * plan.unitPrice),
+      unitPrice: plan.unitPrice
     })
   }
 }

@@ -20,6 +20,7 @@
           <template v-if="contract?.status === 'executing' && can('contract')">
             <el-button type="warning" plain :icon="EditPen" @click="openChange">变更</el-button>
             <el-button type="primary" plain :icon="Calendar" @click="openExtend">延期</el-button>
+            <el-button v-if="canComplete" type="success" plain :icon="CircleCheck" @click="complete">合同完结</el-button>
             <el-button type="danger" plain :icon="CircleClose" @click="openTerminate">终止合同</el-button>
           </template>
           <el-button v-if="contract?.status === 'completed' && can('contract')" type="info" plain :icon="FolderChecked" @click="archive">
@@ -313,7 +314,7 @@ defineOptions({ name: 'ContractDetail' })
 import { ref, reactive, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft, Check, CircleClose, Printer, EditPen, Calendar, FolderChecked } from '@element-plus/icons-vue'
+import { ArrowLeft, Check, CircleCheck, CircleClose, Printer, EditPen, Calendar, FolderChecked } from '@element-plus/icons-vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
 import {
@@ -321,6 +322,7 @@ import {
   rejectContract,
   changeContract,
   extendContract,
+  completeContract,
   terminateContract,
   archiveContract
 } from '@/mock/flow'
@@ -345,6 +347,30 @@ const settlements = computed(() => db.settlements.filter((s) => s.contractId ===
 const executedVolume = computed(() =>
   dispatches.value.filter((d) => d.status === 'completed').reduce((s, d) => s + d.quantity, 0)
 )
+
+/** 合同完结可用性：执行中且未取消计划全部完成（合同量含预留时无法自动达 100%，需手动完结） */
+const canComplete = computed(() => {
+  const c = contract.value
+  if (!c || c.status !== 'executing') return false
+  return !db.plans.some((p) => p.contractId === c.id && p.status !== 'cancelled' && p.status !== 'completed')
+})
+
+function complete() {
+  ElMessageBox.confirm(
+    `确认完结合同 ${contract.value.id}？完结后合同转为"已完成"（进度置 100%），可继续归档。`,
+    '合同完结',
+    { type: 'warning', confirmButtonText: '确认完结' }
+  )
+    .then(() => {
+      const r = completeContract(contract.value)
+      if (r && r.error) {
+        ElMessage.error(r.error)
+        return
+      }
+      ElMessage.success('合同已完结')
+    })
+    .catch(() => {})
+}
 
 const statusMap = {
   draft: { label: '草稿', type: 'info' },

@@ -40,6 +40,9 @@ import {
   recalcSettlement,
   issueInvoiceRow,
   redFlushInvoiceRow,
+  calcSettlementFees,
+  completeContract,
+  issueInvoice,
   loadCodeOf,
   unloadCodeOf,
   scanConfirmLoad,
@@ -213,6 +216,11 @@ const outW = db.weighings.find((w) => w.dispatchId === d.id && w.type === '出�
 check('比对项与磅单记录一致（结算量=出磅净重）', item.outNet === outW.net && item.settleQty === outW.net)
 check('损耗=调度量-结算量 且进入汇总（按磅结算）', item.loss === +(d.quantity - outW.net).toFixed(2) && r.lossQty > 0 && r.lossAmount > 0)
 
+// N1 客户确认闸门：未确认对账结果不可确认结算
+const blockedSettle = confirmSettle(s)
+check('守卫：客户未确认对账结果不可确认结算', !!blockedSettle?.error && s.status === 'reconciling')
+const rcConf = customerConfirm(s)
+check('客户确认对账（写 customerConfirmed，门户口径）', rcConf.ok === true && !!s.customerConfirmed?.time)
 confirmSettle(s)
 check('确认结算 → 已结算 + 进入收款（未付）', s.status === 'settled' && s.paidAmount === 0 && !!s.settleDate)
 
@@ -476,6 +484,7 @@ check('守卫：已完成车次不可再流转', (() => {
 const preS = db.settlements.find((s) => s.status === 'reconciling' && s.paidAmount > 0)
 if (preS) {
   const pre = preS.paidAmount
+  customerConfirm(preS) // N1 闸门：先由客户确认对账
   confirmSettle(preS)
   check('确认结算保留预付款（已付金额不清零）', preS.status === 'settled' && preS.paidAmount === pre)
   check(
@@ -803,7 +812,7 @@ check(
   custUsers.length >= 2 &&
     custUsers.every((u) => db.customers.some((c) => c.id === u.customerId && (c.type === 'shipper' || c.type === 'both')))
 )
-const custSettle = db.settlements.find((s) => s.customerId === custUsers[0]?.customerId && s.reconciliation) || db.settlements.find((s) => s.reconciliation)
+const custSettle = db.settlements.find((s) => s.customerId === custUsers[0]?.customerId && s.reconciliation && !s.customerConfirmed) || db.settlements.find((s) => s.reconciliation && !s.customerConfirmed)
 if (custSettle) {
   const rConf = customerConfirm(custSettle)
   check(
@@ -821,6 +830,70 @@ check(
     return !!u && u.role === '只读用户' && menuAllowed(u.role, '/settlement') === true && actionAllowed(u.role, 'settlement') === false
   })()
 )
+
+console.log('== 12. P0 闭环断点回归（N3 快照单价 / N4 合同完结 / N5 开票守卫） ==')
+
+// N3 结算用车次派车时快照单价（合同改价不追溯已派车车次）
+const n3c = db.contracts.find((c) => c.status === 'executing' && isRoadMode(c.mode))
+if (n3c) {
+  const n3p = {
+    id: 'YH-N3',
+    contractId: n3c.id,
+    commodityId: n3c.commodityId,
+    quantity: 35,
+    loadTerminalId: n3c.loadTerminalId,
+    unloadTerminalId: n3c.unloadTerminalId,
+    mode: n3c.mode,
+    unitPrice: n3c.unitPrice,
+    status: 'pending',
+    progress: 0
+  }
+  db.plans.unshift(n3p)
+  const { created: n3d } = createDispatches(n3p, 1)
+  const n3trip = n3d[0]
+  if (n3trip) {
+    check('车次写入派车时快照单价', n3trip.unitPrice === n3c.unitPrice)
+    const oldPrice = n3c.unitPrice
+    changeContract(n3c, { unitPrice: oldPrice + 10 }, 'N3 测试改价')
+    const n3fees = calcSettlementFees(n3c, [n3trip])
+    check('结算用车次快照单价（改价不追溯已派车车次）', n3fees.freight === Math.round(n3trip.quantity * oldPrice))
+    // 清理测试数据并还原合同价
+    db.dispatches.splice(db.dispatches.indexOf(n3trip), 1)
+    db.plans.splice(db.plans.indexOf(n3p), 1)
+    changeContract(n3c, { unitPrice: oldPrice }, 'N3 测试还原')
+  }
+} else {
+  console.log('  - 跳过 N3（无执行中公路合同）')
+}
+
+// N4 合同完结（手动关单 + 守卫）
+const n4c = db.contracts.find((c) => c.status === 'executing')
+if (n4c) {
+  const n4Active = db.plans.some((p) => p.contractId === n4c.id && p.status !== 'cancelled' && p.status !== 'completed')
+  if (n4Active) {
+    check('守卫：存在未完结计划不可完结合同', !!completeContract(n4c)?.error && n4c.status === 'executing')
+  } else {
+    const r = completeContract(n4c)
+    check('合同完结：计划全部完成 → completed + 进度 100%', r.ok === true && n4c.status === 'completed' && n4c.progress === 100)
+  }
+}
+const n4nonExec = db.contracts.find((c) => c.status === 'completed' || c.status === 'terminated')
+if (n4nonExec) {
+  check('守卫：非执行中合同不可完结', !!completeContract(n4nonExec)?.error)
+} else {
+  console.log('  - 跳过 N4（无执行中合同）')
+}
+
+// N5 开票状态守卫（结算详情入口 issueInvoice 防重复开票）
+const n5s = db.settlements.find((x) => x.status === 'settled' && x.invoiceStatus === 'not-issued') || s
+if (n5s) {
+  const r1 = issueInvoice(n5s)
+  check('开具发票（未开票 → 已开具）', typeof r1 === 'string' && n5s.invoiceStatus === 'issued')
+  const r2 = issueInvoice(n5s)
+  check('守卫：已开票账单不可重复开具', !!r2?.error)
+} else {
+  console.log('  - 跳过 N5（无未开票已结算账单）')
+}
 
 console.log(`\n结果：${pass} 通过，${fail} 失败`)
 process.exit(fail ? 1 : 0)

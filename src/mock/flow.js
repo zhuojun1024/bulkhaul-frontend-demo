@@ -402,7 +402,8 @@ export function createDispatches(p, count, vehicleIds = []) {
         progress: 0,
         speed: 0,
         eta: dayjs().add(8, 'hour').format('YYYY-MM-DD HH:mm'),
-        fee: Math.round(per * p.unitPrice)
+        fee: Math.round(per * p.unitPrice),
+        unitPrice: p.unitPrice
       }
       db.dispatches.unshift(d)
       created.push(d)
@@ -431,7 +432,8 @@ export function createDispatches(p, count, vehicleIds = []) {
         progress: 0,
         speed: 0,
         eta: dayjs().add(8, 'hour').format('YYYY-MM-DD HH:mm'),
-        fee: Math.round(per * p.unitPrice)
+        fee: Math.round(per * p.unitPrice),
+        unitPrice: p.unitPrice
       }
       db.dispatches.unshift(d)
       created.push(d)
@@ -457,16 +459,19 @@ function settleQtyOf(d) {
   return w ? w.net : d.quantity
 }
 
-/** 结算费用计算：按出磅净重结算，损耗与已关闭异常损失作为扣减项 */
+/** 结算费用计算：按出磅净重结算，损耗与已关闭异常损失作为扣减项
+ *  单价口径：按车次派车时快照单价（d.unitPrice）逐车次计算，合同改价不追溯已派车车次；
+ *  无快照价（历史数据）回退合同当前单价 */
 export function calcSettlementFees(contract, dispatches) {
-  const unitPrice = contract ? contract.unitPrice : 0
+  const fallbackPrice = contract ? contract.unitPrice : 0
+  const priceOf = (d) => (d.unitPrice != null ? d.unitPrice : fallbackPrice)
   const dispatchQuantity = dispatches.reduce((s, d) => s + d.quantity, 0)
   const totalQuantity = +dispatches.reduce((s, d) => s + settleQtyOf(d), 0).toFixed(2)
   const lossQty = +(dispatchQuantity - totalQuantity).toFixed(2)
-  const freight = Math.round(totalQuantity * unitPrice)
+  const freight = Math.round(dispatches.reduce((s, d) => s + settleQtyOf(d) * priceOf(d), 0))
   const loadingFee = Math.round(totalQuantity * 8)
   const unloadingFee = Math.round(totalQuantity * 6)
-  const lossDeduction = Math.round(lossQty * unitPrice)
+  const lossDeduction = Math.round(dispatches.reduce((s, d) => s + (d.quantity - settleQtyOf(d)) * priceOf(d), 0))
   const exceptionLoss = dispatches.reduce(
     (sum, d) =>
       sum +
@@ -560,12 +565,15 @@ export function buildReconciliation(s, date) {
         settleQty,
         loss: +(d.quantity - settleQty).toFixed(2),
         diff,
+        // 签收状态：公路车次须有电子签收单（收货凭证）；非公路按运输单元执行，无签收（null=不适用）
+        hasReceipt: isRoadMode(d.mode) ? !!d.receipt : null,
         status: Math.abs(diff) > RECONCILE_TOLERANCE ? 'diff' : 'match'
       }
     })
   const diffItems = items.filter((i) => i.status === 'diff')
   const diffQty = +diffItems.reduce((sum, i) => sum + i.diff, 0).toFixed(2)
   const lossQty = +items.reduce((sum, i) => sum + i.loss, 0).toFixed(2)
+  const missingReceipt = items.filter((i) => i.hasReceipt === false)
   s.reconciliation = {
     date: date || dayjs().format('YYYY-MM-DD HH:mm'),
     items,
@@ -573,7 +581,9 @@ export function buildReconciliation(s, date) {
     diffQty,
     diffAmount: Math.round(Math.abs(diffQty) * price),
     lossQty,
-    lossAmount: Math.round(lossQty * price)
+    lossAmount: Math.round(lossQty * price),
+    missingReceiptCount: missingReceipt.length,
+    missingReceiptIds: missingReceipt.map((i) => i.dispatchId)
   }
   return s.reconciliation
 }
@@ -621,9 +631,13 @@ export function recalcSettlementStatus(s) {
 }
 
 /** 确认结算：对账中 → 已结算，进入收款（账期由合同约定）
- *  保留预付款：不清零已累积的 paidAmount（对账前已收预付），与收款流水保持一致 */
+ *  保留预付款：不清零已累积的 paidAmount（对账前已收预付），与收款流水保持一致
+ *  客户确认闸门：须客户已在门户确认对账结果（customerConfirmed），未确认不可结算 */
 export function confirmSettle(s) {
   if (s.status !== 'reconciling') return { error: `账单 ${s.billNo} 当前非"对账中"状态，无法确认结算` }
+  if (!s.customerConfirmed) {
+    return { error: `客户尚未确认账单 ${s.billNo} 的对账结果，请先由客户在客户门户确认对账后再确认结算` }
+  }
   s.status = 'settled'
   s.settleDate = dayjs().format('YYYY-MM-DD')
   logAction('结算管理', '确认结算', `账单 ${s.billNo} 结算金额 ${formatMoney(s.totalAmount)}，累计已付 ${formatMoney(s.paidAmount)}`)
@@ -967,6 +981,24 @@ export function terminateContract(c, reason, settleNow = true) {
   return billNo
 }
 
+/** 合同完结：executing → completed（手动关单）
+ *  守卫：须执行中；未取消计划须全部完成（无待执行/已调度/执行中计划）
+ *  适用：合同量含预留（拆批总量 < 合同量）时，计划全部完成也无法自动达 100%，由业务手动完结 */
+export function completeContract(c) {
+  if (c.status !== 'executing') return { error: `合同 ${c.id} 当前非"执行中"状态，无法完结` }
+  const activePlans = db.plans.filter(
+    (p) => p.contractId === c.id && p.status !== 'cancelled' && p.status !== 'completed'
+  )
+  if (activePlans.length) {
+    return { error: `合同 ${c.id} 尚有 ${activePlans.length} 个未完结计划（待执行/执行中），无法完结` }
+  }
+  c.status = 'completed'
+  c.progress = 100
+  pushChange(c, '合同完结', '计划全部完成，手动完结合同')
+  logAction('合同管理', '合同完结', `合同 ${c.id} 手动完结（计划全部完成，进度置 100%）`)
+  return { ok: true }
+}
+
 /** 合同归档：completed → archived（只读存档） */
 export function archiveContract(c) {
   c.status = 'archived'
@@ -974,8 +1006,12 @@ export function archiveContract(c) {
   logAction('合同管理', '合同归档', `合同 ${c.id} 归档`)
 }
 
-/** 开具发票：结算单 not-issued → issued，生成发票记录（号码按种子确定性派生） */
+/** 开具发票：结算单 not-issued → issued，生成发票记录（号码按种子确定性派生）
+ *  状态守卫：仅"未开票"账单可开具，防止重复开票（与发票管理页 issueInvoiceRow 同口径） */
 export function issueInvoice(s) {
+  if (s.invoiceStatus !== 'not-issued') {
+    return { error: `账单 ${s.billNo} 当前开票状态非"未开票"，无法重复开具发票` }
+  }
   const fpSeq = db.invoices.length + 1
   const invoiceNo = genInvoiceNo(s.id + '-' + fpSeq)
   db.invoices.push({
