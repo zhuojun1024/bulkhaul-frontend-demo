@@ -14,6 +14,8 @@
  *  vehicle    车辆报修/恢复                  driver     司机停用/启用
  *  customer   客户冻结/解冻                  customer-confirm 客户确认对账（门户）
  *  customer-request 客户发起运输需求（门户）
+ *  commodity  商品管理（新建/编辑/启停/导入） user       用户管理（新增/编辑/删除/启停）
+ *  role       角色管理（新增/删除/授权）
  */
 /** 注意：路径必须与 router 实际注册路径一致（如 /contract，而非 /transport/contract） */
 export const ROLE_MENUS = {
@@ -95,5 +97,8 @@ export const ACTION_OPTIONS = [
   { code: 'driver', label: '司机停用/启用' },
   { code: 'customer', label: '客户冻结/解冻' },
   { code: 'customer-confirm', label: '客户确认对账（门户）' },
-  { code: 'customer-request', label: '客户发起运输需求（门户）' }
+  { code: 'customer-request', label: '客户发起运输需求（门户）' },
+  { code: 'commodity', label: '商品管理（新建/编辑/启停/导入）' },
+  { code: 'user', label: '用户管理（新增/编辑/删除/启停）' },
+  { code: 'role', label: '角色管理（新增/删除/授权）' }
 ]

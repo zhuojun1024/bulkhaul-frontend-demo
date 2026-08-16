@@ -15,7 +15,8 @@ const KEY = 'blms_db_snapshot'
 //     培训参训司机（training.driverIds）、客户角色与门户账号（roles/users）、客户确认对账（settlement.customerConfirmed）
 // v5：客户运输需求（db.transportRequests）、客户发起需求权限（customer-request）
 // v6：司机账号（司机角色 users，手机号登录）、消息中心（db.messages）、银行流水（db.bankRecords）
-const VERSION = 6
+// v7：车辆/司机乐观锁版本字段（version，P2 并发控制）
+const VERSION = 7
 
 const canUse = typeof window !== 'undefined' && !!window.localStorage
 

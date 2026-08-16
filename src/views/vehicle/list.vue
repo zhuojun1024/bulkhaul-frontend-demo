@@ -125,7 +125,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import ImportDialog from '@/components/ImportDialog.vue'
 import { db } from '@/mock'
-import { logAction, importVehicles } from '@/mock/flow'
+import { importVehicles, resumeVehicle, sendVehicleRepair } from '@/mock/flow'
 import { formatNum } from '@/utils'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
@@ -199,16 +199,23 @@ function sendRepair(row) {
     inputPattern: /.{2,}/,
     inputErrorMessage: '原因至少 2 个字符'
   }).then(({ value }) => {
-    row.status = 'maintenance'
-    logAction('车辆管理', '车辆报修', `车辆 ${row.plate} 报修：${value}`)
+    // 写操作下沉服务层（P2）：状态守卫 + RBAC + 审计
+    const r = sendVehicleRepair(row, value)
+    if (r && r.error) {
+      ElMessage.error(r.error)
+      return
+    }
     ElMessage.success(`${row.plate} 已报修，进入维修状态`)
   }).catch(() => {})
 }
 
 function backToService(row) {
   ElMessageBox.confirm(`确认 ${row.plate} 维修完成，恢复为空闲状态？`, '恢复车辆', { type: 'info' }).then(() => {
-    row.status = 'idle'
-    logAction('车辆管理', '车辆恢复', `车辆 ${row.plate} 维修完成，恢复空闲`)
+    const r = resumeVehicle(row)
+    if (r && r.error) {
+      ElMessage.error(r.error)
+      return
+    }
     ElMessage.success(`${row.plate} 已恢复空闲`)
   }).catch(() => {})
 }

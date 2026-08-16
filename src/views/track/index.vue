@@ -267,13 +267,14 @@
 
 <script setup>
 defineOptions({ name: 'Track' })
-import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, reactive, computed, watch, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
 import { VideoPlay, VideoPause, Close, Warning, CircleCheck, AlarmClock, Aim, Setting } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import { db, find, MAP_NODES, ROUTES } from '@/mock'
-import { checkFenceEvents, trackPointsOf, maxDeviationOf, hashOffset } from '@/mock/flow'
+import { trackPointsOf, maxDeviationOf, hashOffset } from '@/mock/flow'
+import { onSchedulerEvent } from '@/mock/scheduler'
 import { round } from '@/utils'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
@@ -460,25 +461,15 @@ const doneTrend = computed(() =>
 )
 const activeExceptions = computed(() => db.exceptions.filter((e) => e.status !== 'closed'))
 
-/* ===== 模拟移动 + 围栏事件 ===== */
-let timer = null
-onMounted(() => {
-  timer = setInterval(() => {
-    // 围栏事件：偏离/超时自动写异常单（flow 内按车次+事件类型去重）
-    const created = checkFenceEvents()
-    if (created.length) {
-      ElMessage.warning(`围栏预警：生成 ${created.length} 条异常单（${created.map((e) => e.dispatchId).join('、')}）`)
-    }
-    for (const d of db.dispatches) {
-      if (d.status === 'intransit') {
-        d.progress = Math.min(95, d.progress + Math.random() * 0.9)
-        d.speed = Math.max(35, Math.min(75, d.speed + (Math.random() - 0.5) * 8))
-      }
-    }
-  }, 3000)
+/* ===== 数据刷新（P2 架构下沉：GPS 遥测/围栏事件/逾期校准由全局定时任务驱动，
+ *  本页只读展示 + 订阅"后端推送"的围栏预警，不再直接修改业务数据） ===== */
+const offScheduler = onSchedulerEvent((e) => {
+  if (e.type === 'fence' && e.created.length) {
+    ElMessage.warning(`围栏预警：生成 ${e.created.length} 条异常单（${e.created.map((x) => x.dispatchId).join('、')}）`)
+  }
 })
 onBeforeUnmount(() => {
-  clearInterval(timer)
+  offScheduler()
   clearInterval(playTimer)
 })
 </script>

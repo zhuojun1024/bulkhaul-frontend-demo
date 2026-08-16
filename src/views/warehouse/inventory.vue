@@ -108,7 +108,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
-import { logAction } from '@/mock/flow'
+import { setInventoryStatus } from '@/mock/flow'
 import { formatNum } from '@/utils'
 import dayjs from 'dayjs'
 import { usePerm } from '@/permission'
@@ -167,20 +167,30 @@ function ageDays(inDate) {
 }
 
 function lockRow(row) {
-  row.status = 'locked'
-  logAction('仓储管理', '库存锁定', `批次 ${row.batch} 锁定 ${row.quantity} 吨（${find.warehouse(row.warehouseId)?.name || '-'}）`)
+  // 写操作下沉服务层（P2）：状态守卫 + RBAC + 审计
+  const r = setInventoryStatus(row, 'locked')
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
   ElMessage.success(`批次 ${row.batch} 已锁定`)
 }
 
 function unlockRow(row) {
-  row.status = 'normal'
-  logAction('仓储管理', '库存解锁', `批次 ${row.batch} 解锁 ${row.quantity} 吨（${find.warehouse(row.warehouseId)?.name || '-'}）`)
+  const r = setInventoryStatus(row, 'normal')
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
   ElMessage.success(`批次 ${row.batch} 已解锁`)
 }
 
 function expireRow(row) {
-  row.status = 'near-expiry'
-  logAction('仓储管理', '标记临期', `批次 ${row.batch} 标记临期（库龄 ${ageDays(row.inDate)} 天）`)
+  const r = setInventoryStatus(row, 'near-expiry')
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
   ElMessage.warning(`批次 ${row.batch} 已标记临期`)
 }
 

@@ -11,17 +11,17 @@
 | 验证项 | 结果 |
 |---|---|
 | `npm run build` 生产构建 | ✅ 通过（无错误） |
-| `node --import ./scripts/register.mjs scripts/verify-flow.mjs` 冒烟测试 | ✅ 180/180 通过 |
-| UI e2e `scripts/verify-ui.mjs`（puppeteer-core + 本机 Chrome） | ✅ 35/35 通过 |
+| `node --import ./scripts/register.mjs scripts/verify-flow.mjs` 冒烟测试 | ✅ 223/223 通过 |
+| UI e2e `scripts/verify-ui.mjs`（puppeteer-core + 本机 Chrome） | ✅ 39/39 通过 |
 | 主链路页面接线（合同→计划→调度→磅单→结算→发票） | ✅ 与 `src/mock/flow.js` 中枢一致 |
 
-> 说明：180 项断言覆盖 mock 数据层（含 P0/P1/P2 守卫/口径/产品完整度 + G1-G8 回归），UI e2e 覆盖 12 场景（admin 主链路 / 结算专员权限拦截 / 只读无操作 / 客户门户确认对账+拦截 / 安全登记 / 需求转合同 / 门户发起需求 / 司机收入 / 司机手机号登录+账号锁定 / 消息中心已读 / 银行自动核销 / CSV 导入）。本文所列问题均位于测试盲区，或属设计级决策。
+> 说明：223 项断言覆盖 mock 数据层（含 P0/P1/P2 守卫/口径/产品完整度 + G1-G8 回归 + P2 架构下沉：正规 ID/乐观锁/RBAC 单点校验/定时任务/写操作下沉），UI e2e 覆盖 13 场景（admin 主链路 / 结算专员权限拦截 / 只读无操作 / 客户门户确认对账+拦截 / 安全登记 / 需求转合同 / 门户发起需求 / 司机收入 / 司机手机号登录+账号锁定 / 消息中心已读 / 银行自动核销 / CSV 导入 / 定时任务驱动在途数据+只读按钮拦截）。本文所列问题均位于测试盲区，或属设计级决策。
 
 ## 二、总体结论
 
 **作为"可演示的闭环"：成立，且第一轮 P0/P1/P2 缺陷已全部修复。** 主链路端到端可跑通，异常/仓储/安全/司机端/客户门户/成本侧均有真实联动，不是"页面孤岛"。
 
-**作为"对接接口后能真实闭环的产品"：架构合格，5 个流程逻辑断点（N1-N5）与 8 项产品完整度缺口（G1-G8）已全部修复（2026-08-16）。** 剩余工作为"必须下沉后端"的架构点（第五节，P2）。
+**作为"对接接口后能真实闭环的产品"：架构合格，5 个流程逻辑断点（N1-N5）与 8 项产品完整度缺口（G1-G8）已全部修复（2026-08-16）。** "必须下沉后端"的架构点（第五节，P2）已全部下沉至 mock 服务层（2026-08-16，明细见第六节），对接 API 时 mock 函数可 1:1 替换为 HTTP 调用。
 
 **最大底气**：`src/mock/flow.js` 已是一个设计良好的**服务层**——所有状态流转集中、带前置守卫、带审计日志、带回卷联动，可一对一映射为后端 endpoint。这是本项目对接 API 迁移成本可控的根本原因。
 
@@ -63,17 +63,17 @@
 
 ## 五、对接 API 的关键点（决定"能否真实闭环"，P2 前提）
 
-以下逻辑当前**跑在前端**，对接后必须下沉后端，否则真实环境闭环断裂：
+以下逻辑当前**跑在前端**，对接后必须下沉后端，否则真实环境闭环断裂（2026-08-16 已全部下沉至 mock 服务层，等价实现见"状态"列）：
 
-| 当前实现 | 问题 | 对接后应为 |
-|---|------|-----------|
-| 围栏事件由监控页 3s tick 触发（`track/index.vue:473`） | **页面不开就不产生围栏异常** | 后端定时任务 |
-| 监控页 tick 直接改 `db.progress/speed` | UI 在改业务数据 | 后端 GPS/遥测数据源 |
-| 逾期状态仅 `recordPayment`/页面加载时重算 | 应用关闭期间不会标逾期 | 后端定时任务 |
-| 车辆/司机占用是前端 busy 检查 | 无并发控制，双人同时派车会超占 | 后端事务/乐观锁 |
-| RBAC + 状态机守卫全在前端 | 改 localStorage 即绕过 | 后端单点校验（前端守卫保留作体验层） |
-| 看板/报表前端全量聚合（`dashboard.js`/`report.js`） | 数据量大不可行 | 后端聚合接口 |
-| ID 按数组长度派生（`PD-00001`） | 并发/删除后冲突 | 后端正规 ID 生成 |
+| 当前实现 | 问题 | 对接后应为 | 状态（P2 下沉） |
+|---|------|-----------|----------------|
+| 围栏事件由监控页 3s tick 触发（`track/index.vue:473`） | **页面不开就不产生围栏异常** | 后端定时任务 | ✅ `src/mock/scheduler.js` 全局定时任务层（3s：遥测→围栏→逾期），`main.js` 启动，独立于页面生命周期 |
+| 监控页 tick 直接改 `db.progress/speed` | UI 在改业务数据 | 后端 GPS/遥测数据源 | ✅ `flow.advanceTelemetry`（遥测数据源等价），监控页改只读展示 + 订阅围栏预警事件 |
+| 逾期状态仅 `recordPayment`/页面加载时重算 | 应用关闭期间不会标逾期 | 后端定时任务 | ✅ `flow.recalcOverdueAll` 全量校准，由定时任务每轮执行 |
+| 车辆/司机占用是前端 busy 检查 | 无并发控制，双人同时派车会超占 | 后端事务/乐观锁 | ✅ 车辆/司机 `version` 字段 + `validateResourceCommit` 提交前二次校验（版本+占用），占用/释放递增版本 |
+| RBAC + 状态机守卫全在前端 | 改 localStorage 即绕过 | 后端单点校验（前端守卫保留作体验层） | ✅ `flow.operatorCan`/`requireAction` 服务层单点校验（全部状态变更/写操作函数），前端 `usePerm` 仅作体验层 |
+| 看板/报表前端全量聚合（`dashboard.js`/`report.js`） | 数据量大不可行 | 后端聚合接口 | ✅ 工作台聚合 `workbenchStats`/`workbenchTodoList` 下沉 `dashboard.js`（视图仅图标/配色映射），报表已在 `report.js` 服务层 |
+| ID 按数组长度派生（`PD-00001`） | 并发/删除后冲突 | 后端正规 ID 生成 | ✅ `base.genId`（最大序列+1，删除不复用），全部列表 ID 与单号派生改走 genId |
 
 **可保留前端**：表单校验、交互、展示。**数据模型**可直接以 `src/mock/persist.js` 快照结构为雏形。`flow.js` 每个导出函数 ≈ 一个后端 endpoint。
 
@@ -107,9 +107,18 @@
 > G1-G4 修复后冒烟测试 137 → 162 项（新增 25 项断言）、UI e2e 15 → 23 项（新增 4 场景：安全登记/需求转合同/门户发起需求/司机收入），全部通过；持久化快照版本 4 → 5（新增 `db.transportRequests`）。
 > G5-G8 修复后冒烟测试 162 → 180 项（新增 18 项断言）、UI e2e 23 → 35 项（新增 4 场景：司机手机号登录+账号锁定/消息中心已读/银行自动核销/CSV 导入），全部通过；持久化快照版本 5 → 6（新增司机账号、`db.messages`、`db.bankRecords`）；新增 `xlsx` 依赖。
 
-### P2（架构下沉，对接前提）
+### P2（架构下沉，对接前提）— ✅ 已全部下沉至 mock 服务层（2026-08-16）
 
-围栏/逾期/GPS/并发/RBAC/报表聚合/ID 生成移后端——建议在**接口设计阶段**即按第五节划分前后端职责。
+| # | 事项 | 实现（mock 层等价，1:1 映射后端 endpoint） |
+|---|------|------|
+| 1 | 围栏事件 / GPS 遥测 / 逾期校准移入定时任务 | 新增 `src/mock/scheduler.js`（全局 setInterval 3s：`advanceTelemetry` → `checkFenceEvents` → `recalcOverdueAll`；`onSchedulerEvent` 事件订阅等价 WebSocket 推送）；`main.js` 启动，独立于页面生命周期；监控页移除自研 tick，改只读展示 + 订阅围栏预警 |
+| 2 | 车辆/司机占用加并发控制（乐观锁） | 车辆/司机 `version` 字段（快照 v7）；`validateResourceCommit` 提交前二次校验（版本一致 + 无未完结车次），`occupyResource`/`releaseResource` 递增版本，`createDispatches` 循环内提交前校验，冲突即整批失败 |
+| 3 | RBAC 单点校验下沉服务层 | `flow.js` `operatorCan`/`requireAction`（判定顺序 db.rolePerms 数据化 → ROLE_ACTIONS → 默认拒绝，与 `permission.js` 一致）；全部状态变更/导出写函数加守卫；司机端扫码与围栏系统事件走内部核心（`doConfirmLoad`/`doConfirmUnload`/`createException`）不受登录用户权限影响；前端 `usePerm` 保留作体验层 |
+| 4 | 报表/看板聚合下沉 | 工作台聚合 `workbenchStats`（本期+基期一次返回）/`workbenchTodoList`（纯数据 key/title/desc/path）下沉 `dashboard.js`，视图仅保留 key→图标/配色映射；报表聚合本就在 `report.js` 服务层 |
+| 5 | 正规 ID 生成 | `base.js` `genId(prefix, width, list)` 扫描已有 ID 取最大序列+1（删除不复用，替代 length+1）；LOG/MSG/BZ/INV/YC/SG/PX/JC/PD/JS/SK/YS/HT/FP/CUS/CM/V/U/R 全部列表 ID 及 billNo/invoiceNo 派生改走 genId |
+| 6 | UI 不再直接改业务数据 | 12 个视图改服务调用：合同/计划新建与取消（`createContract`/`createPlan`/`cancelPlan`）、商品/客户/司机/车辆/库存/用户/角色 新建-编辑-启停（`saveCommodity`/`toggleCustomerStatus`/`toggleDriverStatus`（司机账号联动）/`sendVehicleRepair`/`resumeVehicle`/`setInventoryStatus`/`saveUser`/`removeUser`/`toggleUserStatus`/`saveRole`/`removeRole`/`updateRolePerms`）；权限表新增 `commodity`/`user`/`role` 操作码，相关按钮 `can()` 门控 |
+
+> 冒烟测试 180 → 223 项（新增 43 项 P2 断言）、UI e2e 35 → 39 项（新增场景 13：定时任务驱动在途数据 + 只读按钮拦截），全部通过；持久化快照版本 6 → 7（车辆/司机 `version` 字段）。
 
 ## 七、第一轮（P0/P1/P2）修复记录（追溯）
 
@@ -147,6 +156,7 @@
 
 ## 九、验证记录
 
+- **2026-08-16（P2 架构下沉）**：`npm run build` 通过；冒烟测试 223/223 通过（180→223，新增 43 项断言：genId 删除不复用、乐观锁通过/并发冲突/重复占用、RBAC 只读用户写操作拦截+数据化权限即时生效、遥测推进、逾期校准标记/回退、定时任务围栏事件+tick 推送（只读操作人不阻断系统事件）、写下沉函数守卫（商品/客户/司机/车辆/库存/用户/角色/合同/计划））；UI e2e 39/39 通过（35→39，新增场景 13：在途进度无用户操作自动推进（全局定时任务驱动，UI 只读）+ 只读用户商品/用户管理页无操作按钮）；lint 无错误。改动文件：`src/mock/base.js`（`genId`）、`src/mock/flow.js`（`setOperator`/`operatorCan`/`requireAction` + 全部状态变更函数 RBAC 守卫、`BUSY_STATUSES`/`validateResourceCommit` 乐观锁 + 占用/释放版本递增、`advanceTelemetry`/`recalcOverdueAll`、内部核心 `doConfirmLoad`/`doConfirmUnload`/`createException`（司机端扫码/围栏系统事件免用户权限）、写操作下沉 `createContract`/`createPlan`/`cancelPlan`/`saveCommodity`/`toggleCommodityStatus`/`toggleCustomerStatus`/`toggleDriverStatus`/`sendVehicleRepair`/`resumeVehicle`/`setInventoryStatus`/`saveUser`/`removeUser`/`toggleUserStatus`/`saveRole`/`removeRole`/`updateRolePerms`、全部 ID 生成改 genId）、`src/mock/scheduler.js`（新增，定时任务模拟层）、`src/mock/dashboard.js`（`workbenchStats`/`workbenchTodoList`）、`src/mock/vehicle.js`/`src/mock/driver.js`（`version` 种子）、`src/mock/persist.js`（VERSION 6→7）、`src/mock/index.js`、`src/permission-table.js`（`commodity`/`user`/`role` 操作码）、`src/main.js`（启动定时任务）、`src/views/track/index.vue`（移除自研 tick，只读 + 围栏事件订阅）、`src/views/contract/create.vue`、`src/views/plan/create.vue`、`src/views/plan/list.vue`、`src/views/commodity/list.vue`、`src/views/customer/list.vue`、`src/views/driver/list.vue`、`src/views/vehicle/list.vue`、`src/views/warehouse/inventory.vue`、`src/views/system/user.vue`、`src/views/system/role.vue`、`src/views/dashboard/workbench.vue`、`scripts/verify-flow.mjs`（第 15 节 + G4 派车张数适配乐观锁）、`scripts/verify-ui.mjs`（场景 13）。口径：系统事件（围栏）不做登录用户权限校验（与后端系统任务一致）；乐观锁=选择时版本快照+提交前二次校验（后端事务等价），冲突整批失败；RBAC 判定顺序 db.rolePerms（数据化，角色管理页可改）→ ROLE_ACTIONS → 默认拒绝，与前端 `usePerm` 同序；司机端扫码/围栏走内部核心不受登录用户权限影响；G4 冒烟中"驾照过期司机不被派车"由派 2 张改派 1 张（前序章节占用空闲车辆后池不足 2 台，乐观锁正确拦截同车二次占用，断言目标不变）。
 - **2026-08-16（P1 产品完整度修复 G5-G8）**：`npm run build` 通过；冒烟测试 180/180 通过（162→180，新增 18 项断言：司机账号种子/手机号检索/停用联动、消息种子/notify/已读管理/事件消息、客户/商品/车辆导入去重与默认口径、银行流水种子一致性/手动核销/重复与超额守卫/自动核销精确匹配）；UI e2e 35/35 通过（23→35，新增 4 场景：司机手机号登录+司机端账号锁定、消息中心未读角标+全部已读、银行对账自动核销+核销历史、CSV 导入预览+确认导入去重）；lint 无错误。改动文件：`src/mock/flow.js`（`notify`/`markMessageRead`/`markAllMessagesRead` + 17 个业务事件消息钩子、`importCustomers`/`importCommodities`/`importVehicles`、`matchBankRecord`/`autoMatchBank`）、`src/mock/base.js`（`db.messages`/`db.bankRecords`）、`src/mock/message.js`（新增，消息种子，按业务状态派生）、`src/mock/bank.js`（新增，银行流水种子，独立随机源，首张逾期账单必命中保证自动核销可复现）、`src/mock/system.js`（司机角色 + 80 司机账号种子）、`src/mock/index.js`、`src/mock/persist.js`（VERSION 5→6）、`src/permission-table.js`（司机角色 + `/message` 菜单）、`src/store/index.js`（登录态 driverId）、`src/views/login/index.vue`（用户名/手机号双口径 + 司机直达司机端）、`src/views/driver/app.vue`（司机账号锁定 + 切换账号）、`src/views/message/index.vue`（新增，消息中心页）、`src/router/index.js`（`/message` 路由）、`src/layout/components/Navbar.vue`（铃铛改消息中心数据源 + 查看全部）、`src/components/ImportDialog.vue`（新增，共享导入弹窗：xlsx/CSV 解析 + 模板下载 + 逐行校验）、`src/views/customer/list.vue`、`src/views/commodity/list.vue`、`src/views/vehicle/list.vue`（导入入口）、`src/views/settlement/list.vue`（银行对账页签 + 核销弹窗）、`package.json`（+xlsx）、`scripts/verify-flow.mjs`（第 14 节）、`scripts/verify-ui.mjs`（场景 9-12）。口径：G5 司机账号手机号=登录账号、driverId 绑定、停用联动，司机端锁定本人（其他角色保留演示切换），对接后由司机独立鉴权（手机号+短信）承接；G6 消息由 flow 事件驱动（`notify`），已读状态随快照持久化，顶栏角标=未读数；G7 导入走 flow 统一守卫（必填校验 + 名称/车牌去重 + 默认口径 + 审计 + 消息），支持 xlsx/xls/csv（Excel 可另存 CSV）；G8 银行流水异步到达口径（运行期手工收款不强制流水），自动核销=对手方+金额与账单未付余额精确匹配（容差 0.01 元），核销即登记收款。
 - **2026-08-16（P1 产品完整度修复 G1-G4）**：`npm run build` 通过；冒烟测试 162/162 通过（137→162，新增 25 项断言：年检/驾照拦截、事故登记/结案、培训计划/完成、检查登记、需求发起/转合同/驳回、司机收入口径）；UI e2e 23/23 通过（15→23，新增 4 场景：安全登记真实提交、合同管理需求页签转草稿、门户发起需求表单提交、司机端收入明细）；lint 无错误。改动文件：`src/mock/flow.js`（G4 `vehicleInspectionExpired`/`driverLicenseExpired` + `createDispatches` 守卫、G1 `registerAccident`/`closeAccident`/`addTraining`/`completeTraining`/`addInspection`、G2 `submitTransportRequest`/`convertRequestToContract`/`rejectTransportRequest`、G3 `driverIncomeOf`）、`src/mock/base.js`（`db.transportRequests`）、`src/mock/request.js`（新增，需求种子，独立随机源不扰动全局序列）、`src/mock/index.js`、`src/mock/persist.js`（VERSION 4→5）、`src/permission-table.js`（`customer-request` 操作码）、`src/views/safety/index.vue`（三表登记入口+结案/完成操作）、`src/views/portal/index.vue`（发起需求+我的运输需求）、`src/views/contract/list.vue`（运输需求页签+转草稿/驳回）、`src/views/driver/app.vue`（收入结算卡片）、`src/views/plan/list.vue`、`src/views/plan/detail.vue`（选车排除年检过期）、`scripts/verify-flow.mjs`（第 13 节）、`scripts/verify-ui.mjs`（场景 5-8）。口径：G1 登记走 flow 中枢（守卫+审计），培训完成时记录参训司机（覆盖率口径）；G2 需求单 pending→converted/rejected，转合同生成草稿走正常审批流，客户侧可跟踪处理结果；G3 司机收入与成本侧司机项同口径（底薪 600+0.25 元/公里）；G4 过期即拦截（自动匹配排除+手动指定报错），选车下拉同步排除。
 - **2026-08-16（P0 闭环断点修复 N1-N5）**：`npm run build` 通过；冒烟测试 137/137 通过（129→137，新增 8 项 P0 断言）；UI e2e 15/15 通过。改动文件：`src/mock/flow.js`（`confirmSettle` 客户确认闸门、`calcSettlementFees` 按车次快照单价、`createDispatches` 写入 `unitPrice`、`buildReconciliation` 带 `hasReceipt`、新增 `completeContract`、`issueInvoice` 状态守卫）、`src/mock/dispatch.js`（种子车次写入 `unitPrice`）、`src/views/settlement/detail.vue`（对账表签收列 + 确认弹窗签收/客户确认提示 + 开票守卫错误处理）、`src/views/settlement/list.vue`（确认弹窗提示）、`src/views/contract/detail.vue`、`src/views/contract/list.vue`（"合同完结"按钮 + 守卫）、`scripts/verify-flow.mjs`（N1 闸门前置 + 第 12 节 P0 回归）。口径：N1 客户确认硬闸门；N2 签收可见化+强提示（硬拦截列 P1）；N3 改价不追溯已派车车次；N4 手动完结（计划全部完成）。

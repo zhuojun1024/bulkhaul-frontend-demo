@@ -16,6 +16,7 @@ db.drivers = Array.from({ length: 80 }, (_, i) => {
     licenseNo: '140101' + String(randInt(19600101, 19991231)),
     licenseExpire,
     status,
+    version: 1, // 乐观锁版本（P2：派车占用提交前二次校验，防并发超占）
     rating: round(4 + rng2(), 1),
     totalTrips: randInt(50, 2000),
     totalMileage: randInt(5, 300) * 10000,

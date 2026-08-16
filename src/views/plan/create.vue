@@ -82,7 +82,7 @@ import { ElMessage } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { db, find } from '@/mock'
-import { contractRemaining } from '@/mock/flow'
+import { contractRemaining, createPlan } from '@/mock/flow'
 import { formatMoney, formatNum } from '@/utils'
 import dayjs from 'dayjs'
 
@@ -133,30 +133,19 @@ function onContractChange() {
 function submit() {
   formRef.value.validate((valid) => {
     if (!valid) return
-    const c = contract.value
-    // 兜底校验（防止绕过表单直接提交）
-    const remain = contractRemaining(c.id)
-    if (form.quantity > remain) {
-      ElMessage.warning(`批次数量超出合同剩余可计划量（剩余 ${remain} 吨）`)
-      return
-    }
-    const id = `YH-${String(db.plans.length + 1).padStart(4, '0')}`
-    db.plans.unshift({
-      id,
-      contractId: c.id,
-      commodityId: c.commodityId,
-      quantity: form.quantity,
-      loadTerminalId: c.loadTerminalId,
-      unloadTerminalId: c.unloadTerminalId,
-      mode: c.mode,
+    // 写操作下沉服务层（P2）：合同执行中 + 剩余量守卫 + 审计
+    const r = createPlan({
+      contractId: form.contractId,
       planDate: form.planDate,
-      unitPrice: c.unitPrice,
-      status: 'pending',
-      progress: 0,
+      quantity: form.quantity,
       remark: form.remark
     })
-    ElMessage.success(`计划 ${id} 创建成功`)
-    router.push(`/plan/${id}`)
+    if (r && r.error) {
+      ElMessage.warning(r.error)
+      return
+    }
+    ElMessage.success(`计划 ${r.id} 创建成功`)
+    router.push(`/plan/${r.id}`)
   })
 }
 </script>

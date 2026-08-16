@@ -130,3 +130,16 @@ export function nextSeq(prefix) {
   seq += 1
   return `${prefix}-${String(seq).padStart(4, '0')}`
 }
+
+/** 正规 ID 生成（P2 架构下沉：后端正规 ID 生成的等价实现）
+ *  扫描列表已有 ID 取最大序列 + 1：删除记录后不复用旧号、并发创建不冲突；
+ *  替代旧的"数组长度 + 1"派生（删除后长度回退会导致 ID 复用） */
+export function genId(prefix, width, list = []) {
+  let max = 0
+  const re = new RegExp(`^${prefix}(\\d+)$`)
+  for (const x of list) {
+    const m = re.exec(String((x && x.id) || ''))
+    if (m) max = Math.max(max, parseInt(m[1], 10))
+  }
+  return prefix + String(max + 1).padStart(width, '0')
+}

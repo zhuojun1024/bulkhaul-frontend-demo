@@ -157,7 +157,7 @@ import { Search, Plus, Download, Refresh } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
-import { createDispatches, creditCheck, isRoadMode, logAction, vehicleInspectionExpired } from '@/mock/flow'
+import { cancelPlan, createDispatches, creditCheck, isRoadMode, vehicleInspectionExpired } from '@/mock/flow'
 import { formatNum } from '@/utils'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
@@ -229,8 +229,12 @@ function progressColor(status) {
 
 function cancel(row) {
   ElMessageBox.confirm(`确认取消计划 ${row.id}？`, '提示', { type: 'warning' }).then(() => {
-    row.status = 'cancelled'
-    logAction('运输计划', '取消计划', `计划 ${row.id} 取消（${find.contract(row.contractId)?.name || row.contractId}）`)
+    // 写操作下沉服务层（P2）：状态守卫 + RBAC + 审计
+    const r = cancelPlan(row)
+    if (r && r.error) {
+      ElMessage.error(r.error)
+      return
+    }
     ElMessage.success('计划已取消')
   }).catch(() => {})
 }

@@ -143,7 +143,7 @@ import { Plus, Position, MapLocation, ArrowRight } from '@element-plus/icons-vue
 import StatCard from '@/components/StatCard.vue'
 import ChartCard from '@/components/ChartCard.vue'
 import StatusTag from '@/components/StatusTag.vue'
-import { db, find, dashboard, workbenchTodos, weatherOf } from '@/mock'
+import { db, find, dashboard, workbenchTodos, workbenchStats, workbenchTodoList, weatherOf } from '@/mock'
 import { useUserStore } from '@/store'
 import { formatMoney, formatNum, round } from '@/utils'
 import dayjs from 'dayjs'
@@ -168,106 +168,37 @@ const weekStr = computed(() => '星期' + '日一二三四五六'[dayjs().day()]
 const weather = computed(() => weatherOf(dayjs().format('YYYY-MM-DD')))
 const weatherIcon = computed(() => (['小雨', '雷阵雨'].includes(weather.value.cond) ? 'Umbrella' : weather.value.cond === '阴' ? 'Cloudy' : 'Sunny'))
 
-/* ===== 指标 ===== */
-const todayDispatches = computed(() =>
-  db.dispatches.filter((d) => d.dispatchTime.slice(0, 10) === dayjs().format('YYYY-MM-DD')).length
-)
-const todayLoad = computed(() =>
-  db.weighings
-    .filter((w) => w.type === '进磅' && w.time.slice(0, 10) === dayjs().format('YYYY-MM-DD'))
-    .reduce((s, w) => s + w.net, 0)
-)
-const todayUnload = computed(() =>
-  db.weighings
-    .filter((w) => w.type === '出磅' && w.time.slice(0, 10) === dayjs().format('YYYY-MM-DD'))
-    .reduce((s, w) => s + w.net, 0)
-)
-const monthSettled = computed(() =>
-  db.settlements
-    .filter((s) => s.status === 'settled' && s.settleDate && s.settleDate.slice(0, 7) === dayjs().format('YYYY-MM'))
-    .reduce((s, x) => s + x.totalAmount, 0) / 10000
-)
+/* ===== 指标（聚合下沉服务层 P2：workbenchStats 一次返回本期+基期） ===== */
+const stats = computed(() => workbenchStats())
+const todayDispatches = computed(() => stats.value.todayDispatches)
+const todayLoad = computed(() => stats.value.todayLoad)
+const todayUnload = computed(() => stats.value.todayUnload)
+const monthSettled = computed(() => stats.value.monthSettled)
 
-/* ===== 环比趋势（昨日/上月实际数据；基期为 0 时不显示趋势） ===== */
+/* ===== 环比趋势（基期为 0 时不显示趋势） ===== */
 const pctVs = (cur, prev) => (prev ? round(((cur - prev) / prev) * 100, 1) : null)
-const yesterdayStr = dayjs().subtract(1, 'day').format('YYYY-MM-DD')
-const yesterdayDispatches = computed(() => db.dispatches.filter((d) => d.dispatchTime.slice(0, 10) === yesterdayStr).length)
-const yesterdayLoad = computed(() =>
-  db.weighings.filter((w) => w.type === '进磅' && w.time.slice(0, 10) === yesterdayStr).reduce((s, w) => s + w.net, 0)
-)
-const yesterdayUnload = computed(() =>
-  db.weighings.filter((w) => w.type === '出磅' && w.time.slice(0, 10) === yesterdayStr).reduce((s, w) => s + w.net, 0)
-)
-const prevMonthSettled = computed(() =>
-  db.settlements
-    .filter((s) => s.status === 'settled' && s.settleDate && s.settleDate.slice(0, 7) === dayjs().subtract(1, 'month').format('YYYY-MM'))
-    .reduce((s, x) => s + x.totalAmount, 0) / 10000
-)
-const dispatchTrend = computed(() => pctVs(todayDispatches.value, yesterdayDispatches.value))
-const loadTrend = computed(() => pctVs(todayLoad.value, yesterdayLoad.value))
-const unloadTrend = computed(() => pctVs(todayUnload.value, yesterdayUnload.value))
-const settleTrend = computed(() => pctVs(monthSettled.value, prevMonthSettled.value))
+const dispatchTrend = computed(() => pctVs(stats.value.todayDispatches, stats.value.yesterdayDispatches))
+const loadTrend = computed(() => pctVs(stats.value.todayLoad, stats.value.yesterdayLoad))
+const unloadTrend = computed(() => pctVs(stats.value.todayUnload, stats.value.yesterdayUnload))
+const settleTrend = computed(() => pctVs(stats.value.monthSettled, stats.value.prevMonthSettled))
 
-/* ===== 待办 ===== */
-const todoList = computed(() => {
-  const list = []
-  const pendingContracts = db.contracts.filter((c) => c.status === 'pending')
-  if (pendingContracts.length)
-    list.push({
-      id: 'todo-contract',
-      icon: 'Document',
-      color: tokens.primary,
-      bg: 'rgba(43,92,230,0.1)',
-      title: `${pendingContracts.length} 份合同待审批`,
-      desc: pendingContracts[0].name,
-      path: '/contract'
-    })
-  const pendingDispatches = db.dispatches.filter((d) => d.status === 'pending')
-  if (pendingDispatches.length)
-    list.push({
-      id: 'todo-dispatch',
-      icon: 'Position',
-      color: tokens.warning,
-      bg: 'rgba(255,125,0,0.1)',
-      title: `${pendingDispatches.length} 张调度单待装货`,
-      desc: `最早下发：${pendingDispatches[0].dispatchTime}`,
-      path: '/dispatch'
-    })
-  const pendingExceptions = db.exceptions.filter((e) => e.status === 'pending')
-  if (pendingExceptions.length)
-    list.push({
-      id: 'todo-exception',
-      icon: 'Warning',
-      color: tokens.danger,
-      bg: 'rgba(245,63,63,0.1)',
-      title: `${pendingExceptions.length} 条异常待处理`,
-      desc: pendingExceptions[0].description,
-      path: '/exception'
-    })
-  const pendingSettlements = db.settlements.filter((s) => s.status === 'pending')
-  if (pendingSettlements.length)
-    list.push({
-      id: 'todo-settlement',
-      icon: 'Wallet',
-      color: tokens.success,
-      bg: 'rgba(0,180,42,0.1)',
-      title: `${pendingSettlements.length} 笔结算待对账`,
-      desc: `合计 ${formatMoney(pendingSettlements.reduce((s, x) => s + x.totalAmount, 0))}`,
-      path: '/settlement'
-    })
-  const overdue = db.settlements.filter((s) => s.status === 'overdue')
-  if (overdue.length)
-    list.push({
-      id: 'todo-overdue',
-      icon: 'AlarmClock',
-      color: tokens.danger,
-      bg: 'rgba(245,63,63,0.1)',
-      title: `${overdue.length} 笔结算已逾期`,
-      desc: `最早周期：${overdue[0].period}`,
-      path: '/settlement'
-    })
-  return list
-})
+/* ===== 待办（数据下沉服务层 P2：workbenchTodoList；图标配色为视图层关注点） ===== */
+const TODO_META = {
+  contract: { icon: 'Document', color: tokens.primary, bg: 'rgba(43,92,230,0.1)' },
+  dispatch: { icon: 'Position', color: tokens.warning, bg: 'rgba(255,125,0,0.1)' },
+  exception: { icon: 'Warning', color: tokens.danger, bg: 'rgba(245,63,63,0.1)' },
+  settlement: { icon: 'Wallet', color: tokens.success, bg: 'rgba(0,180,42,0.1)' },
+  overdue: { icon: 'AlarmClock', color: tokens.danger, bg: 'rgba(245,63,63,0.1)' }
+}
+const todoList = computed(() =>
+  workbenchTodoList().map((t) => ({
+    id: `todo-${t.key}`,
+    title: t.title,
+    desc: t.desc,
+    path: t.path,
+    ...TODO_META[t.key]
+  }))
+)
 
 function goTodo(t) {
   router.push(t.path)

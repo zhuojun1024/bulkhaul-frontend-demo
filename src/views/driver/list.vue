@@ -126,7 +126,7 @@ import { Search, Download, Refresh } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db } from '@/mock'
-import { logAction } from '@/mock/flow'
+import { toggleDriverStatus } from '@/mock/flow'
 import { formatNum } from '@/utils'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
@@ -200,15 +200,22 @@ function isExpiring(date) {
 
 function disable(row) {
   ElMessageBox.confirm(`确认停用司机 ${row.name}？停用后不可派单。`, '停用司机', { type: 'warning' }).then(() => {
-    row.status = 'disabled'
-    logAction('司机管理', '司机停用', `司机 ${row.name} 停用，不可派单`)
+    // 写操作下沉服务层（P2）：执行中车次守卫 + RBAC + 司机账号联动 + 审计
+    const r = toggleDriverStatus(row)
+    if (r && r.error) {
+      ElMessage.error(r.error)
+      return
+    }
     ElMessage.success(`${row.name} 已停用`)
   }).catch(() => {})
 }
 
 function enable(row) {
-  row.status = 'available'
-  logAction('司机管理', '司机启用', `司机 ${row.name} 启用，恢复可派单`)
+  const r = toggleDriverStatus(row)
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
   ElMessage.success(`${row.name} 已启用`)
 }
 

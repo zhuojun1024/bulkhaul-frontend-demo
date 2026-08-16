@@ -1,7 +1,7 @@
 <template>
   <div class="page">
     <PageHeader title="用户管理" desc="平台用户账号、角色分配与状态管理">
-      <el-button type="primary" :icon="Plus" @click="openDialog()">新增用户</el-button>
+      <el-button v-if="can('user')" type="primary" :icon="Plus" @click="openDialog()">新增用户</el-button>
     </PageHeader>
 
     <div class="panel">
@@ -51,12 +51,12 @@
             <template #default="{ row }">
               <el-switch
                 :model-value="row.status === 'active'"
-                :disabled="row.username === 'admin'"
+                :disabled="row.username === 'admin' || !can('user')"
                 @change="(val) => toggleStatus(row, val)"
               />
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="130" align="center" fixed="right">
+          <el-table-column v-if="can('user')" label="操作" width="130" align="center" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" size="small" @click="openDialog(row)">编辑</el-button>
               <el-button
@@ -120,7 +120,10 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Plus, Refresh } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { db } from '@/mock'
-import dayjs from 'dayjs'
+import { removeUser as flowRemoveUser, saveUser, toggleUserStatus } from '@/mock/flow'
+import { usePerm } from '@/permission'
+
+const { can } = usePerm()
 
 
 const filter = reactive({ keyword: '', role: '', status: '' })
@@ -151,14 +154,22 @@ function resetFilter() {
 }
 
 function toggleStatus(row, val) {
-  row.status = val ? 'active' : 'disabled'
+  // 写操作下沉服务层（P2）：RBAC + 当前账号保护 + 审计
+  const r = toggleUserStatus(row, val)
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
   ElMessage.success(`用户 ${row.name} 已${val ? '启用' : '停用'}`)
 }
 
 function removeUser(row) {
   ElMessageBox.confirm(`确认删除用户 ${row.name}？`, '删除用户', { type: 'warning' }).then(() => {
-    const idx = db.users.findIndex((u) => u.id === row.id)
-    if (idx > -1) db.users.splice(idx, 1)
+    const r = flowRemoveUser(row)
+    if (r && r.error) {
+      ElMessage.error(r.error)
+      return
+    }
     ElMessage.success('用户已删除')
   }).catch(() => {})
 }
@@ -179,48 +190,14 @@ function openDialog(row) {
   dialogVisible.value = true
 }
 
-/** 取不冲突的用户 id（避免删除用户后长度回退导致 id 重复） */
-function nextUserId() {
-  const max = db.users.reduce((m, u) => {
-    const n = parseInt(String(u.id).replace(/\D/g, ''), 10)
-    return Number.isNaN(n) ? m : Math.max(m, n)
-  }, 0)
-  return `U${String(max + 1).padStart(3, '0')}`
-}
-
 function save() {
-  const username = form.username.trim()
-  if (!form.name.trim() || !username) {
-    ElMessage.warning('请填写姓名和账号')
+  // 写操作下沉服务层（P2）：RBAC + 账号查重 + 默认密码 + 正规 ID 生成 + 审计
+  const r = saveUser({ id: editingId.value, ...form })
+  if (r && r.error) {
+    ElMessage.warning(r.error)
     return
   }
-  if (editingId.value) {
-    const row = db.users.find((u) => u.id === editingId.value)
-    Object.assign(row, { name: form.name.trim(), role: form.role, phone: form.phone, email: form.email })
-    ElMessage.success('用户已更新')
-  } else {
-    if (db.users.some((u) => u.username === username)) {
-      ElMessage.warning(`账号 ${username} 已存在，请更换登录账号`)
-      return
-    }
-    if (!form.password) {
-      ElMessage.warning('请设置登录密码')
-      return
-    }
-    db.users.push({
-      id: nextUserId(),
-      username,
-      name: form.name.trim(),
-      password: form.password,
-      role: form.role,
-      phone: form.phone || '-',
-      email: form.email || '-',
-      status: 'active',
-      lastLogin: '-',
-      createdAt: dayjs().format('YYYY-MM-DD')
-    })
-    ElMessage.success('用户已创建，可使用该账号登录')
-  }
+  ElMessage.success(editingId.value ? '用户已更新' : '用户已创建，可使用该账号登录')
   dialogVisible.value = false
 }
 </script>

@@ -17,6 +17,7 @@ db.vehicles = Array.from({ length: 60 }, (_, i) => {
     owner: i % 3 === 0 ? '自有' : '外协',
     fuelType: isRoad ? pick(['柴油', 'LNG']) : type === '铁路敞车' ? '电力' : '重油',
     status,
+    version: 1, // 乐观锁版本（P2：派车占用提交前二次校验，防并发超占）
     purchaseDate,
     nextInspection: dayjs(NOW).add(randInt(10, 300), 'day').format('YYYY-MM-DD'),
     mileage: randInt(2, 45) * 10000,

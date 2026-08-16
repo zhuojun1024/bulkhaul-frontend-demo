@@ -13,6 +13,7 @@
  *  10. admin 消息中心：未读角标 → 全部已读（G6）
  *  11. admin 银行对账页签 → 自动核销（G8）
  *  12. admin 客户数据导入：CSV 上传 → 预览校验 → 确认导入（G7）
+ *  13. P2 架构下沉：在途进度由全局定时任务推进（UI 只读）+ 只读用户无操作按钮
  * 运行：npm run build && node scripts/verify-ui.mjs
  */
 import { createServer } from 'node:http'
@@ -643,6 +644,75 @@ try {
     await page.waitForFunction(() => [...document.querySelectorAll('.el-table__row')].some((r) => r.textContent.includes('G7 E2E 导入客户')))
     check('导入后客户列表新增记录', true)
     await ctx.close()
+  }
+
+  /* ===== 场景 13：P2 架构下沉（定时任务驱动数据 + 只读用户无操作按钮） ===== */
+  console.log('== 13. P2：在途进度由全局定时任务推进 + 只读用户无操作按钮 ==')
+  {
+    const { ctx, page } = await newPage(browser)
+    await login(page, 'admin', '123456')
+    await page.waitForSelector('.page')
+    await nav(page, '#/track')
+    await page.waitForSelector('.track-list__item')
+    // 等首轮定时任务完成（轨迹偏离超阈值的在途车次已被围栏事件转异常单），
+    // 剩余在途车次不会再被围栏命中，可稳定观察遥测推进（页面已无自研 tick，进度变化只能来自全局定时任务）
+    await new Promise((r) => setTimeout(r, 4000))
+    const target = await page.evaluate(() => {
+      const items = [...document.querySelectorAll('.track-list__item')]
+      const list = items
+        .map((el) => {
+          const tag = el.querySelector('.el-tag')?.textContent || ''
+          const m = el.textContent.match(/进度 (\d+)%/)
+          return m && tag === '在途'
+            ? { plate: el.querySelector('.track-list__plate').textContent.trim(), progress: parseInt(m[1], 10) }
+            : null
+        })
+        .filter((x) => x && x.progress < 95)
+      list.sort((a, b) => a.progress - b.progress)
+      return list[0] || null
+    })
+    check('P2：监控页存在可观察的在途车次', !!target)
+    let increased = false
+    if (target) {
+      try {
+        await page.waitForFunction(
+          (t) => {
+            const el = [...document.querySelectorAll('.track-list__item')].find((i) => i.querySelector('.track-list__plate')?.textContent.trim() === t.plate)
+            const m = el?.textContent.match(/进度 (\d+)%/)
+            return m ? parseInt(m[1], 10) > t.progress : false
+          },
+          { timeout: 20000 },
+          target
+        )
+        increased = true
+      } catch {
+        increased = false
+      }
+    }
+    check('P2：无用户操作进度自动推进（全局定时任务驱动，UI 只读）', increased)
+    await ctx.close()
+
+    // 只读用户（user16）：商品/用户管理页无操作按钮（RBAC 视图门控）
+    const { ctx: ctx2, page: page2 } = await newPage(browser)
+    await login(page2, 'user16', '123456')
+    await page2.waitForSelector('.page')
+    await nav(page2, '#/commodity')
+    await page2.waitForFunction(() => (document.querySelector('.page-header__title')?.textContent || '').includes('商品管理'))
+    await page2.waitForSelector('.el-table__row')
+    const commodityNoBtns = await page2.evaluate(() => {
+      const btns = [...document.querySelectorAll('button')].map((b) => b.textContent)
+      return !btns.some((t) => t.includes('新建') || t.includes('导入'))
+    })
+    check('P2：只读用户商品页无新建/导入按钮', commodityNoBtns)
+    await nav(page2, '#/system/user')
+    await page2.waitForFunction(() => (document.querySelector('.page-header__title')?.textContent || '').includes('用户管理'))
+    await page2.waitForSelector('.el-table__row')
+    const userNoBtns = await page2.evaluate(() => {
+      const btns = [...document.querySelectorAll('button')].map((b) => b.textContent)
+      return !btns.some((t) => t.includes('新增用户'))
+    })
+    check('P2：只读用户用户管理页无新增按钮', userNoBtns)
+    await ctx2.close()
   }
 } finally {
   await browser.close()

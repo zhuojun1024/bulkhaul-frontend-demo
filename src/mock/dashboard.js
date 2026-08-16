@@ -1,6 +1,6 @@
 import { db, rng, randInt, NOW } from './base'
 import dayjs from 'dayjs'
-import { round } from '@/utils'
+import { round, formatMoney } from '@/utils'
 
 /**
  * 看板聚合数据：
@@ -158,6 +158,64 @@ export const workbenchTodos = {
   get pendingSettlements() {
     return db.settlements.filter((s) => s.status === 'pending' || s.status === 'reconciling').length
   }
+}
+
+/* ===== 工作台指标与待办（P2：聚合下沉服务层，视图只展示；对接后为后端聚合接口） ===== */
+
+/** 工作台指标（今日/本月 + 环比基期：昨日/上月） */
+export function workbenchStats() {
+  const today = dayjs().format('YYYY-MM-DD')
+  const month = dayjs().format('YYYY-MM')
+  const yesterday = dayjs().subtract(1, 'day').format('YYYY-MM-DD')
+  const prevMonth = dayjs().subtract(1, 'month').format('YYYY-MM')
+  const sumNet = (list) => +list.reduce((s, w) => s + w.net, 0).toFixed(1)
+  return {
+    todayDispatches: db.dispatches.filter((d) => d.dispatchTime.slice(0, 10) === today).length,
+    todayLoad: sumNet(db.weighings.filter((w) => w.type === '进磅' && w.time.slice(0, 10) === today)),
+    todayUnload: sumNet(db.weighings.filter((w) => w.type === '出磅' && w.time.slice(0, 10) === today)),
+    monthSettled:
+      db.settlements
+        .filter((s) => s.status === 'settled' && s.settleDate && s.settleDate.slice(0, 7) === month)
+        .reduce((s, x) => s + x.totalAmount, 0) / 10000,
+    yesterdayDispatches: db.dispatches.filter((d) => d.dispatchTime.slice(0, 10) === yesterday).length,
+    yesterdayLoad: sumNet(db.weighings.filter((w) => w.type === '进磅' && w.time.slice(0, 10) === yesterday)),
+    yesterdayUnload: sumNet(db.weighings.filter((w) => w.type === '出磅' && w.time.slice(0, 10) === yesterday)),
+    prevMonthSettled:
+      db.settlements
+        .filter((s) => s.status === 'settled' && s.settleDate && s.settleDate.slice(0, 7) === prevMonth)
+        .reduce((s, x) => s + x.totalAmount, 0) / 10000
+  }
+}
+
+/** 工作台待办列表（纯数据：key/title/desc/path；图标配色为视图层关注点） */
+export function workbenchTodoList() {
+  const list = []
+  const pendingContracts = db.contracts.filter((c) => c.status === 'pending')
+  if (pendingContracts.length) {
+    list.push({ key: 'contract', title: `${pendingContracts.length} 份合同待审批`, desc: pendingContracts[0].name, path: '/contract' })
+  }
+  const pendingDispatches = db.dispatches.filter((d) => d.status === 'pending')
+  if (pendingDispatches.length) {
+    list.push({ key: 'dispatch', title: `${pendingDispatches.length} 张调度单待装货`, desc: `最早下发：${pendingDispatches[0].dispatchTime}`, path: '/dispatch' })
+  }
+  const pendingExceptions = db.exceptions.filter((e) => e.status === 'pending')
+  if (pendingExceptions.length) {
+    list.push({ key: 'exception', title: `${pendingExceptions.length} 条异常待处理`, desc: pendingExceptions[0].description, path: '/exception' })
+  }
+  const pendingSettlements = db.settlements.filter((s) => s.status === 'pending')
+  if (pendingSettlements.length) {
+    list.push({
+      key: 'settlement',
+      title: `${pendingSettlements.length} 笔结算待对账`,
+      desc: `合计 ${formatMoney(pendingSettlements.reduce((s, x) => s + x.totalAmount, 0))}`,
+      path: '/settlement'
+    })
+  }
+  const overdue = db.settlements.filter((s) => s.status === 'overdue')
+  if (overdue.length) {
+    list.push({ key: 'overdue', title: `${overdue.length} 笔结算已逾期`, desc: `最早周期：${overdue[0].period}`, path: '/settlement' })
+  }
+  return list
 }
 
 /** 天气（按日期确定性派生，演示数据源；后续可替换为真实天气接口） */

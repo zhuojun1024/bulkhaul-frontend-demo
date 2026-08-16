@@ -3,7 +3,7 @@
  * 运行：node --import ./scripts/register.mjs scripts/verify-flow.mjs
  */
 import { db, dashboard, weatherOf } from '../src/mock/index.js'
-import { NOW } from '../src/mock/base.js'
+import { NOW, genId } from '../src/mock/base.js'
 import dayjs from 'dayjs'
 import {
   confirmLoad,
@@ -69,8 +69,31 @@ import {
   importCommodities,
   importVehicles,
   matchBankRecord,
-  autoMatchBank
+  autoMatchBank,
+  setOperator,
+  operatorCan,
+  BUSY_STATUSES,
+  validateResourceCommit,
+  advanceTelemetry,
+  recalcOverdueAll,
+  createContract,
+  createPlan,
+  cancelPlan,
+  saveCommodity,
+  toggleCommodityStatus,
+  toggleCustomerStatus,
+  toggleDriverStatus,
+  sendVehicleRepair,
+  resumeVehicle,
+  setInventoryStatus,
+  saveUser,
+  removeUser,
+  toggleUserStatus,
+  saveRole,
+  removeRole,
+  updateRolePerms
 } from '../src/mock/flow.js'
+import { onSchedulerEvent, runSchedulerTick } from '../src/mock/scheduler.js'
 import { monthlyReport, customerReport, commodityReport, terminalReport, costReport } from '../src/mock/report.js'
 import { menuAllowed, actionAllowed } from '../src/permission.js'
 
@@ -938,8 +961,10 @@ if (g4plan) {
   if (g4d) {
     const oldExp = g4d.licenseExpire
     g4d.licenseExpire = dayjs(NOW).subtract(1, 'day').format('YYYY-MM-DD')
-    const { created: g4autoD } = createDispatches(g4plan, 2)
-    check('G4：驾照过期司机不被派车（自动匹配）', g4autoD.length === 2 && g4autoD.every((d) => d.driverId !== g4d.id))
+    // 注：此处派 1 张（而非 2 张）——前序章节与年检子测试已占用大部分空闲车辆，
+    // 乐观锁下同一空闲池不足 2 台时二次派车会被并发冲突正确拦截（断言目标是"过期司机不被自动匹配"）
+    const { created: g4autoD } = createDispatches(g4plan, 1)
+    check('G4：驾照过期司机不被派车（自动匹配）', g4autoD.length === 1 && g4autoD.every((d) => d.driverId !== g4d.id))
     g4d.licenseExpire = oldExp
   }
 } else {
@@ -1154,6 +1179,169 @@ const g8am = autoMatchBank()
 check(
   'G8：自动核销（核销均为精确匹配，质量保证金不误核销）',
   Array.isArray(g8am) && g8am.every((b) => b.status === 'matched' && b.settlementId) && (!g8deposit || g8deposit.status === 'unmatched')
+)
+
+console.log('== 15. P2 架构下沉回归（正规 ID / 乐观锁 / RBAC 单点校验 / 定时任务 / 写操作下沉） ==')
+
+// P2-A 正规 ID 生成（最大序列+1，删除不复用）
+check(
+  'P2-A：genId 取最大序列+1（删除末位不复用 ID）',
+  genId('CM', 3, [{ id: 'CM003' }, { id: 'CM007' }]) === 'CM008' &&
+    genId('CM', 3, [{ id: 'CM007' }]) === 'CM008' &&
+    genId('CM', 3, []) === 'CM001'
+)
+
+// P2-B 乐观锁（version 快照 + 提交前二次校验）
+const p15v = db.vehicles.find((v) => v.status === 'idle' && !db.dispatches.some((x) => BUSY_STATUSES.includes(x.status) && x.vehicleId === v.id))
+const p15d = db.drivers.find((d) => d.status !== 'disabled' && !db.dispatches.some((x) => BUSY_STATUSES.includes(x.status) && x.driverId === d.id))
+const p15seen = { vVersion: p15v.version, dVersion: p15d.version }
+check('P2-B：版本一致且无未完结车次 → 校验通过', validateResourceCommit(p15v, p15d, p15seen).ok === true)
+p15v.version += 1 // 模拟选择后、提交前另一写操作先行（如报修）
+check('P2-B：版本不一致 → 并发冲突拦截派车', /并发冲突/.test(validateResourceCommit(p15v, p15d, p15seen).error))
+p15v.version -= 1
+const p15busyD = db.dispatches.find((x) => BUSY_STATUSES.includes(x.status) && x.vehicleId)
+const p15busyV = p15busyD ? db.vehicles.find((v) => v.id === p15busyD.vehicleId) : null
+check(
+  'P2-B：已有未完结车次的车辆 → 重复占用拦截',
+  p15busyV ? /未完结车次/.test(validateResourceCommit(p15busyV, p15d, { vVersion: p15busyV.version, dVersion: p15d.version }).error) : true
+)
+
+// P2-C RBAC 单点校验（服务层守卫；只读用户全部写操作拦截）
+setOperator({ name: '审计观察员', username: 'user16', role: '只读用户' })
+check('P2-C：只读用户无操作权限（默认拒绝）', operatorCan('dispatch') === false && operatorCan('settlement') === false && operatorCan('contract') === false)
+check('P2-C：只读用户新建商品被服务层拦截', /无此操作权限/.test(saveCommodity({ name: 'P2 权限测试商品' }).error))
+check('P2-C：只读用户冻结客户被服务层拦截', /无此操作权限/.test(toggleCustomerStatus(db.customers.find((c) => c.status === 'active')).error))
+check('P2-C：只读用户新建计划被服务层拦截', /无此操作权限/.test(createPlan({ contractId: db.contracts.find((c) => c.status === 'executing')?.id, quantity: 1 }).error))
+check('P2-C：只读用户新建用户被服务层拦截', /无此操作权限/.test(saveUser({ name: 'x', username: 'p2x', password: '1' }).error))
+
+// P2-D 定时任务（围栏事件由 scheduler 驱动；系统事件不受登录用户 RBAC 约束）
+let p15f = db.dispatches.find((x) => x.status === 'intransit' && x.eta && !x.fenceAlerted?.delay)
+if (!p15f) {
+  p15f = db.dispatches.find((x) => x.status === 'intransit' && x.eta)
+  if (p15f) p15f.fenceAlerted = {}
+}
+check('P2-D：存在可触发围栏事件的在途车次', !!p15f)
+if (p15f) {
+  p15f.eta = dayjs().subtract(60, 'minute').format('YYYY-MM-DD HH:mm') // 模拟超 ETA（阈值 30 分钟）
+  const p15excBefore = db.exceptions.length
+  const p15events = []
+  const p15off = onSchedulerEvent((e) => p15events.push(e))
+  runSchedulerTick()
+  p15off()
+  check(
+    'P2-D：定时任务生成围栏延误异常（只读操作人不阻断系统事件）',
+    db.exceptions.length > p15excBefore &&
+      db.exceptions.some((e) => e.dispatchId === p15f.id && e.source === 'fence') &&
+      p15f.status === 'exception' &&
+      p15events.some((e) => e.type === 'fence' && e.created.some((x) => x.dispatchId === p15f.id))
+  )
+  check('P2-D：tick 事件推送订阅者', p15events.some((e) => e.type === 'tick'))
+}
+
+// P2-E 遥测推进与逾期校准（后端数据源/cron 等价）
+const p15t = db.dispatches.filter((d) => d.status === 'intransit')
+const p15prog = p15t.map((d) => d.progress)
+advanceTelemetry()
+check(
+  'P2-E：advanceTelemetry 推进在途车次进度（上限 95）',
+  p15t.length > 0 && p15t.every((d) => d.progress >= 0 && d.progress <= 95) && p15t.some((d, i) => d.progress > p15prog[i])
+)
+const p15s = db.settlements.find((s) => s.status === 'settled' && s.settleDate && s.totalAmount - s.paidAmount > 0)
+check('P2-E：存在未付清的已结算账单（逾期校准样本）', !!p15s)
+if (p15s) {
+  const p15days = db.contracts.find((c) => c.id === p15s.contractId)?.paymentDays || 30
+  const p15origDate = p15s.settleDate
+  p15s.settleDate = dayjs().subtract(p15days + 10, 'day').format('YYYY-MM-DD') // 模拟账期已过
+  const p15n = recalcOverdueAll()
+  check('P2-E：recalcOverdueAll 标记逾期账单', p15n >= 1 && p15s.status === 'overdue')
+  p15s.settleDate = p15origDate
+  recalcOverdueAll()
+  check('P2-E：账期回退后恢复已结算', p15s.status === 'settled')
+}
+
+// P2-F 写操作下沉（管理员操作人：守卫 + 审计 + 正规 ID）
+setOperator({ name: '张建国', username: 'admin', role: '平台管理员' })
+
+// 商品
+const p15cm = saveCommodity({ name: 'P2 测试商品', category: '煤炭', unit: '吨', density: 1.2, price: 300 })
+check('P2-F：saveCommodity 新建（重名查重 + genId）', p15cm.ok === true && /^CM\d{3}$/.test(p15cm.id) && db.commodities.some((c) => c.id === p15cm.id && c.status === 'active'))
+check('P2-F：saveCommodity 守卫：重名拦截', /已存在/.test(saveCommodity({ name: 'P2 测试商品' }).error))
+const p15cmObj = db.commodities.find((c) => c.id === p15cm.id)
+check(
+  'P2-F：saveCommodity 编辑 + toggleCommodityStatus 启停',
+  saveCommodity({ id: p15cm.id, name: 'P2 测试商品（改）' }).ok === true &&
+    p15cmObj.name === 'P2 测试商品（改）' &&
+    toggleCommodityStatus(p15cmObj).ok === true &&
+    p15cmObj.status === 'inactive' &&
+    toggleCommodityStatus(p15cmObj).ok === true &&
+    p15cmObj.status === 'active'
+)
+
+// 客户 / 司机 / 车辆 / 库存
+const p15cust = db.customers.find((c) => c.status === 'active')
+check('P2-F：toggleCustomerStatus 冻结/解冻', toggleCustomerStatus(p15cust).ok === true && p15cust.status === 'frozen' && toggleCustomerStatus(p15cust).ok === true && p15cust.status === 'active')
+const p15dr = db.drivers.find((d) => d.status !== 'disabled' && !db.dispatches.some((x) => x.driverId === d.id && ['loading', 'intransit', 'unloading'].includes(x.status)))
+check(
+  'P2-F：toggleDriverStatus 停用（司机账号联动停用）',
+  toggleDriverStatus(p15dr).ok === true && p15dr.status === 'disabled' && db.users.find((u) => u.driverId === p15dr.id)?.status === 'disabled'
+)
+check(
+  'P2-F：toggleDriverStatus 启用（司机账号联动恢复）',
+  toggleDriverStatus(p15dr).ok === true && p15dr.status === 'available' && db.users.find((u) => u.driverId === p15dr.id)?.status === 'active'
+)
+const p15veh = db.vehicles.find((v) => v.status === 'idle')
+check('P2-F：sendVehicleRepair（仅空闲可报修）', sendVehicleRepair(p15veh, 'P2 测试报修').ok === true && p15veh.status === 'maintenance')
+check('P2-F：sendVehicleRepair 守卫：非空闲拦截', /非"空闲"/.test(sendVehicleRepair(p15veh, 'x').error))
+check('P2-F：resumeVehicle（仅维修中可恢复）', resumeVehicle(p15veh).ok === true && p15veh.status === 'idle')
+const p15inv = db.inventories.find((i) => i.status === 'normal')
+check('P2-F：setInventoryStatus 锁定/解锁', setInventoryStatus(p15inv, 'locked').ok === true && p15inv.status === 'locked' && setInventoryStatus(p15inv, 'normal').ok === true && p15inv.status === 'normal')
+check('P2-F：setInventoryStatus 守卫：重复操作拦截', /无需重复操作/.test(setInventoryStatus(p15inv, 'normal').error))
+
+// 用户
+const p15u = saveUser({ name: 'P2 测试用户', username: 'p2test', password: '123456', role: '调度员' })
+check('P2-F：saveUser 新建（账号查重 + genId）', p15u.ok === true && /^U\d{3}$/.test(p15u.id))
+check('P2-F：saveUser 守卫：账号重复拦截', /已存在/.test(saveUser({ name: 'x', username: 'p2test', password: '1' }).error))
+const p15uObj = db.users.find((u) => u.id === p15u.id)
+check('P2-F：toggleUserStatus 停用/启用', toggleUserStatus(p15uObj, false).ok === true && p15uObj.status === 'disabled' && toggleUserStatus(p15uObj, true).ok === true && p15uObj.status === 'active')
+check('P2-F：removeUser', removeUser(p15uObj).ok === true && !db.users.some((u) => u.id === p15u.id))
+check('P2-F：removeUser 守卫：当前登录账号不可删除', /当前登录账号/.test(removeUser({ id: 'U001', username: 'admin' }).error))
+
+// 角色（含数据化权限即时生效）
+const p15r = saveRole({ name: 'P2 测试角色', code: 'p2_test_role', description: 'P2 回归' })
+check(
+  'P2-F：saveRole（查重 + 默认 deny + genId）',
+  p15r.ok === true && /^R\d{3}$/.test(p15r.id) && db.rolePerms['P2 测试角色'] && db.rolePerms['P2 测试角色'].menus.length === 0 && db.rolePerms['P2 测试角色'].actions.length === 0
+)
+check('P2-F：saveRole 守卫：名称/编码重复拦截', /已存在/.test(saveRole({ name: 'P2 测试角色', code: 'p2_other' }).error))
+check('P2-F：updateRolePerms', updateRolePerms('P2 测试角色', { menus: ['/workbench'], actions: ['dispatch'] }).ok === true && db.rolePerms['P2 测试角色'].actions.includes('dispatch'))
+setOperator({ name: 'P2 角色用户', username: 'p2role', role: 'P2 测试角色' })
+check('P2-C：数据化权限即时生效（新授权角色）', operatorCan('dispatch') === true && operatorCan('settlement') === false)
+setOperator({ name: '张建国', username: 'admin', role: '平台管理员' })
+check(
+  'P2-F：removeRole（角色下无用户）',
+  removeRole(db.roles.find((r) => r.name === 'P2 测试角色')).ok === true && !db.roles.some((r) => r.name === 'P2 测试角色') && !db.rolePerms['P2 测试角色']
+)
+check('P2-F：removeRole 守卫：内置角色不可删除', /不可删除/.test(removeRole(db.roles.find((r) => r.builtIn)).error))
+
+// 合同 / 计划
+const p15ship = db.customers.find((c) => ['shipper', 'both'].includes(c.type) && c.status === 'active')
+const p15cons = db.customers.find((c) => ['consignee', 'both'].includes(c.type) && c.status === 'active')
+const p15ct = createContract(
+  { name: 'P2 测试合同', shipperId: p15ship.id, consigneeId: p15cons.id, commodityId: db.commodities[0].id, loadTerminalId: db.terminals[0].id, unloadTerminalId: db.terminals[1].id, quantity: 100, unitPrice: 300 },
+  'draft'
+)
+check('P2-F：createContract 新建草稿（守卫 + genId + 金额口径）', p15ct.ok === true && /^HT-\d{4}$/.test(p15ct.id) && p15ct.contract.status === 'draft' && p15ct.contract.amount === 30000)
+check(
+  'P2-F：createContract 守卫：必填缺失拦截',
+  !!createContract({ name: '', shipperId: p15ship.id, consigneeId: p15cons.id, commodityId: db.commodities[0].id, loadTerminalId: db.terminals[0].id, unloadTerminalId: db.terminals[1].id, quantity: 100, unitPrice: 300 }).error
+)
+const p15excC = db.contracts.find((c) => c.status === 'executing' && contractRemaining(c.id) > 0)
+const p15plan = createPlan({ contractId: p15excC.id, quantity: Math.min(10, contractRemaining(p15excC.id)) })
+check('P2-F：createPlan（执行中合同 + 剩余量内）', p15plan.ok === true && p15plan.plan.status === 'pending' && /^YH-\d{4}$/.test(p15plan.id))
+check('P2-F：createPlan 守卫：超出剩余量拦截', /超出/.test(createPlan({ contractId: p15excC.id, quantity: 999999 }).error))
+check(
+  'P2-F：cancelPlan（仅待执行）+ 守卫',
+  cancelPlan(p15plan.plan).ok === true && p15plan.plan.status === 'cancelled' && /无法取消/.test(cancelPlan(p15plan.plan).error)
 )
 
 console.log(`\n结果：${pass} 通过，${fail} 失败`)

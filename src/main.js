@@ -10,6 +10,7 @@ import 'nprogress/nprogress.css'
 import App from './App.vue'
 import router from './router'
 import { enableAutoSave } from './mock/persist'
+import { startScheduler } from './mock/scheduler'
 import './styles/tokens.css'
 import './styles/index.css'
 
@@ -17,6 +18,9 @@ NProgress.configure({ showSpinner: false, trickle: false })
 
 // 数据持久化：深度监听 db 变化，防抖写入 localStorage（浏览器环境生效）
 enableAutoSave()
+
+// 后端定时任务模拟（P2 架构下沉）：围栏事件 / GPS 遥测 / 逾期校准，独立于页面生命周期
+startScheduler()
 
 const app = createApp(App)
 

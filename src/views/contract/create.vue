@@ -175,7 +175,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { db } from '@/mock'
-import { creditCheck, submitContractApproval } from '@/mock/flow'
+import { createContract } from '@/mock/flow'
 import { formatMoney } from '@/utils'
 import dayjs from 'dayjs'
 
@@ -232,40 +232,13 @@ function submit(status) {
       ElMessage.warning('请完善必填信息')
       return
     }
-    // 提交审批时做客户信用校验（草稿不占用授信）
-    if (status === 'pending') {
-      const check = creditCheck(form.shipperId, amount.value)
-      if (!check.ok) {
-        ElMessageBox.alert(check.message, '信用校验未通过', { type: 'warning', confirmButtonText: '知道了' })
-        return
-      }
+    // 写操作下沉服务层（P2）：守卫 + 信用校验（提交审批时）+ 审批链生成 + 审计
+    const r = createContract({ ...form }, status)
+    if (r && r.error) {
+      ElMessageBox.alert(r.error, status === 'pending' ? '提交失败' : '创建失败', { type: 'warning', confirmButtonText: '知道了' })
+      return
     }
-    const id = `HT-${String(db.contracts.length + 1).padStart(4, '0')}`
-    db.contracts.unshift({
-      id,
-      name: form.name,
-      shipperId: form.shipperId,
-      consigneeId: form.consigneeId,
-      commodityId: form.commodityId,
-      mode: form.mode,
-      loadTerminalId: form.loadTerminalId,
-      unloadTerminalId: form.unloadTerminalId,
-      quantity: form.quantity,
-      unitPrice: form.unitPrice,
-      amount: amount.value,
-      paymentDays: form.paymentDays,
-      startDate: form.startDate,
-      endDate: form.endDate,
-      signDate: dayjs().format('YYYY-MM-DD'),
-      status,
-      progress: 0,
-      contact: form.contact || '—',
-      phone: form.phone || '—',
-      remark: form.remark || ''
-    })
-    // 提交审批走多级审批流（部门→公司），生成审批链
-    if (status === 'pending') submitContractApproval(db.contracts[0])
-    ElMessage.success(status === 'draft' ? '草稿已保存' : `合同 ${id} 已提交审批（部门审批 → 公司审批）`)
+    ElMessage.success(status === 'draft' ? '草稿已保存' : `合同 ${r.id} 已提交审批（部门审批 → 公司审批）`)
     router.push('/contract')
   })
 }

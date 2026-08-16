@@ -1,7 +1,7 @@
 <template>
   <div class="page">
     <PageHeader title="角色管理" desc="角色与功能权限分配">
-      <el-button type="primary" :icon="Plus" @click="openDialog()">新增角色</el-button>
+      <el-button v-if="can('role')" type="primary" :icon="Plus" @click="openDialog()">新增角色</el-button>
     </PageHeader>
 
     <div class="role-grid">
@@ -17,7 +17,7 @@
             </div>
             <div class="role-card__code">{{ r.code }}</div>
           </div>
-          <el-button size="small" text type="primary" @click="openPerm(r)">权限</el-button>
+          <el-button v-if="can('role')" size="small" text type="primary" @click="openPerm(r)">权限</el-button>
         </div>
         <p class="role-card__desc">{{ r.description }}</p>
         <div class="role-card__footer">
@@ -30,7 +30,7 @@
               {{ permSummary(r.name) }}
             </el-tag>
             <el-button
-              v-if="!r.builtIn"
+              v-if="!r.builtIn && can('role')"
               link type="danger" size="small"
               style="margin-left: 8px"
               @click="removeRole(r)"
@@ -110,8 +110,11 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Lock, User } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { db } from '@/mock'
-import { logAction } from '@/mock/flow'
+import { saveRole as flowSaveRole, removeRole as flowRemoveRole, updateRolePerms } from '@/mock/flow'
 import { MENU_OPTIONS, ACTION_OPTIONS } from '@/permission'
+import { usePerm } from '@/permission'
+
+const { can } = usePerm()
 
 
 /** 角色下实际用户数（按用户表实时统计，避免种子 userCount 过期） */
@@ -144,15 +147,18 @@ function openPerm(role) {
 }
 
 function savePerm() {
+  // 写操作下沉服务层（P2）：RBAC + 审计
   const name = currentRole.value.name
-  db.rolePerms[name] = permAll.value
-    ? { menus: null, actions: null }
-    : { menus: [...checkedMenus.value], actions: [...checkedActions.value] }
-  logAction(
-    '系统管理',
-    '角色权限更新',
-    `角色 ${name} 权限更新：${permAll.value ? '全部权限' : `菜单 ${checkedMenus.value.length} 项、操作 ${checkedActions.value.length} 项`}`
+  const r = updateRolePerms(
+    name,
+    permAll.value
+      ? { menus: null, actions: null }
+      : { menus: [...checkedMenus.value], actions: [...checkedActions.value] }
   )
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
   permVisible.value = false
   ElMessage.success(`角色 ${name} 权限已更新并生效`)
 }
@@ -167,47 +173,24 @@ function openDialog() {
 }
 
 function saveRole() {
-  const name = form.name.trim()
-  const code = form.code.trim()
-  if (!name || !code) {
-    ElMessage.warning('请填写角色名称和编码')
+  // 写操作下沉服务层（P2）：RBAC + 查重 + 默认 deny 权限 + 正规 ID 生成 + 审计
+  const r = flowSaveRole({ name: form.name, code: form.code, description: form.description })
+  if (r && r.error) {
+    ElMessage.warning(r.error)
     return
   }
-  if (db.roles.some((r) => r.name === name || r.code === code)) {
-    ElMessage.warning('角色名称或编码已存在，请更换')
-    return
-  }
-  // 取不冲突的角色 id（避免删除角色后长度回退导致 id 重复）
-  const max = db.roles.reduce((m, r) => {
-    const n = parseInt(String(r.id).replace(/\D/g, ''), 10)
-    return Number.isNaN(n) ? m : Math.max(m, n)
-  }, 0)
-  db.roles.push({
-    id: `R${String(max + 1).padStart(3, '0')}`,
-    name,
-    code,
-    userCount: 0,
-    description: form.description || '—',
-    builtIn: false
-  })
-  // 新建角色默认无任何权限（deny），需到"权限"中显式授权
-  db.rolePerms[name] = { menus: [], actions: [] }
-  logAction('系统管理', '新增角色', `新增角色 ${name}（${code}），默认无权限`)
   dialogVisible.value = false
   ElMessage.success('角色已创建（默认无权限，请在"权限"中授权）')
 }
 
 function removeRole(role) {
-  const count = userCountOf(role.name)
-  if (count > 0) {
-    ElMessage.warning(`角色下还有 ${count} 名用户，无法删除`)
-    return
-  }
   ElMessageBox.confirm(`确认删除角色 ${role.name}？`, '删除角色', { type: 'warning' }).then(() => {
-    const idx = db.roles.findIndex((r) => r.id === role.id)
-    if (idx > -1) db.roles.splice(idx, 1)
-    delete db.rolePerms[role.name]
-    logAction('系统管理', '删除角色', `删除角色 ${role.name}`)
+    // 写操作下沉服务层（P2）：内置角色/在用角色守卫 + RBAC + 审计
+    const r = flowRemoveRole(role)
+    if (r && r.error) {
+      ElMessage.warning(r.error)
+      return
+    }
     ElMessage.success('角色已删除')
   }).catch(() => {})
 }

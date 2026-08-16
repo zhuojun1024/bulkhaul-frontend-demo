@@ -1,8 +1,8 @@
 <template>
   <div class="page">
     <PageHeader title="商品管理" desc="大宗商品目录、质量指标与参考运价维护">
-      <el-button :icon="Upload" @click="openImport">导入</el-button>
-      <el-button type="primary" :icon="Plus" @click="openDialog()">新建商品</el-button>
+      <el-button v-if="can('commodity')" :icon="Upload" @click="openImport">导入</el-button>
+      <el-button v-if="can('commodity')" type="primary" :icon="Plus" @click="openDialog()">新建商品</el-button>
     </PageHeader>
 
     <div class="panel">
@@ -57,8 +57,9 @@
           <el-table-column label="操作" width="150" align="center" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" size="small" @click.stop="openDetail(row)">指标</el-button>
-              <el-button link type="primary" size="small" @click.stop="openDialog(row)">编辑</el-button>
+              <el-button v-if="can('commodity')" link type="primary" size="small" @click.stop="openDialog(row)">编辑</el-button>
               <el-button
+                v-if="can('commodity')"
                 :link="true"
                 :type="row.status === 'active' ? 'danger' : 'success'"
                 size="small"
@@ -141,8 +142,10 @@ import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import ImportDialog from '@/components/ImportDialog.vue'
 import { db } from '@/mock'
-import { importCommodities } from '@/mock/flow'
+import { importCommodities, saveCommodity, toggleCommodityStatus } from '@/mock/flow'
+import { usePerm } from '@/permission'
 
+const { can } = usePerm()
 
 const statusMap = {
   active: { label: '启用', type: 'success' },
@@ -198,34 +201,22 @@ function openDialog(row) {
 }
 
 function save() {
-  if (!form.name) {
-    ElMessage.warning('请输入商品名称')
+  // 写操作下沉服务层（P2）：RBAC + 重名守卫 + 审计
+  const r = saveCommodity({ id: editingId.value, ...form })
+  if (r && r.error) {
+    ElMessage.warning(r.error)
     return
   }
-  if (editingId.value) {
-    const row = db.commodities.find((c) => c.id === editingId.value)
-    Object.assign(row, { name: form.name, category: form.category, unit: form.unit, density: form.density, price: form.price })
-    ElMessage.success('商品已更新')
-  } else {
-    db.commodities.push({
-      id: `CM${String(db.commodities.length + 1).padStart(3, '0')}`,
-      name: form.name,
-      category: form.category,
-      unit: form.unit,
-      density: form.density,
-      price: form.price,
-      indicators: [{ name: '质量要求', value: '按合同约定' }],
-      status: 'active',
-      totalVolume: 0,
-      remark: ''
-    })
-    ElMessage.success('商品已创建')
-  }
+  ElMessage.success(editingId.value ? '商品已更新' : '商品已创建')
   dialogVisible.value = false
 }
 
 function toggleStatus(row) {
-  row.status = row.status === 'active' ? 'inactive' : 'active'
+  const r = toggleCommodityStatus(row)
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
   ElMessage.success(`商品 ${row.name} 已${row.status === 'active' ? '启用' : '停用'}`)
 }
 

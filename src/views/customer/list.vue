@@ -129,7 +129,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import ImportDialog from '@/components/ImportDialog.vue'
 import { db } from '@/mock'
-import { logAction, importCustomers } from '@/mock/flow'
+import { importCustomers, toggleCustomerStatus } from '@/mock/flow'
 import { formatMoney } from '@/utils'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
@@ -202,13 +202,20 @@ function levelTag(level) {
 function toggleStatus(row) {
   if (row.status === 'active') {
     ElMessageBox.confirm(`确认冻结客户 ${row.name}？冻结后不可新建合同。`, '冻结客户', { type: 'warning' }).then(() => {
-      row.status = 'frozen'
-      logAction('客户管理', '客户冻结', `客户 ${row.name} 冻结，不可新建合同`)
+      // 写操作下沉服务层（P2）：RBAC + 审计
+      const r = toggleCustomerStatus(row)
+      if (r && r.error) {
+        ElMessage.error(r.error)
+        return
+      }
       ElMessage.success('客户已冻结')
     }).catch(() => {})
   } else {
-    row.status = 'active'
-    logAction('客户管理', '客户解冻', `客户 ${row.name} 解冻，恢复合作`)
+    const r = toggleCustomerStatus(row)
+    if (r && r.error) {
+      ElMessage.error(r.error)
+      return
+    }
     ElMessage.success('客户已解冻')
   }
 }
