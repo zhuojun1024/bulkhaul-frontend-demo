@@ -1,5 +1,5 @@
 <template>
-  <div class="page" v-loading="loading">
+  <div class="page">
     <div class="panel plan-detail__header">
       <div class="plan-detail__head">
         <el-button :icon="ArrowLeft" circle @click="$router.back()" />
@@ -75,25 +75,61 @@
         <el-empty v-if="!dispatches.length" description="尚未生成调度单" :image-size="80" />
       </div>
     </div>
+
+    <!-- 调度弹窗（与计划列表页同口径：车次可配置 + 车辆来源） -->
+    <el-dialog v-model="dispatchVisible" title="计划调度" width="520px">
+      <div v-if="plan" class="dispatch-dialog">
+        <el-alert :title="'计划 ' + plan.id + '：' + (commodity?.name || '') + ' ' + formatNum(plan.quantity) + ' 吨'" type="info" :closable="false" show-icon />
+        <el-alert
+          v-if="!isRoad"
+          :title="plan.mode + '方式按运输单元执行（车号/船名/管段），无需匹配车辆与司机，不产生公路磅单'"
+          type="warning"
+          :closable="false"
+          show-icon
+          style="margin-top: 10px"
+        />
+        <el-form label-width="90px" style="margin-top: 16px">
+          <el-form-item :label="isRoad ? '调度车次' : '运输单元数'">
+            <el-input-number v-model="dispatchCount" :min="1" :max="10" />
+            <span class="dispatch-dialog__tip">每{{ isRoad ? '车' : '单元' }}约 {{ perTripQuantity }} 吨</span>
+          </el-form-item>
+          <template v-if="isRoad">
+            <el-form-item label="车辆来源">
+              <el-radio-group v-model="vehicleSource">
+                <el-radio value="auto">自动匹配空闲车辆</el-radio>
+                <el-radio value="manual">手动指定</el-radio>
+              </el-radio-group>
+            </el-form-item>
+            <el-form-item v-if="vehicleSource === 'manual'" label="选择车辆">
+              <el-select v-model="selectedVehicles" multiple filterable placeholder="选择车辆" style="width: 100%">
+                <el-option v-for="v in idleVehicles" :key="v.id" :label="v.plate + '（' + v.type + '）'" :value="v.id" />
+              </el-select>
+            </el-form-item>
+          </template>
+        </el-form>
+      </div>
+      <template #footer>
+        <el-button @click="dispatchVisible = false">取消</el-button>
+        <el-button type="primary" @click="confirmDispatch">确认调度</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 defineOptions({ name: 'PlanDetail' })
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, Position } from '@element-plus/icons-vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
-import { createDispatches, creditCheck } from '@/mock/flow'
+import { createDispatches, creditCheck, isRoadMode } from '@/mock/flow'
 import { formatNum } from '@/utils'
 import { usePerm } from '@/permission'
 
 const route = useRoute()
 const { can } = usePerm()
-const loading = ref(true)
-onMounted(() => setTimeout(() => (loading.value = false), 200))
 
 const plan = computed(() => find.plan(route.params.id))
 const commodity = computed(() => find.commodity(plan.value?.commodityId))
@@ -128,25 +164,55 @@ const dispatchStatusMap = {
   exception: { label: '异常', type: 'danger' }
 }
 
+/* ===== 调度（与计划列表页同口径：车次可配置 + 车辆来源，不再写死 3 车次） ===== */
+const dispatchVisible = ref(false)
+const dispatchCount = ref(3)
+const vehicleSource = ref('auto')
+const selectedVehicles = ref([])
+/** 已有未完结车次（待装货/装货中/异常）的车辆不可再被指定，与 createDispatches 互斥口径一致 */
+const busyVehicleIds = computed(() =>
+  new Set(db.dispatches.filter((d) => ['pending', 'loading', 'exception'].includes(d.status)).map((d) => d.vehicleId))
+)
+const idleVehicles = computed(() =>
+  db.vehicles.filter(
+    (v) => v.status === 'idle' && v.type !== '铁路敞车' && v.type !== '散货船' && !busyVehicleIds.value.has(v.id)
+  )
+)
+const isRoad = computed(() => isRoadMode(plan.value?.mode))
+const perTripQuantity = computed(() => {
+  if (!plan.value || !dispatchCount.value) return 0
+  return Math.max(1, Math.round(plan.value.quantity / dispatchCount.value))
+})
+
 function dispatch() {
+  dispatchCount.value = isRoadMode(plan.value.mode) ? Math.min(10, Math.max(1, Math.round(plan.value.quantity / 35))) : 1
+  vehicleSource.value = 'auto'
+  selectedVehicles.value = []
+  dispatchVisible.value = true
+}
+
+function confirmDispatch() {
+  if (isRoad.value && vehicleSource.value === 'manual' && selectedVehicles.value.length < dispatchCount.value) {
+    ElMessage.warning(`请至少选择 ${dispatchCount.value} 辆车`)
+    return
+  }
   const contract = find.contract(plan.value.contractId)
   const check = creditCheck(contract?.shipperId, plan.value.quantity * (plan.value.unitPrice || 0))
   if (!check.ok) {
     ElMessageBox.alert(check.message, '信用校验未通过', { type: 'warning', confirmButtonText: '知道了' })
     return
   }
-  ElMessageBox.confirm(
-    `为计划 ${plan.value.id} 生成 3 张调度单（自动匹配空闲车辆，数量按批次均摊）？`,
-    '计划调度',
-    { type: 'info', confirmButtonText: '确认调度' }
-  ).then(() => {
-    const { created, error } = createDispatches(plan.value, 3)
-    if (error) {
-      ElMessage.warning(error)
-      return
-    }
-    ElMessage.success(`已生成 ${created.length} 张调度单`)
-  }).catch(() => {})
+  const { created, error } = createDispatches(
+    plan.value,
+    dispatchCount.value,
+    vehicleSource.value === 'manual' ? selectedVehicles.value : []
+  )
+  dispatchVisible.value = false
+  if (error) {
+    ElMessage.warning(error)
+    return
+  }
+  ElMessage.success(`已生成 ${created.length} 张调度单`)
 }
 </script>
 
@@ -181,5 +247,11 @@ function dispatch() {
 }
 .link:hover {
   text-decoration: underline;
+}
+
+.dispatch-dialog__tip {
+  margin-left: 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 </style>

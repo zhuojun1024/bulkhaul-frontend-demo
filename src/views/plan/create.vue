@@ -68,7 +68,7 @@
 
       <div class="create-form__footer">
         <el-button @click="$router.back()">取消</el-button>
-        <el-button type="primary" :loading="submitting" @click="submit">创建计划</el-button>
+        <el-button type="primary" @click="submit">创建计划</el-button>
       </div>
     </el-form>
   </div>
@@ -88,9 +88,9 @@ import dayjs from 'dayjs'
 
 const router = useRouter()
 const formRef = ref()
-const submitting = ref(false)
 
-const executableContracts = db.contracts.filter((c) => c.status === 'executing')
+/** 执行中合同（响应式：合同审批通过/状态变化后候选自动刷新） */
+const executableContracts = computed(() => db.contracts.filter((c) => c.status === 'executing'))
 
 const form = reactive({
   contractId: '',
@@ -140,27 +140,23 @@ function submit() {
       ElMessage.warning(`批次数量超出合同剩余可计划量（剩余 ${remain} 吨）`)
       return
     }
-    submitting.value = true
-    setTimeout(() => {
-      const id = `YH-${String(db.plans.length + 1).padStart(4, '0')}`
-      db.plans.unshift({
-        id,
-        contractId: c.id,
-        commodityId: c.commodityId,
-        quantity: form.quantity,
-        loadTerminalId: c.loadTerminalId,
-        unloadTerminalId: c.unloadTerminalId,
-        mode: c.mode,
-        planDate: form.planDate,
-        unitPrice: c.unitPrice,
-        status: 'pending',
-        progress: 0,
-        remark: form.remark
-      })
-      submitting.value = false
-      ElMessage.success(`计划 ${id} 创建成功`)
-      router.push(`/plan/${id}`)
-    }, 400)
+    const id = `YH-${String(db.plans.length + 1).padStart(4, '0')}`
+    db.plans.unshift({
+      id,
+      contractId: c.id,
+      commodityId: c.commodityId,
+      quantity: form.quantity,
+      loadTerminalId: c.loadTerminalId,
+      unloadTerminalId: c.unloadTerminalId,
+      mode: c.mode,
+      planDate: form.planDate,
+      unitPrice: c.unitPrice,
+      status: 'pending',
+      progress: 0,
+      remark: form.remark
+    })
+    ElMessage.success(`计划 ${id} 创建成功`)
+    router.push(`/plan/${id}`)
   })
 }
 </script>

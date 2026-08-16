@@ -1,4 +1,4 @@
-import { db, randInt, pick, randomName, NOW } from './base'
+import { db, randInt, pick, pickN, randomName, NOW } from './base'
 import dayjs from 'dayjs'
 
 /** 事故记录（近一年） */
@@ -56,9 +56,11 @@ db.exceptions
     }
   })
 
-/** 安全培训 */
+/** 安全培训（driverIds 记录实际参训司机，供培训覆盖率按真实口径计算） */
 db.trainings = Array.from({ length: 12 }, (_, i) => {
   const date = dayjs(NOW).add(i < 8 ? -randInt(5, 180) : randInt(3, 45), 'day')
+  const completed = !date.isAfter(dayjs(NOW))
+  const driverIds = completed ? pickN(db.drivers, randInt(15, 60)).map((d) => d.id) : []
   return {
     id: `PX-${String(i + 1).padStart(3, '0')}`,
     title: pick([
@@ -73,8 +75,9 @@ db.trainings = Array.from({ length: 12 }, (_, i) => {
     ]),
     date: date.format('YYYY-MM-DD'),
     trainer: randomName(),
-    participants: randInt(15, 60),
-    status: date.isAfter(dayjs(NOW)) ? 'scheduled' : 'completed'
+    participants: driverIds.length,
+    driverIds,
+    status: completed ? 'completed' : 'scheduled'
   }
 })
 

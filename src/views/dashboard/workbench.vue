@@ -1,5 +1,5 @@
 <template>
-  <div class="page" v-loading="loading">
+  <div class="page">
     <!-- 欢迎横幅 -->
     <div class="welcome">
       <div class="welcome__info">
@@ -40,12 +40,12 @@
       </div>
     </div>
 
-    <!-- 指标卡 -->
+    <!-- 指标卡（趋势按昨日/上月实际数据计算，基期为 0 时不显示趋势） -->
     <div class="stat-row">
-      <StatCard title="今日调度" :value="todayDispatches" unit="车次" icon="Position" color="var(--color-primary)" :trend="10.2" trend-label="较昨日" />
-      <StatCard title="今日装货" :value="formatNum(todayLoad)" unit="吨" icon="Box" color="var(--color-success)" :trend="6.8" trend-label="较昨日" />
-      <StatCard title="今日卸货" :value="formatNum(todayUnload)" unit="吨" icon="DeleteFilled" color="var(--color-warning)" :trend="-3.4" trend-label="较昨日" />
-      <StatCard title="本月结算" :value="formatMoney(monthSettled, false) + ' 万'" unit="" icon="Wallet" color="var(--color-info)" :trend="12.6" trend-label="较上月" />
+      <StatCard title="今日调度" :value="todayDispatches" unit="车次" icon="Position" color="var(--color-primary)" :trend="dispatchTrend" trend-label="较昨日" />
+      <StatCard title="今日装货" :value="formatNum(todayLoad)" unit="吨" icon="Box" color="var(--color-success)" :trend="loadTrend" trend-label="较昨日" />
+      <StatCard title="今日卸货" :value="formatNum(todayUnload)" unit="吨" icon="DeleteFilled" color="var(--color-warning)" :trend="unloadTrend" trend-label="较昨日" />
+      <StatCard title="本月结算" :value="formatMoney(monthSettled, false) + ' 万'" unit="" icon="Wallet" color="var(--color-info)" :trend="settleTrend" trend-label="较上月" />
     </div>
 
     <el-row :gutter="16">
@@ -82,7 +82,7 @@
         <div class="panel notice-panel">
           <div class="panel__header">
             <span class="panel__title">平台公告</span>
-            <el-link type="primary" :underline="false" @click="$router.push('/system/log')">更多</el-link>
+            <el-tag size="small" type="info" effect="plain">{{ db.announcements.length }} 条</el-tag>
           </div>
           <div class="panel__body">
             <div v-for="n in db.announcements" :key="n.id" class="notice-item">
@@ -137,7 +137,7 @@
 
 <script setup>
 defineOptions({ name: 'Workbench' })
-import { ref, computed, onMounted } from 'vue'
+import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { Plus, Position, MapLocation, ArrowRight } from '@element-plus/icons-vue'
 import StatCard from '@/components/StatCard.vue'
@@ -145,7 +145,7 @@ import ChartCard from '@/components/ChartCard.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find, dashboard, workbenchTodos, weatherOf } from '@/mock'
 import { useUserStore } from '@/store'
-import { formatMoney, formatNum } from '@/utils'
+import { formatMoney, formatNum, round } from '@/utils'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
 
@@ -153,8 +153,6 @@ const tokens = useTokens()
 
 const router = useRouter()
 const userStore = useUserStore()
-const loading = ref(true)
-onMounted(() => setTimeout(() => (loading.value = false), 300))
 
 /* ===== 欢迎区 ===== */
 const greeting = computed(() => {
@@ -189,6 +187,26 @@ const monthSettled = computed(() =>
     .filter((s) => s.status === 'settled' && s.settleDate && s.settleDate.slice(0, 7) === dayjs().format('YYYY-MM'))
     .reduce((s, x) => s + x.totalAmount, 0) / 10000
 )
+
+/* ===== 环比趋势（昨日/上月实际数据；基期为 0 时不显示趋势） ===== */
+const pctVs = (cur, prev) => (prev ? round(((cur - prev) / prev) * 100, 1) : null)
+const yesterdayStr = dayjs().subtract(1, 'day').format('YYYY-MM-DD')
+const yesterdayDispatches = computed(() => db.dispatches.filter((d) => d.dispatchTime.slice(0, 10) === yesterdayStr).length)
+const yesterdayLoad = computed(() =>
+  db.weighings.filter((w) => w.type === '进磅' && w.time.slice(0, 10) === yesterdayStr).reduce((s, w) => s + w.net, 0)
+)
+const yesterdayUnload = computed(() =>
+  db.weighings.filter((w) => w.type === '出磅' && w.time.slice(0, 10) === yesterdayStr).reduce((s, w) => s + w.net, 0)
+)
+const prevMonthSettled = computed(() =>
+  db.settlements
+    .filter((s) => s.status === 'settled' && s.settleDate && s.settleDate.slice(0, 7) === dayjs().subtract(1, 'month').format('YYYY-MM'))
+    .reduce((s, x) => s + x.totalAmount, 0) / 10000
+)
+const dispatchTrend = computed(() => pctVs(todayDispatches.value, yesterdayDispatches.value))
+const loadTrend = computed(() => pctVs(todayLoad.value, yesterdayLoad.value))
+const unloadTrend = computed(() => pctVs(todayUnload.value, yesterdayUnload.value))
+const settleTrend = computed(() => pctVs(monthSettled.value, prevMonthSettled.value))
 
 /* ===== 待办 ===== */
 const todoList = computed(() => {

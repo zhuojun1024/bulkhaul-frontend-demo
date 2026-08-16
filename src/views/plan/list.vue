@@ -1,5 +1,5 @@
 <template>
-  <div class="page" v-loading="loading">
+  <div class="page">
     <PageHeader title="运输计划" desc="合同批次化拆解，计划是调度的依据">
       <el-button :icon="Download" @click="exportCsv">导出</el-button>
       <el-button type="primary" :icon="Plus" @click="$router.push('/plan/create')">新建计划</el-button>
@@ -142,7 +142,7 @@
       </div>
       <template #footer>
         <el-button @click="dispatchVisible = false">取消</el-button>
-        <el-button type="primary" :loading="dispatching" @click="confirmDispatch">确认调度</el-button>
+        <el-button type="primary" @click="confirmDispatch">确认调度</el-button>
       </template>
     </el-dialog>
   </div>
@@ -150,7 +150,7 @@
 
 <script setup>
 defineOptions({ name: 'Plan' })
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Plus, Download, Refresh } from '@element-plus/icons-vue'
@@ -167,8 +167,6 @@ const tokens = useTokens()
 const { can } = usePerm()
 
 const router = useRouter()
-const loading = ref(true)
-onMounted(() => setTimeout(() => (loading.value = false), 300))
 
 const statusMap = {
   pending: { label: '待执行', type: 'info' },
@@ -239,7 +237,6 @@ function cancel(row) {
 
 /* ===== 调度 ===== */
 const dispatchVisible = ref(false)
-const dispatching = ref(false)
 const currentPlan = ref(null)
 const dispatchCount = ref(3)
 const vehicleSource = ref('auto')
@@ -284,21 +281,17 @@ function confirmDispatch() {
     ElMessageBox.alert(check.message, '信用校验未通过', { type: 'warning', confirmButtonText: '知道了' })
     return
   }
-  dispatching.value = true
-  setTimeout(() => {
-    const { created, error } = createDispatches(
-      plan,
-      dispatchCount.value,
-      vehicleSource.value === 'manual' ? selectedVehicles.value : []
-    )
-    dispatching.value = false
-    dispatchVisible.value = false
-    if (error) {
-      ElMessage.warning(error)
-      return
-    }
-    ElMessage.success(`已为计划 ${plan.id} 生成 ${created.length} 张调度单`)
-  }, 400)
+  const { created, error } = createDispatches(
+    plan,
+    dispatchCount.value,
+    vehicleSource.value === 'manual' ? selectedVehicles.value : []
+  )
+  dispatchVisible.value = false
+  if (error) {
+    ElMessage.warning(error)
+    return
+  }
+  ElMessage.success(`已为计划 ${plan.id} 生成 ${created.length} 张调度单`)
 }
 
 function exportCsv() {

@@ -1,5 +1,5 @@
 <template>
-  <div class="page" v-loading="loading">
+  <div class="page">
     <!-- 头部 -->
     <div class="panel contract-detail__header">
       <div class="contract-detail__head">
@@ -59,6 +59,22 @@
               </el-descriptions-item>
               <el-descriptions-item label="备注" :span="3">{{ contract?.remark || '—' }}</el-descriptions-item>
             </el-descriptions>
+          </div>
+        </div>
+
+        <!-- 审批进度（多级审批链：部门审批 → 公司审批） -->
+        <div class="panel" v-if="approvalChain.length">
+          <div class="panel__header"><span class="panel__title">审批进度</span></div>
+          <div class="panel__body">
+            <el-steps :active="approvalActive" align-center finish-status="success" style="margin-bottom: 8px">
+              <el-step
+                v-for="s in approvalChain"
+                :key="s.level"
+                :title="s.name"
+                :status="stepStatus(s)"
+                :description="stepDesc(s)"
+              />
+            </el-steps>
           </div>
         </div>
       </el-tab-pane>
@@ -198,6 +214,9 @@
           <el-descriptions-item label="合同编号">{{ contract.id }}</el-descriptions-item>
           <el-descriptions-item label="合同名称">{{ contract.name }}</el-descriptions-item>
           <el-descriptions-item label="金额">{{ formatMoney(contract.amount) }}</el-descriptions-item>
+          <el-descriptions-item label="当前层级">
+            {{ approveStep ? approveStep.name + '（第 ' + approveStep.level + '/' + (contract.approvalChain?.length || 2) + ' 级）' : '—' }}
+          </el-descriptions-item>
         </el-descriptions>
         <el-form label-width="80px">
           <el-form-item label="审批意见">
@@ -291,7 +310,7 @@
 
 <script setup>
 defineOptions({ name: 'ContractDetail' })
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, Check, CircleClose, Printer, EditPen, Calendar, FolderChecked } from '@element-plus/icons-vue'
@@ -310,9 +329,7 @@ import { usePerm } from '@/permission'
 
 const { can } = usePerm()
 const route = useRoute()
-const loading = ref(true)
 const activeTab = ref('base')
-onMounted(() => setTimeout(() => (loading.value = false), 200))
 
 const contract = computed(() => find.contract(route.params.id))
 const shipper = computed(() => find.customer(contract.value?.shipperId))
@@ -361,9 +378,30 @@ const settleStatusMap = {
 
 const changes = computed(() => contract.value?.changes || [])
 
-/* ===== 审批（通过 / 驳回，与列表页同一弹窗口径） ===== */
+/* ===== 审批进度（多级审批链可视化） ===== */
+const approvalChain = computed(() => contract.value?.approvalChain || [])
+const approvalActive = computed(() => {
+  const idx = approvalChain.value.findIndex((s) => s.status === 'pending' || s.status === 'rejected')
+  return idx === -1 ? approvalChain.value.length : idx
+})
+function stepStatus(s) {
+  if (s.status === 'approved') return 'success'
+  if (s.status === 'rejected') return 'error'
+  if (s.status === 'pending') return 'process'
+  return 'wait'
+}
+function stepDesc(s) {
+  if (s.status === 'approved') return `${s.approver} · ${s.time || ''}`
+  if (s.status === 'rejected') return `${s.approver} · ${s.comment || ''}`
+  if (s.status === 'pending') return '待审批'
+  if (s.status === 'cancelled') return '已取消'
+  return '等待上级'
+}
+
+/* ===== 审批（通过 / 驳回，多级审批；与列表页同一弹窗口径） ===== */
 const approveDialog = ref(false)
 const approveComment = ref('')
+const approveStep = computed(() => contract.value?.approvalChain?.find((s) => s.status === 'pending'))
 
 function openApprove() {
   approveComment.value = ''
@@ -371,9 +409,13 @@ function openApprove() {
 }
 
 function doApprove() {
-  approveContract(contract.value, approveComment.value.trim())
+  const r = approveContract(contract.value, approveComment.value.trim())
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
   approveDialog.value = false
-  ElMessage.success(`合同 ${contract.value.id} 审批通过，已进入执行状态`)
+  ElMessage.success(r.final ? `合同 ${contract.value.id} 全级审批通过，已进入执行状态` : `合同 ${contract.value.id} ${r.step}通过，进入下一级审批`)
 }
 
 function doReject() {
@@ -381,9 +423,13 @@ function doReject() {
     ElMessage.warning('驳回必须填写审批意见（原因）')
     return
   }
-  rejectContract(contract.value, approveComment.value.trim())
+  const r = rejectContract(contract.value, approveComment.value.trim())
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
   approveDialog.value = false
-  ElMessage.success(`合同 ${contract.value.id} 已驳回，回到草稿`)
+  ElMessage.success(`合同 ${contract.value.id} ${r.step}驳回，回到草稿（重新提交后重走审批链）`)
 }
 
 /* ===== 合同变更 ===== */

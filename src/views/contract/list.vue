@@ -1,5 +1,5 @@
 <template>
-  <div class="page" v-loading="loading">
+  <div class="page">
     <PageHeader title="合同管理" desc="运输合同的签约、审批、执行与归档全流程管理">
       <el-button :icon="Download" @click="exportCsv">导出</el-button>
       <el-button type="primary" :icon="Plus" @click="$router.push('/contract/create')">
@@ -148,6 +148,9 @@
           <el-descriptions-item label="合同编号">{{ approveTarget.id }}</el-descriptions-item>
           <el-descriptions-item label="合同名称">{{ approveTarget.name }}</el-descriptions-item>
           <el-descriptions-item label="金额">{{ formatMoney(approveTarget.amount) }}</el-descriptions-item>
+          <el-descriptions-item label="当前层级">
+            {{ approveStep ? approveStep.name + '（第 ' + approveStep.level + '/' + (approveTarget.approvalChain?.length || 2) + ' 级）' : '—' }}
+          </el-descriptions-item>
         </el-descriptions>
         <el-form label-width="80px">
           <el-form-item label="审批意见">
@@ -241,7 +244,7 @@
 
 <script setup>
 defineOptions({ name: 'Contract' })
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Plus, Download, Refresh } from '@element-plus/icons-vue'
@@ -265,8 +268,6 @@ const tokens = useTokens()
 const { can } = usePerm()
 
 const router = useRouter()
-const loading = ref(true)
-onMounted(() => setTimeout(() => (loading.value = false), 300))
 
 const statusMap = {
   draft: { label: '草稿', type: 'info' },
@@ -346,10 +347,21 @@ function openApprove(row) {
   approveDialog.value = true
 }
 
+/** 当前待审批层级（多级审批链） */
+const approveStep = computed(() => approveTarget.value?.approvalChain?.find((s) => s.status === 'pending'))
+
 function doApprove() {
-  approveContract(approveTarget.value, approveComment.value.trim())
+  const r = approveContract(approveTarget.value, approveComment.value.trim())
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
   approveDialog.value = false
-  ElMessage.success(`合同 ${approveTarget.value.id} 审批通过`)
+  ElMessage.success(
+    r.final
+      ? `合同 ${approveTarget.value.id} 全级审批通过，已进入执行`
+      : `合同 ${approveTarget.value.id} ${r.step}通过，进入下一级审批`
+  )
 }
 
 function doReject() {
@@ -357,9 +369,13 @@ function doReject() {
     ElMessage.warning('驳回必须填写审批意见（原因）')
     return
   }
-  rejectContract(approveTarget.value, approveComment.value.trim())
+  const r = rejectContract(approveTarget.value, approveComment.value.trim())
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
   approveDialog.value = false
-  ElMessage.success(`合同 ${approveTarget.value.id} 已驳回，回到草稿`)
+  ElMessage.success(`合同 ${approveTarget.value.id} ${r.step}驳回，回到草稿（重新提交后重走审批链）`)
 }
 
 /* ===== 合同变更 ===== */

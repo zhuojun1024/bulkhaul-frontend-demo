@@ -161,7 +161,7 @@
       <div class="create-form__footer">
         <el-button @click="$router.back()">取消</el-button>
         <el-button plain type="primary" @click="submit('draft')">保存草稿</el-button>
-        <el-button type="primary" :loading="submitting" @click="submit('pending')">提交审批</el-button>
+        <el-button type="primary" @click="submit('pending')">提交审批</el-button>
       </div>
     </el-form>
   </div>
@@ -175,16 +175,16 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { db } from '@/mock'
-import { creditCheck } from '@/mock/flow'
+import { creditCheck, submitContractApproval } from '@/mock/flow'
 import { formatMoney } from '@/utils'
 import dayjs from 'dayjs'
 
 const router = useRouter()
 const formRef = ref()
-const submitting = ref(false)
 
-const shippers = db.customers.filter((c) => (c.type === 'shipper' || c.type === 'both') && c.status === 'active')
-const consignees = db.customers.filter((c) => (c.type === 'consignee' || c.type === 'both') && c.status === 'active')
+/** 候选客户（响应式：客户冻结/解冻后候选自动刷新） */
+const shippers = computed(() => db.customers.filter((c) => (c.type === 'shipper' || c.type === 'both') && c.status === 'active'))
+const consignees = computed(() => db.customers.filter((c) => (c.type === 'consignee' || c.type === 'both') && c.status === 'active'))
 const modes = ['公路', '铁路', '水运', '多式联运', '管道']
 
 const form = reactive({
@@ -240,35 +240,33 @@ function submit(status) {
         return
       }
     }
-    submitting.value = true
-    setTimeout(() => {
-      const id = `HT-${String(db.contracts.length + 1).padStart(4, '0')}`
-      db.contracts.unshift({
-        id,
-        name: form.name,
-        shipperId: form.shipperId,
-        consigneeId: form.consigneeId,
-        commodityId: form.commodityId,
-        mode: form.mode,
-        loadTerminalId: form.loadTerminalId,
-        unloadTerminalId: form.unloadTerminalId,
-        quantity: form.quantity,
-        unitPrice: form.unitPrice,
-        amount: amount.value,
-        paymentDays: form.paymentDays,
-        startDate: form.startDate,
-        endDate: form.endDate,
-        signDate: dayjs().format('YYYY-MM-DD'),
-        status,
-        progress: 0,
-        contact: form.contact || '—',
-        phone: form.phone || '—',
-        remark: form.remark || ''
-      })
-      submitting.value = false
-      ElMessage.success(status === 'draft' ? '草稿已保存' : `合同 ${id} 已提交审批`)
-      router.push('/contract')
-    }, 400)
+    const id = `HT-${String(db.contracts.length + 1).padStart(4, '0')}`
+    db.contracts.unshift({
+      id,
+      name: form.name,
+      shipperId: form.shipperId,
+      consigneeId: form.consigneeId,
+      commodityId: form.commodityId,
+      mode: form.mode,
+      loadTerminalId: form.loadTerminalId,
+      unloadTerminalId: form.unloadTerminalId,
+      quantity: form.quantity,
+      unitPrice: form.unitPrice,
+      amount: amount.value,
+      paymentDays: form.paymentDays,
+      startDate: form.startDate,
+      endDate: form.endDate,
+      signDate: dayjs().format('YYYY-MM-DD'),
+      status,
+      progress: 0,
+      contact: form.contact || '—',
+      phone: form.phone || '—',
+      remark: form.remark || ''
+    })
+    // 提交审批走多级审批流（部门→公司），生成审批链
+    if (status === 'pending') submitContractApproval(db.contracts[0])
+    ElMessage.success(status === 'draft' ? '草稿已保存' : `合同 ${id} 已提交审批（部门审批 → 公司审批）`)
+    router.push('/contract')
   })
 }
 </script>

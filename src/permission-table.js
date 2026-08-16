@@ -12,7 +12,7 @@
  *  settlement 结算（生成/对账/结算/收款/重算） invoice   开票/红冲
  *  weighing   磅单补录                       warehouse  库存锁定/解锁/临期
  *  vehicle    车辆报修/恢复                  driver     司机停用/启用
- *  customer   客户冻结/解冻
+ *  customer   客户冻结/解冻                  customer-confirm 客户确认对账（门户）
  */
 /** 注意：路径必须与 router 实际注册路径一致（如 /contract，而非 /transport/contract） */
 export const ROLE_MENUS = {
@@ -33,7 +33,8 @@ export const ROLE_MENUS = {
   ],
   结算专员: ['/workbench', '/monitor', '/contract', '/customer', '/settlement', '/settlement/invoice', '/report'],
   场站操作员: ['/workbench', '/dispatch', '/terminal', '/terminal/weighing', '/warehouse', '/warehouse/inventory'],
-  安全管理员: ['/workbench', '/dispatch', '/exception', '/safety']
+  安全管理员: ['/workbench', '/dispatch', '/exception', '/safety'],
+  客户: ['/workbench', '/portal']
 }
 
 export const ROLE_ACTIONS = {
@@ -42,12 +43,14 @@ export const ROLE_ACTIONS = {
   调度员: ['contract', 'plan', 'dispatch', 'exception', 'vehicle', 'driver'],
   结算专员: ['settlement', 'invoice', 'customer'],
   场站操作员: ['dispatch', 'weighing', 'warehouse'],
-  安全管理员: ['dispatch', 'exception', 'safety']
+  安全管理员: ['dispatch', 'exception', 'safety'],
+  客户: ['customer-confirm']
 }
 
 /** 菜单权限选项（角色管理页勾选用，与 router 注册路径一致） */
 export const MENU_OPTIONS = [
   { path: '/workbench', label: '工作台' },
+  { path: '/portal', label: '客户门户' },
   { path: '/monitor', label: '数据看板' },
   { path: '/contract', label: '合同管理' },
   { path: '/plan', label: '运输计划' },
@@ -85,5 +88,6 @@ export const ACTION_OPTIONS = [
   { code: 'warehouse', label: '库存锁定/解锁/临期' },
   { code: 'vehicle', label: '车辆报修/恢复' },
   { code: 'driver', label: '司机停用/启用' },
-  { code: 'customer', label: '客户冻结/解冻' }
+  { code: 'customer', label: '客户冻结/解冻' },
+  { code: 'customer-confirm', label: '客户确认对账（门户）' }
 ]

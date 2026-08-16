@@ -79,6 +79,15 @@ function computeVehicleStatus() {
   return Object.entries(map).map(([name, value]) => ({ name, value }))
 }
 
+/** 安全运行天数：距最近一次"重大"事故的间隔（无重大事故时按最近一次任意级别事故计） */
+function computeSafeDays() {
+  const major = db.accidents.filter((a) => a.level === '重大')
+  const pool = major.length ? major : db.accidents
+  if (!pool.length) return 365
+  const latest = pool.reduce((m, a) => (a.time > m ? a.time : m), pool[0].time)
+  return Math.max(1, dayjs(NOW).diff(dayjs(latest), 'day'))
+}
+
 /** 核心 KPI（口径修正：准时率/利用率按实际执行数据计算，不再取随机值） */
 function computeKpi() {
   const completedDispatches = db.dispatches.filter((d) => d.status === 'completed')
@@ -104,7 +113,7 @@ function computeKpi() {
     monthVolume, // 本月运量
     intransitCount, // 在途车辆
     onTimeRate, // 准时交付率 %
-    safeDays: 386, // 安全运行天数
+    safeDays: computeSafeDays(), // 安全运行天数（按事故记录实时计算）
     customerCount: db.customers.filter((c) => c.status === 'active').length,
     executingContracts: db.contracts.filter((c) => c.status === 'executing').length,
     utilization // 车辆利用率 %

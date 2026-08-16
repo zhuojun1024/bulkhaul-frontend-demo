@@ -47,7 +47,6 @@
                 <div class="navbar__notice-time">{{ item.time }}</div>
               </div>
             </div>
-            <el-dropdown-item divided @click="goNotice(null)">查看全部</el-dropdown-item>
           </el-dropdown-menu>
         </template>
       </el-dropdown>
@@ -173,9 +172,9 @@ function toggleFull() {
   if (screenfull.isEnabled) screenfull.toggle()
 }
 
+/** 点击通知跳转对应模块（无独立消息中心页，不提供"查看全部"入口） */
 function goNotice(item) {
   if (item) router.push(item.path)
-  else router.push('/exception')
 }
 
 function onCommand(cmd) {

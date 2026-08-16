@@ -1,5 +1,5 @@
 <template>
-  <div class="page" v-loading="loading">
+  <div class="page">
     <PageHeader title="用户管理" desc="平台用户账号、角色分配与状态管理">
       <el-button type="primary" :icon="Plus" @click="openDialog()">新增用户</el-button>
     </PageHeader>
@@ -115,15 +115,13 @@
 
 <script setup>
 defineOptions({ name: 'SysUser' })
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Plus, Refresh } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { db } from '@/mock'
 import dayjs from 'dayjs'
 
-const loading = ref(true)
-onMounted(() => setTimeout(() => (loading.value = false), 300))
 
 const filter = reactive({ keyword: '', role: '', status: '' })
 const page = ref(1)

@@ -9,7 +9,8 @@ db.roles = [
   { id: 'R003', name: '结算专员', code: 'finance', userCount: 3, description: '结算/发票/对账', builtIn: false },
   { id: 'R004', name: '场站操作员', code: 'terminal', userCount: 4, description: '场站/磅单/仓储', builtIn: false },
   { id: 'R005', name: '安全管理员', code: 'safety', userCount: 1, description: '安全/异常/事故', builtIn: false },
-  { id: 'R006', name: '只读用户', code: 'viewer', userCount: 0, description: '仅查看权限', builtIn: false }
+  { id: 'R006', name: '只读用户', code: 'viewer', userCount: 0, description: '仅查看权限', builtIn: false },
+  { id: 'R007', name: '客户', code: 'customer', userCount: 0, description: '客户门户：查看合同/账单/回款并确认对账', builtIn: false }
 ]
 
 /** 角色权限表（数据化）：内置角色按权限表种子；角色管理页的修改写入此处并随快照持久化 */
@@ -35,6 +36,48 @@ db.users = Array.from({ length: 15 }, (_, i) => {
     createdAt: dayjs(NOW).subtract(randInt(30, 800), 'day').format('YYYY-MM-DD')
   }
 })
+
+/** 客户门户演示账号（绑定客户，仅可见本方合同/账单/回款并可确认对账）与只读演示账号 */
+db.users.push(
+  {
+    id: 'U016',
+    username: 'customer01',
+    name: '晋能煤业客户专员',
+    role: '客户',
+    customerId: 'CUS001',
+    password: '123456',
+    phone: '138' + String(randInt(10000000, 99999999)),
+    email: 'customer01@blms.com',
+    status: 'active',
+    lastLogin: dayjs(NOW).subtract(randInt(0, 6), 'day').format('YYYY-MM-DD HH:mm'),
+    createdAt: dayjs(NOW).subtract(randInt(30, 800), 'day').format('YYYY-MM-DD')
+  },
+  {
+    id: 'U017',
+    username: 'customer02',
+    name: '中煤华晋客户专员',
+    role: '客户',
+    customerId: 'CUS002',
+    password: '123456',
+    phone: '138' + String(randInt(10000000, 99999999)),
+    email: 'customer02@blms.com',
+    status: 'active',
+    lastLogin: dayjs(NOW).subtract(randInt(0, 6), 'day').format('YYYY-MM-DD HH:mm'),
+    createdAt: dayjs(NOW).subtract(randInt(30, 800), 'day').format('YYYY-MM-DD')
+  },
+  {
+    id: 'U018',
+    username: 'user16',
+    name: '审计观察员',
+    role: '只读用户',
+    password: '123456',
+    phone: '138' + String(randInt(10000000, 99999999)),
+    email: 'user16@blms.com',
+    status: 'active',
+    lastLogin: dayjs(NOW).subtract(randInt(0, 6), 'day').format('YYYY-MM-DD HH:mm'),
+    createdAt: dayjs(NOW).subtract(randInt(30, 800), 'day').format('YYYY-MM-DD')
+  }
+)
 
 /** 平台公告（数据源化：由 mock 统一提供，后续可替换为真实接口） */
 db.announcements = [

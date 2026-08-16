@@ -1,5 +1,5 @@
 <template>
-  <div class="page" v-loading="loading">
+  <div class="page">
     <PageHeader title="客户管理" desc="发货方 / 收货方客户档案、信用等级与业务往来">
       <el-button :icon="Download" @click="exportCsv">导出</el-button>
     </PageHeader>
@@ -110,7 +110,7 @@
 
 <script setup>
 defineOptions({ name: 'Customer' })
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Download, Refresh } from '@element-plus/icons-vue'
@@ -127,8 +127,6 @@ const tokens = useTokens()
 const { can } = usePerm()
 
 const router = useRouter()
-const loading = ref(true)
-onMounted(() => setTimeout(() => (loading.value = false), 300))
 
 const typeMap = { shipper: '发货方', consignee: '收货方', both: '双向客户' }
 const statusMap = {

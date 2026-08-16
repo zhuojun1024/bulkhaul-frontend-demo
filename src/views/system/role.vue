@@ -1,5 +1,5 @@
 <template>
-  <div class="page" v-loading="loading">
+  <div class="page">
     <PageHeader title="角色管理" desc="角色与功能权限分配">
       <el-button type="primary" :icon="Plus" @click="openDialog()">新增角色</el-button>
     </PageHeader>
@@ -105,7 +105,7 @@
 
 <script setup>
 defineOptions({ name: 'SysRole' })
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Lock, User } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
@@ -113,8 +113,6 @@ import { db } from '@/mock'
 import { logAction } from '@/mock/flow'
 import { MENU_OPTIONS, ACTION_OPTIONS } from '@/permission'
 
-const loading = ref(true)
-onMounted(() => setTimeout(() => (loading.value = false), 300))
 
 /** 角色下实际用户数（按用户表实时统计，避免种子 userCount 过期） */
 function userCountOf(roleName) {

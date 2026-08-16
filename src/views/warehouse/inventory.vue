@@ -1,5 +1,5 @@
 <template>
-  <div class="page" v-loading="loading">
+  <div class="page">
     <PageHeader title="库存管理" desc="各仓库商品批次库存，支持锁定与临期预警">
       <el-button :icon="Download" @click="exportCsv">导出</el-button>
     </PageHeader>
@@ -100,7 +100,7 @@
 
 <script setup>
 defineOptions({ name: 'Inventory' })
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Search, Download, Refresh } from '@element-plus/icons-vue'
@@ -115,8 +115,6 @@ import { usePerm } from '@/permission'
 
 const route = useRoute()
 const { can } = usePerm()
-const loading = ref(true)
-onMounted(() => setTimeout(() => (loading.value = false), 300))
 
 const statusMap = {
   normal: { label: '正常', type: 'success' },

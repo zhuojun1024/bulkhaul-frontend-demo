@@ -1,5 +1,5 @@
 <template>
-  <div class="page" v-loading="loading">
+  <div class="page">
     <div class="panel vehicle-detail__header">
       <div class="vehicle-detail__head">
         <el-button :icon="ArrowLeft" circle @click="$router.back()" />
@@ -94,7 +94,7 @@
 
 <script setup>
 defineOptions({ name: 'VehicleDetail' })
-import { ref, computed, onMounted } from 'vue'
+import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import StatusTag from '@/components/StatusTag.vue'
@@ -103,8 +103,6 @@ import { formatMoney, formatNum } from '@/utils'
 import dayjs from 'dayjs'
 
 const route = useRoute()
-const loading = ref(true)
-onMounted(() => setTimeout(() => (loading.value = false), 200))
 
 const vehicle = computed(() => find.vehicle(route.params.id))
 const inspections = computed(() => db.inspections.filter((i) => i.vehicleId === vehicle.value?.id))

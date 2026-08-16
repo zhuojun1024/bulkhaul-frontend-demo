@@ -43,11 +43,6 @@ export function fromNow(d) {
   return formatDate(d)
 }
 
-/** 模拟接口延迟 */
-export function delay(ms = 300) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
 /* ========== 种子随机数（保证 mock 数据稳定） ========== */
 export function mulberry32(seed) {
   let a = seed >>> 0

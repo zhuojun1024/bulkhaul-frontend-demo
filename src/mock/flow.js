@@ -1,4 +1,4 @@
-import { db, randInt, randomName, ROUTES, NOW, tareOf } from './base'
+import { db, randInt, randomName, ROUTES, MAP_NODES, NOW, tareOf } from './base'
 import dayjs from 'dayjs'
 import { round, formatMoney } from '@/utils'
 
@@ -33,7 +33,7 @@ export function unitNoOf(mode, seedStr) {
   return `联运${2026000 + (n % 999)}`
 }
 
-/** 发票号码：按种子串确定性派生 20 位（与全局种子随机体系一致，不用 Math.random） */
+/** 发票号码：按种子串确定性派生 16 位（与全局种子随机体系一致，不用 Math.random） */
 export function genInvoiceNo(seedStr) {
   let n = 0
   for (const ch of String(seedStr)) n = (n * 31 + ch.charCodeAt(0)) % 2147483647
@@ -678,6 +678,38 @@ export function contractRemaining(contractId) {
   return Math.max(0, c.quantity - planned)
 }
 
+/** 客户确认对账：客户门户确认账单对账结果（须已有对账结果且未确认过）
+ *  不改账单状态（结算确认仍由结算专员执行），结果记 customerConfirmed 并审计 */
+export function customerConfirm(s) {
+  if (!s.reconciliation) return { error: `账单 ${s.billNo} 尚无对账结果，无法确认` }
+  if (s.customerConfirmed) return { error: `账单 ${s.billNo} 客户已确认过，无需重复确认` }
+  s.customerConfirmed = { time: dayjs().format('YYYY-MM-DD HH:mm'), comment: '对账结果确认，无异议' }
+  logAction('客户门户', '确认对账', `客户确认账单 ${s.billNo} 对账结果（差异 ${s.reconciliation.diffCount} 车次，损耗 ${s.reconciliation.lossQty} 吨）`)
+  return { ok: true }
+}
+
+/* ===== 成本归集（单车次全成本：燃油/磨损/司机/过路费/折旧） ===== */
+
+/** 单车次成本：公路口径按车辆口径（燃油×装载系数 + 磨损 + 司机 + 过路费 + 折旧）；
+ *  铁路/水运/管道无车辆司机，按运输单元能耗口径（能耗 + 磨损 + 通道费） */
+export function tripCostOf(d) {
+  const dist = d.distance || 300
+  const v = d.vehicleId ? db.vehicles.find((x) => x.id === d.vehicleId) : null
+  if (!v) {
+    const fuel = Math.round(dist * 2.2)
+    const wear = Math.round(dist * 0.5)
+    const toll = Math.round(dist * 0.35)
+    return { fuel, wear, driver: 0, toll, depreciation: 0, total: fuel + wear + toll }
+  }
+  const loadFactor = Math.max(0.5, Math.min(1, d.quantity / (v.capacity || 35)))
+  const fuel = Math.round(dist * 1.8 * loadFactor)
+  const wear = Math.round(dist * 0.6)
+  const driver = Math.round(600 + dist * 0.25)
+  const toll = Math.round(dist * 0.35)
+  const depreciation = Math.round((v.monthlyCost || 0) / 30)
+  return { fuel, wear, driver, toll, depreciation, total: fuel + wear + driver + toll + depreciation }
+}
+
 /* ===== 司机端（接单 / 电子签收） ===== */
 
 /** 司机接单：标记已接单（不改状态机，装货确认前司机需先接单） */
@@ -697,21 +729,184 @@ export function signReceipt(d, signer) {
   return d.receipt
 }
 
-/* ===== 合同审批与开票 ===== */
+/* ===== 扫码确认（装/卸货码按调度单号确定性派生，司机端扫码核验后流转） ===== */
 
-/** 审批通过：pending → executing，记录审批意见 */
-export function approveContract(c, comment) {
-  c.status = 'executing'
-  c.startDate = dayjs().format('YYYY-MM-DD')
-  c.approval = { approver: operator.name, time: dayjs().format('YYYY-MM-DD HH:mm'), comment: comment || '同意' }
-  logAction('合同管理', '审批合同', `合同 ${c.id} 审批通过${comment ? `：${comment}` : ''}`)
+function hashStr(s) {
+  let n = 0
+  for (const ch of String(s)) n = (n * 31 + ch.charCodeAt(0)) % 2147483647
+  return n
 }
 
-/** 审批驳回：pending → draft，必须带驳回原因 */
+/** 装货码：装货场站张贴，司机扫码确认装货（ZD + 6 位） */
+export function loadCodeOf(d) {
+  return 'ZD' + String(100000 + (hashStr(d.id + ':load') % 900000))
+}
+
+/** 卸货码：卸货场站张贴，司机扫码确认卸货（XD + 6 位） */
+export function unloadCodeOf(d) {
+  return 'XD' + String(100000 + (hashStr(d.id + ':unload') % 900000))
+}
+
+/** 扫码确认装货：码不匹配/状态不符/未接单均拦截（复用 confirmLoad 守卫） */
+export function scanConfirmLoad(d, code) {
+  const expect = loadCodeOf(d)
+  if (String(code || '').trim() !== expect) return { error: `装货码校验失败：「${code || '空'}」与本车次装货码 ${expect} 不符` }
+  const r = confirmLoad(d)
+  if (r && r.error) return r
+  logAction('司机端', '扫码确认装货', `调度单 ${d.id} 扫装货码 ${expect} 核验通过，确认装货`)
+  return { ok: true }
+}
+
+/** 扫码确认卸货：码不匹配/状态不符均拦截（复用 confirmUnload 守卫） */
+export function scanConfirmUnload(d, code) {
+  const expect = unloadCodeOf(d)
+  if (String(code || '').trim() !== expect) return { error: `卸货码校验失败：「${code || '空'}」与本车次卸货码 ${expect} 不符` }
+  const r = confirmUnload(d)
+  if (r && r.error) return r
+  logAction('司机端', '扫码确认卸货', `调度单 ${d.id} 扫卸货码 ${expect} 核验通过，确认卸货`)
+  return { ok: true }
+}
+
+/* ===== 电子围栏（事件化：参数可配置 + 偏离/超时自动写异常单） ===== */
+
+/** 地图坐标哈希偏移（与在途监控地图同一口径，保证回放轨迹与实时位置一致） */
+export function hashOffset(id) {
+  let h = 0
+  for (const ch of String(id)) h = (h * 31 + ch.charCodeAt(0)) % 997
+  return (h % 5) - 2
+}
+
+/** 轨迹点：沿线段均匀取 21 点，叠加按单号确定性派生的横向偏移（基础偏移 + 正弦波动） */
+export function trackPointsOf(d) {
+  const from = MAP_NODES[d.loadTerminalId]
+  const to = MAP_NODES[d.unloadTerminalId]
+  const dx = to.x - from.x
+  const dy = to.y - from.y
+  const len = Math.sqrt(dx * dx + dy * dy) || 1
+  const nx = -dy / len
+  const ny = dx / len
+  const base = hashOffset(d.id) * 5
+  const phase = (hashOffset(d.id) % 6) * 0.7
+  const pts = []
+  for (let i = 0; i <= 20; i++) {
+    const p = i / 20
+    const off = base + 8 * Math.sin(i * 0.6 + phase)
+    pts.push({ x: from.x + dx * p + nx * off, y: from.y + dy * p + ny * off })
+  }
+  return pts
+}
+
+/** 轨迹最大偏离：轨迹点到线路直线的最大垂直距离（地图坐标单位） */
+export function maxDeviationOf(d) {
+  const from = MAP_NODES[d.loadTerminalId]
+  const to = MAP_NODES[d.unloadTerminalId]
+  const dx = to.x - from.x
+  const dy = to.y - from.y
+  const len2 = dx * dx + dy * dy || 1
+  let max = 0
+  for (const p of trackPointsOf(d)) {
+    const t = ((p.x - from.x) * dx + (p.y - from.y) * dy) / len2
+    const px = from.x + dx * t
+    const py = from.y + dy * t
+    max = Math.max(max, Math.sqrt((p.x - px) ** 2 + (p.y - py) ** 2))
+  }
+  return Math.round(max)
+}
+
+/** 围栏事件检查：在途车次 轨迹偏离超阈值→偏离异常 / 超 ETA 超阈值→延误异常，自动写异常单
+ *  去重：每车次每类事件仅生成一次（d.fenceAlerted 记忆），恢复运输后不重复触发；
+ *  由在途监控页 3 秒 tick 调用，围栏参数在 db.fenceConfig（监控页可配置） */
+export function checkFenceEvents() {
+  const cfg = db.fenceConfig
+  if (!cfg || !cfg.enabled) return []
+  const created = []
+  for (const d of db.dispatches) {
+    if (d.status !== 'intransit') continue
+    d.fenceAlerted = d.fenceAlerted || {}
+    const dev = maxDeviationOf(d)
+    if (!d.fenceAlerted.deviate && dev > cfg.deviateLimit) {
+      d.fenceAlerted.deviate = true
+      const e = reportException(d, `围栏预警：轨迹偏离线路 ${dev} 个地图单位（阈值 ${cfg.deviateLimit}）`, 'other', 'medium')
+      if (e && e.id) {
+        e.source = 'fence'
+        created.push(e)
+      }
+    } else if (!d.fenceAlerted.delay && d.eta && dayjs(d.eta).isBefore(dayjs().subtract(cfg.delayMinutes, 'minute'))) {
+      d.fenceAlerted.delay = true
+      const e = reportException(d, `围栏预警：超预计到达时间 ${dayjs().diff(dayjs(d.eta), 'minute')} 分钟（阈值 ${cfg.delayMinutes} 分钟）`, 'delay', 'medium')
+      if (e && e.id) {
+        e.source = 'fence'
+        created.push(e)
+      }
+    }
+  }
+  return created
+}
+
+/* ===== 合同审批与开票（多级审批：部门审批 → 公司审批） ===== */
+
+/** 审批链层级定义 */
+export const APPROVAL_STEPS = [
+  { level: 1, name: '部门审批' },
+  { level: 2, name: '公司审批' }
+]
+
+/** 生成审批链（首级待审批，其余等待中） */
+function buildApprovalChain() {
+  return APPROVAL_STEPS.map((s, i) => ({
+    level: s.level,
+    name: s.name,
+    status: i === 0 ? 'pending' : 'waiting',
+    approver: '',
+    comment: '',
+    time: null
+  }))
+}
+
+/** 提交审批：draft → pending，生成审批链（重新提交时重置审批链） */
+export function submitContractApproval(c) {
+  if (c.status !== 'draft') return { error: `合同 ${c.id} 当前非"草稿"状态，无法提交审批` }
+  c.status = 'pending'
+  c.approvalChain = buildApprovalChain()
+  logAction('合同管理', '提交合同审批', `合同 ${c.id} 提交审批（部门审批 → 公司审批）`)
+  return { ok: true }
+}
+
+/** 审批通过：推进当前待审批层级；末级通过 → executing
+ *  返回 { final }：false 表示还有后续层级，true 表示全链通过 */
+export function approveContract(c, comment) {
+  const step = (c.approvalChain || []).find((s) => s.status === 'pending')
+  if (!step) return { error: `合同 ${c.id} 无待审批层级` }
+  step.status = 'approved'
+  step.approver = operator.name
+  step.comment = comment || '同意'
+  step.time = dayjs().format('YYYY-MM-DD HH:mm')
+  const next = (c.approvalChain || []).find((s) => s.status === 'waiting')
+  if (next) {
+    next.status = 'pending'
+    logAction('合同管理', '合同审批', `合同 ${c.id} ${step.name}通过（${step.approver}），进入${next.name}`)
+    return { ok: true, final: false, step: step.name }
+  }
+  c.status = 'executing'
+  c.startDate = dayjs().format('YYYY-MM-DD')
+  c.approval = { approver: operator.name, time: step.time, comment: step.comment }
+  logAction('合同管理', '合同审批', `合同 ${c.id} 全级审批通过（末级：${step.name} ${step.approver}），进入执行`)
+  return { ok: true, final: true, step: step.name }
+}
+
+/** 审批驳回：当前层级驳回 → 回草稿，后续层级取消（重新提交审批后重走全链） */
 export function rejectContract(c, reason) {
+  const step = (c.approvalChain || []).find((s) => s.status === 'pending')
+  if (!step) return { error: `合同 ${c.id} 无待审批层级` }
+  step.status = 'rejected'
+  step.approver = operator.name
+  step.comment = `驳回：${reason}`
+  step.time = dayjs().format('YYYY-MM-DD HH:mm')
+  for (const s of c.approvalChain || []) if (s.status === 'waiting') s.status = 'cancelled'
   c.status = 'draft'
-  c.approval = { approver: operator.name, time: dayjs().format('YYYY-MM-DD HH:mm'), comment: `驳回：${reason}` }
-  logAction('合同管理', '审批合同', `合同 ${c.id} 审批驳回：${reason}`, 'fail')
+  c.approval = { approver: operator.name, time: step.time, comment: `驳回：${reason}` }
+  logAction('合同管理', '合同审批', `合同 ${c.id} ${step.name}驳回：${reason}`, 'fail')
+  return { ok: true, step: step.name }
 }
 
 /* ===== 合同全生命周期（变更 / 延期 / 提前终止 / 归档） ===== */

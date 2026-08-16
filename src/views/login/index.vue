@@ -67,7 +67,7 @@
         <p class="login__tip">请使用平台账号登录，演示环境统一密码 123456</p>
         <el-form ref="formRef" :model="form" :rules="rules" size="large" @keyup.enter="onLogin">
           <el-form-item prop="username">
-            <el-input v-model="form.username" placeholder="用户名 / 手机号" :prefix-icon="User" clearable />
+            <el-input v-model="form.username" placeholder="用户名" :prefix-icon="User" clearable />
           </el-form-item>
           <el-form-item prop="password">
             <el-input v-model="form.password" type="password" placeholder="密码" :prefix-icon="Lock" show-password clearable />
@@ -79,13 +79,13 @@
             </div>
           </el-form-item>
           <el-form-item>
-            <el-button type="primary" class="login__btn" :loading="loading" @click="onLogin">
+            <el-button type="primary" class="login__btn" @click="onLogin">
               登 录
             </el-button>
           </el-form-item>
         </el-form>
         <div class="login__footer">
-          <el-tag size="small" effect="plain" type="info">演示账号：admin / 123456（调度员 user02、结算专员 user04 等）</el-tag>
+          <el-tag size="small" effect="plain" type="info">演示账号：admin / 123456（调度员 user02、结算专员 user04、客户 customer01、只读 user16 等）</el-tag>
         </div>
       </div>
     </div>
@@ -107,7 +107,6 @@ const route = useRoute()
 const userStore = useUserStore()
 
 const formRef = ref()
-const loading = ref(false)
 const form = reactive({
   username: 'admin',
   password: '123456',
@@ -129,30 +128,25 @@ const features = [
 function onLogin() {
   formRef.value.validate((valid) => {
     if (!valid) return
-    loading.value = true
-    setTimeout(() => {
-      // 真实校验：用户名 + 密码 + 账号状态
-      const user = db.users.find((u) => u.username === form.username.trim())
-      if (!user || user.password !== form.password) {
-        loading.value = false
-        logAction('系统', '登录系统', `账号 ${form.username} 登录失败（用户名或密码错误）`, 'fail')
-        ElMessage.error('用户名或密码错误')
-        return
-      }
-      if (user.status !== 'active') {
-        loading.value = false
-        logAction('系统', '登录系统', `账号 ${user.username} 登录失败（账号已停用）`, 'fail')
-        ElMessage.error('账号已停用，请联系管理员')
-        return
-      }
-      setOperator(user)
-      userStore.login(user)
-      logAction('系统', '登录系统', `账号 ${user.username}（${user.role}）登录成功`)
-      user.lastLogin = dayjs().format('YYYY-MM-DD HH:mm')
-      loading.value = false
-      ElMessage.success(`登录成功，欢迎回来，${user.name}`)
-      router.push(route.query.redirect || '/workbench')
-    }, 600)
+    // 真实校验：用户名 + 密码 + 账号状态
+    const user = db.users.find((u) => u.username === form.username.trim())
+    if (!user || user.password !== form.password) {
+      logAction('系统', '登录系统', `账号 ${form.username} 登录失败（用户名或密码错误）`, 'fail')
+      ElMessage.error('用户名或密码错误')
+      return
+    }
+    if (user.status !== 'active') {
+      logAction('系统', '登录系统', `账号 ${user.username} 登录失败（账号已停用）`, 'fail')
+      ElMessage.error('账号已停用，请联系管理员')
+      return
+    }
+    setOperator(user)
+    userStore.login(user)
+    logAction('系统', '登录系统', `账号 ${user.username}（${user.role}）登录成功`)
+    user.lastLogin = dayjs().format('YYYY-MM-DD HH:mm')
+    ElMessage.success(`登录成功，欢迎回来，${user.name}`)
+    // 客户角色默认进入门户，其余角色进工作台
+    router.push(route.query.redirect || (user.role === '客户' ? '/portal' : '/workbench'))
   })
 }
 </script>

@@ -120,9 +120,17 @@
 
 ### P2（产品完整度）
 
-- 客户门户、成本侧、多级审批、扫码确认、围栏事件化（见第四节）
-- UI 层 e2e 冒烟：至少覆盖"登录→主链路操作→权限拦截"，弥补 D1
-- 清理调试脚本、硬编码文案与假加载（D3-D5、C3、C4）
+| # | 事项 | 对应缺口 | 状态 |
+|---|------|---------|------|
+| 14 | 多级审批：合同审批链（部门审批→公司审批）+ 审批链可视化 | 第四节-4 | ✅ 已修（2026-08-16，`approvalChain` 记录各级审批人/意见/时间，合同详情页展示审批链时间线，审批入口限定当前级审批人） |
+| 15 | 扫码确认：装/卸货码派生 + flow 校验 + 司机端扫码弹窗 + 调度详情展示码 | 第四节-6 | ✅ 已修（2026-08-16，装/卸货码按调度单号确定性派生（`ZD/XD + 6 位`），`scanConfirmLoad/Unload` 码不符/状态不符/未接单均拦截，司机端"模拟扫码"弹窗，调度详情展示码） |
+| 16 | 围栏事件化：围栏参数可配置 + 偏离/超时自动写异常单（去重）+ 监控页接入 | 第四节-7 | ✅ 已修（2026-08-16，`db.fenceConfig`（启用/偏离阈值/超时阈值）监控页可编辑，`checkFenceEvents` 偏离/超 ETA 自动写异常单（带 `source=fence` 标签），每车次每类一次，恢复运输不重复触发） |
+| 17 | 成本侧：单车次全成本 + 报表中心"成本利润"页签 | 第四节-3 | ✅ 已修（2026-08-16，`tripCostOf` 公路五项全成本（燃油×装载系数+磨损+司机+过路费+折旧）/非公路运输单元能耗口径，报表中心新增成本利润指标卡 + 月度成本收入图 + 月度/单车/单线效益表，可导出） |
+| 18 | 客户门户：客户角色 + 门户账号 + /portal 门户页 + 确认对账 | 第四节-2 | ✅ 已修（2026-08-16，"客户"角色（菜单 /workbench+/portal，操作 customer-confirm），customer01/02 账号（绑定发货方），门户页展示本方合同/账单/回款/发票 + 授信占用，`customerConfirm` 写 customerConfirmed + 审计日志且不可重复，客户登录直达门户、内部菜单被拦截） |
+| 19 | UI 层 e2e 冒烟：4 场景（admin 主链路 / 结算专员权限拦截 / 只读无操作按钮 / 客户门户确认对账+拦截） | D1 | ✅ 已修（2026-08-16，`scripts/verify-ui.mjs`（puppeteer-core + 本机 Chrome，每场景独立浏览器上下文=全新种子数据），15/15 通过，弥补 D1 的 UI 接线覆盖盲区） |
+| 20 | 清理：调试脚本/截图（D5）、硬编码文案（C3/C4）、假加载与非响应式候选（D3）、计划详情 3 车次/静默截断/登录提示（D4）+ 导航语义（B4）+ 红冲重开票面板（C7） | D3-D5、C3、C4、B4、C7 | ✅ 已修（2026-08-16） |
+
+> P2 修复后冒烟测试 103 → 129 项（新增 26 项 P2 功能断言：多级审批/扫码确认/围栏事件化/成本侧/客户门户），全部通过；UI e2e 15/15 通过；持久化快照版本升至 4（fenceConfig、fenceAlerted、approvalChain、driverIds、客户角色与账号、customerConfirmed）。
 
 ## 六、验收路径（端到端演示脚本，回归用）
 
@@ -154,3 +162,4 @@
 - **2026-08-16（本轮审计）**：`npm run build` 构建通过；冒烟测试 75/75 通过（覆盖预置数据一致性、状态机全流程、异常闭环、结算闭环、收款/信用、模块互联、P3 产品完整度 7 大类）。UI 层问题（A1-A10、B1-B4、C、D）为人工代码审计发现，冒烟测试未覆盖。
 - **2026-08-16（P0 修复）**：P0 七项全部修复（见第五节状态列）。改动文件：`src/permission.js`、`src/router/index.js`、`src/mock/flow.js`、`src/mock/dispatch.js`、`src/mock/safety.js`、`src/mock/report.js`、`src/mock/persist.js`（快照版本 1→2）、`src/views/contract/detail.vue`、`src/views/system/user.vue`、`src/views/dispatch/list.vue`、`src/views/dispatch/detail.vue`、`src/views/driver/app.vue`、`src/views/settlement/list.vue`、`src/views/settlement/detail.vue`、`src/views/exception/list.vue`、`scripts/verify-flow.mjs`。冒烟测试 85/85 通过，`npm run build` 通过（仅既有 vendor 体积警告）。注意：P0-6 起新派车单须司机端接单后方可确认装货（种子待装货单不受影响），演示主链路在"派车"与"确认装货"之间多一步司机端接单。
 - **2026-08-16（P1 修复）**：P1 六项全部修复（见第五节状态列）。改动文件：新增 `src/permission-table.js`（权限表唯一数据源）；`src/permission.js`（判定改为 db.rolePerms 优先）、`src/mock/base.js`（db.rolePerms、tareOf 下沉）、`src/mock/system.js`（rolePerms 种子）、`src/mock/weighing.js`（种子皮重按车辆派生）、`src/mock/flow.js`（派车互斥/终止拦截/异常关闭补扣/recalcSettlement/issueInvoiceRow/redFlushInvoiceRow）、`src/mock/persist.js`（快照版本 2→3）、`src/views/system/role.vue`（权限抽屉真实读写）、`src/views/vehicle/list.vue`、`src/views/driver/list.vue`、`src/views/customer/list.vue`、`src/views/warehouse/inventory.vue`、`src/views/plan/list.vue`、`src/views/settlement/invoice.vue`、`src/views/settlement/list.vue`、`src/views/settlement/detail.vue`、`src/views/contract/list.vue`、`src/views/contract/detail.vue`、`scripts/verify-flow.mjs`、`scripts/alias-loader.mjs`。冒烟测试 103/103 通过，`npm run build` 通过（仅既有 vendor 体积警告）。注意：① 角色权限改在角色管理页"权限"抽屉中维护并持久化，内置角色默认值与原硬编码一致；② 合同终止口径为"在途车次继续完成并正常结算"（已发生业务照常履约）；③ 派车互斥按"待装货/装货中/异常"未完结车次排除车辆与司机，种子数据不受影响。
+- **2026-08-16（P2 修复）**：P2 全部事项修复（见第五节状态列，含多级审批/扫码确认/围栏事件化/成本侧/客户门户/UI e2e/清理）。核心改动文件：`src/mock/flow.js`（loadCodeOf/unloadCodeOf、scanConfirmLoad/Unload、checkFenceEvents/maxDeviationOf/trackPointsOf、customerConfirm、tripCostOf、合同审批链 approvalChain）、`src/mock/base.js`（db.fenceConfig）、`src/mock/system.js`（客户角色 R007、customer01/02 与只读 user16 账号）、`src/mock/settlement.js`（CUS001"对账中"账单兜底，保证门户可演示确认对账）、`src/mock/report.js`（costReport）、`src/mock/persist.js`（快照版本 3→4）、`src/permission-table.js`（客户角色菜单/操作、/portal 菜单、customer-confirm 操作）、`src/router/index.js`（/portal 路由）、`src/views/portal/index.vue`（新增，客户门户页）、`src/views/login/index.vue`（客户登录直达门户）、`src/views/dispatch/detail.vue`（装/卸货码展示）、`src/views/driver/app.vue`（扫码确认弹窗）、`src/views/track/index.vue`（围栏参数面板 + checkFenceEvents 接入）、`src/views/exception/list.vue`（围栏标签）、`src/views/report/index.vue`（成本利润页签）、`src/views/settlement/detail.vue`（客户确认状态真实化）、`scripts/verify-ui.mjs`（新增，UI e2e）、`scripts/verify-flow.mjs`（P2 断言）；清理另删除根目录调试产物 `debug-login.mjs`、`diagnose-menu.mjs`、`verify.mjs`、`sidebar-diag.png`（D5）并修正多处硬编码/假加载/导航语义（C3/C4/D3/D4/B4/C7）。冒烟测试 129/129 通过，UI e2e 15/15 通过，`npm run build` 通过，`lint` 0 错误。注意：① 装/卸货码按调度单号确定性派生（同单恒同码），司机端"模拟扫码"按钮用于演示；② 围栏事件经 `reportException` 写入（车次转异常态，与状态机一致），每车次每类一次、恢复运输不重复触发；③ 成本口径：公路车次五项全成本，非公路（铁路/水运/管道）按运输单元能耗口径（无司机/折旧项）；④ 客户门户账号 customer01（晋能 CUS001）/customer02（中煤华晋 CUS002），只读演示账号 user16（全菜单可见、无操作权）；⑤ UI e2e 用 puppeteer-core + 本机 Chrome（每场景独立上下文=全新种子数据），Chrome 启动需 `--disable-gpu`，el-table 重渲染期间合成点击会丢事件故加稳定等待与重试。

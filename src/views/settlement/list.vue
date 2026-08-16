@@ -1,5 +1,5 @@
 <template>
-  <div class="page" v-loading="loading">
+  <div class="page">
     <PageHeader title="结算管理" desc="按合同月度汇总运费，对账、结算与逾期跟踪">
       <el-button v-if="can('settlement')" type="primary" :icon="DocumentAdd" @click="openGenerate">生成结算单</el-button>
       <el-button :icon="Download" @click="exportCsv">导出</el-button>
@@ -151,7 +151,7 @@
 
 <script setup>
 defineOptions({ name: 'Settlement' })
-import { ref, reactive, computed, onMounted, nextTick } from 'vue'
+import { ref, reactive, computed, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Download, Refresh, Postcard, DocumentAdd } from '@element-plus/icons-vue'
@@ -169,8 +169,6 @@ const tokens = useTokens()
 const { can } = usePerm()
 
 const router = useRouter()
-const loading = ref(true)
-onMounted(() => setTimeout(() => (loading.value = false), 300))
 
 const statusMap = {
   pending: { label: '待对账', type: 'info' },

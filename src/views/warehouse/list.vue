@@ -1,5 +1,5 @@
 <template>
-  <div class="page" v-loading="loading">
+  <div class="page">
     <PageHeader title="仓储管理" desc="各仓库容量、库存水位与运行状态">
       <el-button type="primary" :icon="Tickets" @click="$router.push('/warehouse/inventory')">
         库存明细
@@ -56,7 +56,7 @@
 
 <script setup>
 defineOptions({ name: 'Warehouse' })
-import { ref, computed, onMounted } from 'vue'
+import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { House, Tickets, Location } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
@@ -69,8 +69,6 @@ import { useTokens } from '@/utils/tokens'
 const tokens = useTokens()
 
 const router = useRouter()
-const loading = ref(true)
-onMounted(() => setTimeout(() => (loading.value = false), 300))
 
 const typeMap = { 煤仓: '煤炭仓储', 矿石仓: '矿石仓储', 粮食仓: '粮食仓储', 化工库: '化工仓储' }
 const statusMap = {

@@ -1,5 +1,5 @@
 <template>
-  <div class="page" v-loading="loading">
+  <div class="page">
     <PageHeader title="操作日志" desc="平台关键操作审计日志，支持按模块、用户、结果检索">
       <el-button :icon="Download" @click="exportCsv">导出</el-button>
     </PageHeader>
@@ -76,15 +76,13 @@
 
 <script setup>
 defineOptions({ name: 'SysLog' })
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, Download, Refresh } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { db } from '@/mock'
 import dayjs from 'dayjs'
 
-const loading = ref(true)
-onMounted(() => setTimeout(() => (loading.value = false), 300))
 
 const filter = reactive({ keyword: '', module: '', result: '', dateRange: [] })
 const page = ref(1)

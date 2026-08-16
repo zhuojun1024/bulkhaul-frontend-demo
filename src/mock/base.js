@@ -49,6 +49,8 @@ export const db = reactive({
   roles: [],
   // 角色权限表（数据化）：角色名 → { menus: null|路径[], actions: null|操作码[] }，null=全部，[]=无
   rolePerms: {},
+  // 电子围栏参数（在途监控页可配置）：deviateLimit 轨迹偏离阈值（地图单位）/ delayMinutes 超 ETA 阈值（分钟）
+  fenceConfig: { enabled: true, deviateLimit: 15, delayMinutes: 30 },
   logs: []
 })
 

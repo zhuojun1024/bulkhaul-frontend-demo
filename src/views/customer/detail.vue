@@ -1,5 +1,5 @@
 <template>
-  <div class="page" v-loading="loading">
+  <div class="page">
     <div class="panel customer-detail__header">
       <div class="customer-detail__head">
         <el-button :icon="ArrowLeft" circle @click="$router.back()" />
@@ -138,7 +138,7 @@
 
 <script setup>
 defineOptions({ name: 'CustomerDetail' })
-import { ref, computed, onMounted } from 'vue'
+import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import StatusTag from '@/components/StatusTag.vue'
@@ -147,8 +147,6 @@ import { outstandingOf } from '@/mock/flow'
 import { formatMoney, formatNum } from '@/utils'
 
 const route = useRoute()
-const loading = ref(true)
-onMounted(() => setTimeout(() => (loading.value = false), 200))
 
 const customer = computed(() => find.customer(route.params.id))
 const contracts = computed(() =>
@@ -156,7 +154,11 @@ const contracts = computed(() =>
 )
 const settlements = computed(() => db.settlements.filter((s) => s.customerId === customer.value?.id))
 const executingCount = computed(() => contracts.value.filter((c) => c.status === 'executing').length)
-const totalVolume = computed(() => contracts.value.reduce((s, c) => s + c.quantity, 0))
+/** 累计运量：按实际已完成车次运量汇总（非合同计划量之和） */
+const totalVolume = computed(() => {
+  const ids = new Set(contracts.value.map((c) => c.id))
+  return db.dispatches.filter((d) => d.status === 'completed' && ids.has(d.contractId)).reduce((s, d) => s + d.quantity, 0)
+})
 const pendingAmount = computed(() =>
   settlements.value.filter((s) => s.status !== 'settled').reduce((s, x) => s + (x.totalAmount - x.paidAmount), 0)
 )

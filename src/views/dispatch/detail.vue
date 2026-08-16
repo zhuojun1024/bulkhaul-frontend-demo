@@ -1,5 +1,5 @@
 <template>
-  <div class="page" v-loading="loading">
+  <div class="page">
     <div class="panel dispatch-detail__header">
       <div class="dispatch-detail__head">
         <el-button :icon="ArrowLeft" circle @click="$router.back()" />
@@ -80,6 +80,14 @@
                 <el-progress :percentage="dispatch?.progress || 0" :stroke-width="8" />
               </el-descriptions-item>
               <el-descriptions-item label="预计到达">{{ dispatch?.eta || '—' }}</el-descriptions-item>
+              <el-descriptions-item label="装货码">
+                <span class="num scan-code">{{ dispatch ? loadCodeOf(dispatch) : '—' }}</span>
+                <span class="receipt-text">装货场扫码确认装货</span>
+              </el-descriptions-item>
+              <el-descriptions-item label="卸货码">
+                <span class="num scan-code">{{ dispatch ? unloadCodeOf(dispatch) : '—' }}</span>
+                <span class="receipt-text">卸货场扫码确认卸货</span>
+              </el-descriptions-item>
               <el-descriptions-item label="电子签收">
                 <template v-if="dispatch?.receipt">
                   <el-tag size="small" type="success" effect="light">{{ dispatch.receipt.code }}</el-tag>
@@ -187,7 +195,7 @@
 
 <script setup>
 defineOptions({ name: 'DispatchDetail' })
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, Box, CircleCheck, Warning, Printer, Position, RefreshRight, Cellphone } from '@element-plus/icons-vue'
@@ -200,7 +208,9 @@ import {
   confirmUnload as flowConfirmUnload,
   reportException as flowReportException,
   resumeDispatch,
-  isRoadMode
+  isRoadMode,
+  loadCodeOf,
+  unloadCodeOf
 } from '@/mock/flow'
 import { formatMoney } from '@/utils'
 import dayjs from 'dayjs'
@@ -209,8 +219,6 @@ import { usePerm } from '@/permission'
 const route = useRoute()
 const router = useRouter()
 const { can } = usePerm()
-const loading = ref(true)
-onMounted(() => setTimeout(() => (loading.value = false), 200))
 
 const dispatch = computed(() => find.dispatch(route.params.id))
 const commodity = computed(() => find.commodity(dispatch.value?.commodityId))
@@ -465,5 +473,12 @@ function printDispatch() {
   margin-left: 6px;
   font-size: 12px;
   color: var(--text-secondary);
+}
+
+.scan-code {
+  font-family: Consolas, Menlo, monospace;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--color-primary);
 }
 </style>

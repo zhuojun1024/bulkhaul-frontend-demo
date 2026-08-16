@@ -1,5 +1,5 @@
 <template>
-  <div class="page" v-loading="loading">
+  <div class="page">
     <PageHeader title="数据看板" desc="平台运营核心指标与趋势分析（数据每日更新）">
       <el-radio-group v-model="range" size="small">
         <el-radio-button value="12">近 12 月</el-radio-button>
@@ -8,14 +8,14 @@
       </el-radio-group>
     </PageHeader>
 
-    <!-- KPI -->
+    <!-- KPI（趋势值按趋势数据/事故记录实时计算，无历史口径的指标不显示趋势） -->
     <div class="kpi-row">
-      <StatCard title="累计运量" :value="formatNum(kpi.totalVolume / 10000, 1)" unit="万吨" icon="DataLine" color="var(--color-primary)" :trend="8.4" trend-label="同比" />
-      <StatCard title="累计运费收入" :value="formatNum(kpi.totalRevenue / 100000000, 2)" unit="亿元" icon="Money" color="var(--color-success)" :trend="11.2" trend-label="同比" />
-      <StatCard title="车辆利用率" :value="kpi.utilization" unit="%" icon="Van" color="var(--color-warning)" :trend="2.8" trend-label="较上月" />
-      <StatCard title="准时交付率" :value="kpi.onTimeRate" unit="%" icon="Timer" color="var(--color-info)" :trend="0.6" trend-label="较上月" />
+      <StatCard title="累计运量" :value="formatNum(kpi.totalVolume / 10000, 1)" unit="万吨" icon="DataLine" color="var(--color-primary)" :trend="volumeTrendPct" trend-label="环比" />
+      <StatCard title="累计运费收入" :value="formatNum(kpi.totalRevenue / 100000000, 2)" unit="亿元" icon="Money" color="var(--color-success)" :trend="revenueTrendPct" trend-label="环比" />
+      <StatCard title="车辆利用率" :value="kpi.utilization" unit="%" icon="Van" color="var(--color-warning)" :sub="'运输中 / 非报废'" />
+      <StatCard title="准时交付率" :value="kpi.onTimeRate" unit="%" icon="Timer" color="var(--color-info)" :sub="'实际时长 vs 理论时长'" />
       <StatCard title="安全运行" :value="kpi.safeDays" unit="天" icon="Umbrella" color="var(--color-danger)" :sub="'连续无重大事故'" />
-      <StatCard title="合作客户" :value="kpi.customerCount" unit="家" icon="Avatar" color="var(--color-primary)" :sub="'A 级 6 家'" />
+      <StatCard title="合作客户" :value="kpi.customerCount" unit="家" icon="Avatar" color="var(--color-primary)" :sub="'A 级 ' + aLevelCount + ' 家'" />
     </div>
 
     <!-- 图表区 -->
@@ -53,21 +53,31 @@
 
 <script setup>
 defineOptions({ name: 'Monitor' })
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed } from 'vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import ChartCard from '@/components/ChartCard.vue'
 import { db, dashboard } from '@/mock'
-import { formatNum } from '@/utils'
+import { formatNum, round } from '@/utils'
 import { useTokens } from '@/utils/tokens'
 
 const tokens = useTokens()
 
-const loading = ref(true)
 const range = ref('12')
-onMounted(() => setTimeout(() => (loading.value = false), 300))
 
 const kpi = dashboard.kpi
+
+/** 环比（最近 12 月趋势的末月 vs 上月）；无历史口径的指标不显示趋势 */
+function trendPctOf(key) {
+  const arr = dashboard.volumeTrend
+  if (arr.length < 2) return null
+  const last = arr[arr.length - 1][key]
+  const prev = arr[arr.length - 2][key]
+  return prev ? round(((last - prev) / prev) * 100, 1) : null
+}
+const volumeTrendPct = computed(() => trendPctOf('volume'))
+const revenueTrendPct = computed(() => trendPctOf('revenue'))
+const aLevelCount = computed(() => db.customers.filter((c) => c.level === 'A').length)
 
 const palette = [tokens.primary, tokens.success, tokens.warning, tokens.danger, tokens.info, tokens.chartPurple, tokens.chartCyan, tokens.chartPink]
 

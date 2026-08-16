@@ -1,5 +1,5 @@
 <template>
-  <div class="page" v-loading="loading">
+  <div class="page">
     <PageHeader title="发票管理" desc="增值税发票开具、红冲与状态跟踪">
       <el-button :icon="Download" @click="exportCsv">导出</el-button>
     </PageHeader>
@@ -117,7 +117,7 @@
 
 <script setup>
 defineOptions({ name: 'Invoice' })
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Download, Refresh } from '@element-plus/icons-vue'
@@ -133,8 +133,6 @@ import dayjs from 'dayjs'
 const { can } = usePerm()
 
 const router = useRouter()
-const loading = ref(true)
-onMounted(() => setTimeout(() => (loading.value = false), 300))
 
 const statusMap = {
   issued: { label: '已开具', type: 'success' },

@@ -68,6 +68,16 @@ for (const contract of settleContracts) {
   }
 }
 
+// 保证客户门户演示：晋能（CUS001）至少一张"对账中"账单，可演示"确认对账"
+// （确定性种子下随机状态未必命中 CUS001，故兜底将一张"待对账"账单转为"对账中"）
+if (!db.settlements.some((s) => s.customerId === 'CUS001' && s.status === 'reconciling')) {
+  const target = db.settlements.find((s) => s.customerId === 'CUS001' && s.status === 'pending')
+  if (target) {
+    target.status = 'reconciling'
+    target.paidAmount = Math.round(target.totalAmount * 0.5) // 预付 50%，与对账中口径一致
+  }
+}
+
 // 非待对账账单预生成对账比对结果（待对账的由用户在详情页发起）
 for (const s of db.settlements) {
   if (s.status === 'pending') continue

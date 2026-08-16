@@ -1,5 +1,5 @@
 <template>
-  <div class="page" v-loading="loading">
+  <div class="page">
     <PageHeader title="磅单记录" desc="进出磅称重记录，自动关联调度单，支持补录与导出对账">
       <el-button v-if="can('weighing')" type="primary" :icon="Plus" @click="openManual">磅单补录</el-button>
       <el-button :icon="Download" @click="exportCsv">导出</el-button>
@@ -7,7 +7,7 @@
 
     <div class="stat-row">
       <StatCard title="今日过磅" :value="todayCount" unit="车次" icon="ScaleToOriginal" color="var(--color-primary)" :sub="'净重合计 ' + formatNum(todayNet) + ' 吨'" />
-      <StatCard title="本月过磅" :value="monthCount" unit="车次" icon="Tickets" color="var(--color-success)" :trend="6.4" trend-label="较上月" />
+      <StatCard title="本月过磅" :value="monthCount" unit="车次" icon="Tickets" color="var(--color-success)" :trend="monthTrend" trend-label="较上月" />
       <StatCard title="平均损耗率" :value="lossRate" unit="%" icon="TrendCharts" color="var(--color-warning)" :sub="'出磅净重 vs 进磅净重'" />
       <StatCard title="异常磅单" :value="abnormalCount" unit="张" icon="Warning" color="var(--color-danger)" :sub="'净重偏差超 5%'" />
     </div>
@@ -114,7 +114,7 @@
 
 <script setup>
 defineOptions({ name: 'Weighing' })
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Search, Download, Refresh, Plus } from '@element-plus/icons-vue'
@@ -129,18 +129,15 @@ import { usePerm } from '@/permission'
 const { can } = usePerm()
 
 const router = useRouter()
-const loading = ref(true)
-onMounted(() => setTimeout(() => (loading.value = false), 300))
 
 /* ===== 磅单补录 ===== */
 const manualDialog = ref(false)
 const manual = reactive({ dispatchId: '', type: '进磅', net: 35, tare: 0 })
 
-/** 可补录的调度单：仅公路口径（非公路方式无公路磅单），且尚无对应类型磅单 */
+/** 可补录的调度单：仅公路口径（非公路方式无公路磅单），且尚无对应类型磅单（下拉可搜索，全量候选不截断） */
 const manualDispatchOptions = computed(() =>
   db.dispatches
     .filter((d) => isRoadMode(d.mode) && !db.weighings.some((w) => w.dispatchId === d.id && w.type === manual.type))
-    .slice(0, 100)
     .map((d) => ({ ...d, plate: find.vehicle(d.vehicleId)?.plate || '-' }))
 )
 
@@ -223,6 +220,12 @@ const todayNet = computed(() =>
 )
 const monthCount = computed(() =>
   db.weighings.filter((w) => w.time.slice(0, 7) === dayjs().format('YYYY-MM')).length
+)
+const prevMonthCount = computed(() =>
+  db.weighings.filter((w) => w.time.slice(0, 7) === dayjs().subtract(1, 'month').format('YYYY-MM')).length
+)
+const monthTrend = computed(() =>
+  prevMonthCount.value ? Math.round(((monthCount.value - prevMonthCount.value) / prevMonthCount.value) * 1000) / 10 : null
 )
 
 /** 损耗率：按调度单配对进出磅 */

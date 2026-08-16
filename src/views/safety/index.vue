@@ -1,11 +1,11 @@
 <template>
-  <div class="page" v-loading="loading">
+  <div class="page">
     <PageHeader title="安全管理" desc="安全运行监控、事故管理、安全培训与车辆检查" />
 
     <div class="stat-row">
-      <StatCard title="安全运行天数" :value="386" unit="天" icon="Medal" color="var(--color-success)" :sub="'上次重大事故后累计'" />
-      <StatCard title="本年事故" :value="yearAccidents" unit="起" icon="Warning" color="var(--color-danger)" :trend="-18.2" trend-label="较上年" />
-      <StatCard title="培训覆盖率" :value="96.5" unit="%" icon="Reading" color="var(--color-primary)" :sub="'近 90 天参训司机占比'" />
+      <StatCard title="安全运行天数" :value="safeDays" unit="天" icon="Medal" color="var(--color-success)" :sub="'上次重大事故后累计'" />
+      <StatCard title="本年事故" :value="yearAccidents" unit="起" icon="Warning" color="var(--color-danger)" :trend="accidentTrend" trend-label="较上年" />
+      <StatCard title="培训覆盖率" :value="trainingCoverage" unit="%" icon="Reading" color="var(--color-primary)" :sub="'近 90 天参训司机占比'" />
       <StatCard title="车辆检查合格率" :value="inspectionPassRate" unit="%" icon="CircleCheck" color="var(--color-warning)" :sub="'近 30 天检查'" />
     </div>
 
@@ -95,25 +95,44 @@
 
 <script setup>
 defineOptions({ name: 'Safety' })
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed } from 'vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import StatusTag from '@/components/StatusTag.vue'
-import { db } from '@/mock'
+import { db, dashboard } from '@/mock'
 import { formatMoney } from '@/utils'
 import dayjs from 'dayjs'
 
-const loading = ref(true)
 const activeTab = ref('accident')
-onMounted(() => setTimeout(() => (loading.value = false), 300))
 
 const accidents = computed(() => db.accidents)
 const trainings = computed(() => db.trainings)
 const inspections = computed(() => db.inspections)
 
+/** 安全运行天数（与看板同口径：距最近一次重大事故） */
+const safeDays = computed(() => dashboard.kpi.safeDays)
+
 const yearAccidents = computed(() =>
   db.accidents.filter((a) => dayjs(a.time).isAfter(dayjs().subtract(1, 'year'))).length
 )
+/** 较上年：近 365 天 vs 前 365 天；基期为 0 时不显示趋势 */
+const accidentTrend = computed(() => {
+  const lastYear = yearAccidents.value
+  const prevYear = db.accidents.filter(
+    (a) => dayjs(a.time).isAfter(dayjs().subtract(2, 'year')) && !dayjs(a.time).isAfter(dayjs().subtract(1, 'year'))
+  ).length
+  return prevYear ? Math.round(((lastYear - prevYear) / prevYear) * 1000) / 10 : null
+})
+/** 培训覆盖率：近 90 天已完成培训的参训司机（去重）/ 全部司机 */
+const trainingCoverage = computed(() => {
+  const ids = new Set()
+  for (const t of db.trainings) {
+    if (t.status === 'completed' && dayjs(t.date).isAfter(dayjs().subtract(90, 'day'))) {
+      for (const id of t.driverIds || []) ids.add(id)
+    }
+  }
+  return db.drivers.length ? Math.round((ids.size / db.drivers.length) * 1000) / 10 : 0
+})
 const inspectionPassRate = computed(() => {
   if (!db.inspections.length) return 0
   return Math.round((db.inspections.filter((i) => i.result === 'pass').length / db.inspections.length) * 1000) / 10

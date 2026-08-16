@@ -1,5 +1,5 @@
 <template>
-  <div class="page" v-loading="loading">
+  <div class="page">
     <PageHeader title="场站管理" desc="装/卸货场站运行状态、吞吐量与排队情况">
       <el-button type="primary" :icon="ScaleToOriginal" @click="$router.push('/terminal/weighing')">
         磅单记录
@@ -61,7 +61,7 @@
 
 <script setup>
 defineOptions({ name: 'Terminal' })
-import { ref, computed, onMounted } from 'vue'
+import { computed } from 'vue'
 import { ScaleToOriginal, Location, Phone } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
@@ -72,8 +72,6 @@ import { useTokens } from '@/utils/tokens'
 
 const tokens = useTokens()
 
-const loading = ref(true)
-onMounted(() => setTimeout(() => (loading.value = false), 300))
 
 const typeMap = { loading: '装货场', unloading: '卸货场', both: '装卸一体' }
 const statusMap = {

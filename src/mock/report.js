@@ -1,5 +1,5 @@
 import { db, NOW } from './base'
-import { outstandingOf } from './flow'
+import { outstandingOf, tripCostOf } from './flow'
 import dayjs from 'dayjs'
 import { round } from '@/utils'
 
@@ -10,6 +10,8 @@ import { round } from '@/utils'
  *  - 客户经营：结算/未付按客户账单汇总，授信占用=未付余额/授信额度
  *  - 商品运量：损耗率=（进磅净重-出磅净重）/进磅净重，按调度单配对
  *  - 场站吞吐：按磅单场站与类型汇总
+ *  - 成本利润：单车次全成本（燃油×装载系数+磨损+司机+过路费+折旧，非公路按运输单元能耗口径），
+ *    收入=调度单约定运费（quantity×unitPrice），毛利=收入-成本
  */
 
 /** 月度运营报表（近 6 个月） */
@@ -108,4 +110,66 @@ export function terminalReport() {
     })
     .filter((r) => r.loadTrips > 0 || r.unloadTrips > 0)
     .sort((a, b) => b.loadVolume + b.unloadVolume - (a.loadVolume + a.unloadVolume))
+}
+
+/** 成本利润报表：已完成车次单车次成本归集（收入=调度单约定运费）
+ *  口径：成本按 flow.tripCostOf 全成本（公路含车辆折旧，非公路按运输单元能耗口径）；
+ *  月度按卸货完成时间归月（与月度运营同口径），近 6 个月 */
+export function costReport() {
+  const done = db.dispatches.filter((d) => d.status === 'completed')
+  const rows = done.map((d) => ({ d, cost: tripCostOf(d), revenue: d.fee || 0 }))
+
+  const sumCost = (list) => list.reduce((s, x) => s + x.cost.total, 0)
+  const sumRevenue = (list) => list.reduce((s, x) => s + x.revenue, 0)
+  const withProfit = (r) => ({
+    ...r,
+    profit: r.revenue - r.cost,
+    margin: r.revenue ? round(((r.revenue - r.cost) / r.revenue) * 100, 1) : 0
+  })
+
+  const summary = withProfit({ trips: rows.length, cost: sumCost(rows), revenue: sumRevenue(rows) })
+
+  // 按车辆（公路车次）
+  const vMap = new Map()
+  for (const x of rows) {
+    if (!x.d.vehicleId) continue
+    if (!vMap.has(x.d.vehicleId)) {
+      const v = db.vehicles.find((vv) => vv.id === x.d.vehicleId)
+      vMap.set(x.d.vehicleId, { id: x.d.vehicleId, plate: v?.plate || '-', type: v?.type || '', trips: 0, cost: 0, revenue: 0 })
+    }
+    const r = vMap.get(x.d.vehicleId)
+    r.trips += 1
+    r.cost += x.cost.total
+    r.revenue += x.revenue
+  }
+  const byVehicle = [...vMap.values()].map(withProfit).sort((a, b) => b.trips - a.trips)
+
+  // 按线路（装货场→卸货场）
+  const rMap = new Map()
+  for (const x of rows) {
+    const key = x.d.loadTerminalId + x.d.unloadTerminalId
+    if (!rMap.has(key)) {
+      rMap.set(key, {
+        key,
+        route: `${db.terminals.find((t) => t.id === x.d.loadTerminalId)?.name || '-'}→${db.terminals.find((t) => t.id === x.d.unloadTerminalId)?.name || '-'}`,
+        trips: 0,
+        cost: 0,
+        revenue: 0
+      })
+    }
+    const r = rMap.get(key)
+    r.trips += 1
+    r.cost += x.cost.total
+    r.revenue += x.revenue
+  }
+  const byRoute = [...rMap.values()].map(withProfit).sort((a, b) => b.trips - a.trips)
+
+  // 按月（近 6 个月，卸货完成时间归月）
+  const months = Array.from({ length: 6 }, (_, i) => dayjs(NOW).subtract(5 - i, 'month').format('YYYY-MM'))
+  const byMonth = months.map((m) => {
+    const list = rows.filter((x) => x.d.unloadTime && x.d.unloadTime.slice(0, 7) === m)
+    return withProfit({ month: m, trips: list.length, cost: sumCost(list), revenue: sumRevenue(list) })
+  })
+
+  return { summary, byVehicle, byRoute, byMonth }
 }

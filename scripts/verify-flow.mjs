@@ -25,6 +25,7 @@ import {
   closeException,
   rejectContract,
   approveContract,
+  submitContractApproval,
   manualWeighing,
   tareOf,
   contractRemaining,
@@ -38,9 +39,17 @@ import {
   archiveContract,
   recalcSettlement,
   issueInvoiceRow,
-  redFlushInvoiceRow
+  redFlushInvoiceRow,
+  loadCodeOf,
+  unloadCodeOf,
+  scanConfirmLoad,
+  scanConfirmUnload,
+  checkFenceEvents,
+  maxDeviationOf,
+  tripCostOf,
+  customerConfirm
 } from '../src/mock/flow.js'
-import { monthlyReport, customerReport, commodityReport, terminalReport } from '../src/mock/report.js'
+import { monthlyReport, customerReport, commodityReport, terminalReport, costReport } from '../src/mock/report.js'
 import { menuAllowed, actionAllowed } from '../src/permission.js'
 
 let pass = 0
@@ -273,13 +282,18 @@ check('处置完成同步事故（处理/损失）', acc.handling === '保险理
 closeException(e)
 check('关闭异常 → 事故结案', e.status === 'closed' && acc.status === 'closed')
 
-// P2-6 审批驳回：必须带原因，回草稿
+// P2-6 多级审批（部门→公司）：驳回回草稿、重新提交重走全链、逐级通过
 const pendingContract = db.contracts.find((c) => c.status === 'pending')
 if (pendingContract) {
   rejectContract(pendingContract, '运输方案需调整')
   check('审批驳回 → 回草稿 + 记录审批意见', pendingContract.status === 'draft' && pendingContract.approval?.comment?.includes('驳回'))
-  approveContract(pendingContract, '同意')
-  check('审批通过 → 执行中 + 记录审批意见', pendingContract.status === 'executing' && pendingContract.approval?.comment === '同意')
+  check('驳回时后续审批级取消', pendingContract.approvalChain?.[0]?.status === 'rejected' && pendingContract.approvalChain?.[1]?.status === 'cancelled')
+  submitContractApproval(pendingContract)
+  check('重新提交审批 → 待审批 + 重建两级审批链', pendingContract.status === 'pending' && pendingContract.approvalChain?.length === 2 && pendingContract.approvalChain[0].status === 'pending' && pendingContract.approvalChain[1].status === 'waiting')
+  const r1 = approveContract(pendingContract, '部门同意')
+  check('部门审批通过 → 仍待审批（进入公司审批）', r1.final === false && pendingContract.status === 'pending' && pendingContract.approvalChain[0].status === 'approved' && pendingContract.approvalChain[1].status === 'pending')
+  const r2 = approveContract(pendingContract, '同意')
+  check('公司审批通过 → 执行中 + 记录审批意见', r2.final === true && pendingContract.status === 'executing' && pendingContract.approval?.comment === '同意')
 } else {
   console.log('  - 跳过审批（无待审批合同）')
 }
@@ -673,6 +687,140 @@ if (c13) {
 } else {
   console.log('  - 跳过结算调整（无执行中的公路合同）')
 }
+
+console.log('== 10. P2 回归（清理 + 多级审批） ==')
+// 种子审批链：待审批合同两级链（首级待审）；已执行/已完成/已终止合同全链通过
+check(
+  '种子待审批合同带两级审批链（首级待审）',
+  db.contracts.filter((c) => c.status === 'pending').every((c) => c.approvalChain?.length === 2 && c.approvalChain[0].status === 'pending' && c.approvalChain[1].status === 'waiting')
+)
+check(
+  '种子已执行/已完成/已终止合同审批链全链通过',
+  db.contracts.filter((c) => ['executing', 'completed', 'terminated'].includes(c.status)).every((c) => (c.approvalChain || []).length === 2 && c.approvalChain.every((s) => s.status === 'approved'))
+)
+// 安全运行天数按事故记录派生（不再硬编码 386）
+check('安全运行天数按事故记录派生（>0 且 ≤365）', dashboard.kpi.safeDays > 0 && dashboard.kpi.safeDays <= 365)
+// 培训种子含实际参训司机（driverIds），覆盖率按真实口径可计算
+const trainedIds = new Set()
+for (const t of db.trainings) {
+  if (t.status === 'completed' && dayjs(t.date).isAfter(dayjs(NOW).subtract(90, 'day'))) {
+    for (const id of t.driverIds || []) trainedIds.add(id)
+  }
+}
+check('培训种子含参训司机 driverIds（覆盖率口径可计算）', db.trainings.some((t) => (t.driverIds || []).length > 0) && trainedIds.size > 0 && trainedIds.size <= db.drivers.length)
+
+console.log('== 11. P2 功能（扫码确认 / 围栏事件化 / 成本侧 / 客户门户） ==')
+// 扫码确认：装/卸货码按调度单号确定性派生
+const scanD = db.dispatches.find((d) => d.status === 'pending' && isRoadMode(d.mode) && d.accepted)
+if (scanD) {
+  const lc = loadCodeOf(scanD)
+  const uc = unloadCodeOf(scanD)
+  check(
+    '装/卸货码确定性派生（同单同码、异单异码、格式 ZD/XD+6 位）',
+    /^ZD\d{6}$/.test(lc) &&
+      /^XD\d{6}$/.test(uc) &&
+      loadCodeOf(scanD) === lc &&
+      db.dispatches.some((d) => d.id !== scanD.id && loadCodeOf(d) !== lc)
+  )
+  check('守卫：错误装货码拦截（状态不变）', !!scanConfirmLoad(scanD, 'ZD999999')?.error && scanD.status === 'pending')
+  const rScan = scanConfirmLoad(scanD, lc)
+  check(
+    '扫码确认装货：正确码 → 装货中 + 进磅单登记',
+    rScan.ok === true && scanD.status === 'loading' && db.weighings.some((w) => w.dispatchId === scanD.id && w.type === '进磅')
+  )
+  check('守卫：非待装货状态扫码装货拦截', !!scanConfirmLoad(scanD, lc)?.error)
+  check('守卫：非卸货中状态扫码卸货拦截', !!scanConfirmUnload(scanD, uc)?.error)
+} else {
+  console.log('  - 跳过扫码确认（无已接单的待装货公路车次）')
+}
+
+// 围栏事件化：参数种子 + 偏离自动写异常单 + 去重 + 开关
+check(
+  '围栏参数种子（enabled/deviateLimit/delayMinutes）',
+  db.fenceConfig?.enabled === true && db.fenceConfig.deviateLimit > 0 && db.fenceConfig.delayMinutes > 0
+)
+const deviating = db.dispatches.filter((d) => d.status === 'intransit' && maxDeviationOf(d) > db.fenceConfig.deviateLimit)
+const fenceBefore = db.exceptions.length
+const fenceCreated = checkFenceEvents()
+check(
+  '围栏事件：偏离超阈值在途车次自动写异常单（source=fence，车次转异常）',
+  fenceCreated.length >= deviating.length &&
+    fenceCreated.every((e) => e.source === 'fence' && e.status === 'pending') &&
+    deviating.every((d) => d.status === 'exception' && db.exceptions.some((e) => e.dispatchId === d.id && e.source === 'fence')) &&
+    db.exceptions.length === fenceBefore + fenceCreated.length
+)
+check('围栏事件去重：二次检查不重复生成（每车次每类一次）', checkFenceEvents().length === 0)
+const fenceEnabled = db.fenceConfig.enabled
+db.fenceConfig.enabled = false
+check('守卫：围栏事件关闭后不生成异常单', checkFenceEvents().length === 0)
+db.fenceConfig.enabled = fenceEnabled
+
+// 成本侧：单车次成本口径 + 报表恒等式
+const costD = db.dispatches.find((d) => d.status === 'completed' && d.vehicleId)
+check(
+  '单车次成本（公路）：五项成本齐备且 total=各项之和',
+  !!costD &&
+    (() => {
+      const c = tripCostOf(costD)
+      return c.fuel > 0 && c.wear > 0 && c.driver > 0 && c.toll > 0 && c.depreciation > 0 && c.total === c.fuel + c.wear + c.driver + c.toll + c.depreciation
+    })()
+)
+const costNR = db.dispatches.find((d) => d.status === 'completed' && !d.vehicleId)
+check(
+  '单车次成本（非公路）：无司机/折旧项（运输单元能耗口径）',
+  !!costNR &&
+    (() => {
+      const c = tripCostOf(costNR)
+      return c.driver === 0 && c.depreciation === 0 && c.total === c.fuel + c.wear + c.toll
+    })()
+)
+const cr = costReport()
+check(
+  '成本报表：汇总恒等式（收入-成本=毛利，毛利率一致）',
+  cr.summary.trips > 0 &&
+    cr.summary.profit === cr.summary.revenue - cr.summary.cost &&
+    cr.summary.margin === Math.round((cr.summary.profit / cr.summary.revenue) * 1000) / 10
+)
+check(
+  '成本报表：按线路聚合与汇总一致（车次/成本/收入）',
+  cr.byRoute.reduce((s, r) => s + r.trips, 0) === cr.summary.trips &&
+    cr.byRoute.reduce((s, r) => s + r.cost, 0) === cr.summary.cost &&
+    cr.byRoute.reduce((s, r) => s + r.revenue, 0) === cr.summary.revenue
+)
+check('成本报表：单车/单线行毛利恒等式', [...cr.byVehicle, ...cr.byRoute].every((r) => r.profit === r.revenue - r.cost && r.trips > 0))
+
+// 客户门户：角色权限 + 账号 + 确认对账
+check(
+  '客户角色权限（菜单含 /portal，无内部菜单，操作仅 customer-confirm）',
+  menuAllowed('客户', '/portal') === true &&
+    menuAllowed('客户', '/settlement') === false &&
+    actionAllowed('客户', 'customer-confirm') === true &&
+    actionAllowed('客户', 'settlement') === false
+)
+const custUsers = db.users.filter((u) => u.role === '客户')
+check(
+  '客户门户账号种子（≥2 个，均绑定发货方/双向客户）',
+  custUsers.length >= 2 &&
+    custUsers.every((u) => db.customers.some((c) => c.id === u.customerId && (c.type === 'shipper' || c.type === 'both')))
+)
+const custSettle = db.settlements.find((s) => s.customerId === custUsers[0]?.customerId && s.reconciliation) || db.settlements.find((s) => s.reconciliation)
+if (custSettle) {
+  const rConf = customerConfirm(custSettle)
+  check(
+    '客户确认对账：写 customerConfirmed + 审计日志（客户门户）',
+    rConf.ok === true && !!custSettle.customerConfirmed?.time && db.logs[0].module === '客户门户'
+  )
+  check('守卫：同一账单客户不可重复确认', !!customerConfirm(custSettle)?.error)
+} else {
+  console.log('  - 跳过客户确认（无带对账结果的账单）')
+}
+check(
+  '只读演示账号种子（user16：全菜单可见、无操作权）',
+  (() => {
+    const u = db.users.find((x) => x.username === 'user16')
+    return !!u && u.role === '只读用户' && menuAllowed(u.role, '/settlement') === true && actionAllowed(u.role, 'settlement') === false
+  })()
+)
 
 console.log(`\n结果：${pass} 通过，${fail} 失败`)
 process.exit(fail ? 1 : 0)

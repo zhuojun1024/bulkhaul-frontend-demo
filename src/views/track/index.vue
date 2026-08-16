@@ -5,14 +5,36 @@
         <el-icon class="live-dot"><VideoPlay /></el-icon>
         实时监控中
       </el-tag>
+      <el-popover title="电子围栏参数" :width="300" trigger="click">
+        <template #reference>
+          <el-button size="small" :icon="Setting" :type="db.fenceConfig?.enabled ? 'primary' : 'info'" plain>
+            围栏参数
+          </el-button>
+        </template>
+        <div class="fence-config">
+          <div class="fence-config__row">
+            <span>启用围栏事件</span>
+            <el-switch v-model="db.fenceConfig.enabled" />
+          </div>
+          <div class="fence-config__row">
+            <span>偏离阈值（地图单位）</span>
+            <el-input-number v-model="db.fenceConfig.deviateLimit" :min="5" :max="50" :step="1" size="small" controls-position="right" style="width: 100px" />
+          </div>
+          <div class="fence-config__row">
+            <span>超时阈值（分钟）</span>
+            <el-input-number v-model="db.fenceConfig.delayMinutes" :min="5" :max="240" :step="5" size="small" controls-position="right" style="width: 100px" />
+          </div>
+          <div class="fence-config__tip">在途车次轨迹偏离或超预计到达时间超过阈值时，自动写入异常单（每车次每类一次），到异常处理模块跟进。</div>
+        </div>
+      </el-popover>
     </PageHeader>
 
-    <!-- 顶部指标 -->
+    <!-- 顶部指标（无历史口径的指标不显示趋势） -->
     <div class="stat-row">
-      <StatCard title="在途车辆" :value="intransitList.length" unit="辆" icon="Van" color="var(--color-primary)" :trend="12.5" trend-label="较昨日" />
-      <StatCard title="平均车速" :value="avgSpeed" unit="km/h" icon="Odometer" color="var(--color-success)" :trend="-2.1" trend-label="较昨日" />
-      <StatCard title="延误车辆" :value="delayedList.length" unit="辆" icon="AlarmClock" color="var(--color-warning)" :trend="delayedList.length ? 8.3 : 0" trend-label="较昨日" />
-      <StatCard title="今日完成" :value="todayDone" unit="车次" icon="CircleCheck" color="var(--color-info)" :trend="5.2" trend-label="较昨日" />
+      <StatCard title="在途车辆" :value="intransitList.length" unit="辆" icon="Van" color="var(--color-primary)" :sub="'GPS 实时'" />
+      <StatCard title="平均车速" :value="avgSpeed" unit="km/h" icon="Odometer" color="var(--color-success)" :sub="'在途车辆平均'" />
+      <StatCard title="延误车辆" :value="delayedList.length" unit="辆" icon="AlarmClock" color="var(--color-warning)" :sub="'超预计到达时间'" />
+      <StatCard title="今日完成" :value="todayDone" unit="车次" icon="CircleCheck" color="var(--color-info)" :trend="doneTrend" trend-label="较昨日" />
     </div>
 
     <!-- 异常预警条 -->
@@ -246,10 +268,13 @@
 <script setup>
 defineOptions({ name: 'Track' })
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
-import { VideoPlay, VideoPause, Close, Warning, CircleCheck, AlarmClock, Aim } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
+import { VideoPlay, VideoPause, Close, Warning, CircleCheck, AlarmClock, Aim, Setting } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import { db, find, MAP_NODES, ROUTES } from '@/mock'
+import { checkFenceEvents, trackPointsOf, maxDeviationOf, hashOffset } from '@/mock/flow'
+import { round } from '@/utils'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
 
@@ -288,12 +313,6 @@ const activeRouteLines = computed(() =>
 )
 
 /* ===== 车辆点位 ===== */
-function hashOffset(id) {
-  let h = 0
-  for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) % 997
-  return (h % 5) - 2
-}
-
 const vehicleDots = computed(() =>
   db.dispatches
     .filter((d) => ['intransit', 'exception'].includes(d.status))
@@ -358,32 +377,9 @@ const selected = computed(() => vehicleList.value.find((v) => v.id === selectedI
 const selectedDispatch = computed(() => db.dispatches.find((d) => d.id === selectedId.value) || null)
 
 /* ===== 轨迹回放 + 电子围栏 ===== */
-/** 电子围栏半径（地图坐标单位）与偏离阈值 */
+/** 电子围栏半径（地图坐标单位，仅视觉）；偏离阈值取自 db.fenceConfig（可配置，围栏事件同源） */
 const FENCE_RADIUS = 36
-const DEVIATE_LIMIT = 15
-
-/**
- * 轨迹点：沿线段均匀取 21 点，叠加按单号确定性派生的横向偏移（基础偏移 + 正弦波动），
- * 与实时点位同一口径（hashOffset 基础偏移），保证回放轨迹与实时位置一致
- */
-function trackPointsOf(d) {
-  const from = MAP_NODES[d.loadTerminalId]
-  const to = MAP_NODES[d.unloadTerminalId]
-  const dx = to.x - from.x
-  const dy = to.y - from.y
-  const len = Math.sqrt(dx * dx + dy * dy) || 1
-  const nx = -dy / len
-  const ny = dx / len
-  const base = hashOffset(d.id) * 5
-  const phase = (hashOffset(d.id) % 6) * 0.7
-  const pts = []
-  for (let i = 0; i <= 20; i++) {
-    const p = i / 20
-    const off = base + 8 * Math.sin(i * 0.6 + phase)
-    pts.push({ x: from.x + dx * p + nx * off, y: from.y + dy * p + ny * off })
-  }
-  return pts
-}
+const deviateLimit = computed(() => db.fenceConfig?.deviateLimit ?? 15)
 
 const play = reactive({ index: 0, playing: false, speed: 1 })
 let playTimer = null
@@ -440,26 +436,10 @@ const inFence = computed(() => {
   return Math.sqrt(dx * dx + dy * dy) <= FENCE_RADIUS
 })
 
-/** 轨迹最大偏离：轨迹点到线路直线的最大垂直距离 */
-const maxDeviation = computed(() => {
-  const d = selectedDispatch.value
-  if (!d) return 0
-  const from = MAP_NODES[d.loadTerminalId]
-  const to = MAP_NODES[d.unloadTerminalId]
-  const dx = to.x - from.x
-  const dy = to.y - from.y
-  const len2 = dx * dx + dy * dy || 1
-  let max = 0
-  for (const p of trackPointsOf(d)) {
-    const t = ((p.x - from.x) * dx + (p.y - from.y) * dy) / len2
-    const px = from.x + dx * t
-    const py = from.y + dy * t
-    max = Math.max(max, Math.sqrt((p.x - px) ** 2 + (p.y - py) ** 2))
-  }
-  return Math.round(max)
-})
+/** 轨迹最大偏离：轨迹点到线路直线的最大垂直距离（与围栏事件同一口径，flow.maxDeviationOf） */
+const maxDeviation = computed(() => (selectedDispatch.value ? maxDeviationOf(selectedDispatch.value) : 0))
 
-const deviated = computed(() => maxDeviation.value > DEVIATE_LIMIT)
+const deviated = computed(() => maxDeviation.value > deviateLimit.value)
 
 /* ===== 顶部指标 ===== */
 const intransitList = computed(() => vehicleList.value.filter((v) => v.status === 'intransit'))
@@ -472,12 +452,23 @@ const avgSpeed = computed(() => {
 const todayDone = computed(() =>
   db.dispatches.filter((d) => d.status === 'completed' && d.unloadTime && dayjs(d.unloadTime).isSame(dayjs(), 'day')).length
 )
+const yesterdayDone = computed(() =>
+  db.dispatches.filter((d) => d.status === 'completed' && d.unloadTime && dayjs(d.unloadTime).isSame(dayjs().subtract(1, 'day'), 'day')).length
+)
+const doneTrend = computed(() =>
+  yesterdayDone.value ? round(((todayDone.value - yesterdayDone.value) / yesterdayDone.value) * 100, 1) : null
+)
 const activeExceptions = computed(() => db.exceptions.filter((e) => e.status !== 'closed'))
 
-/* ===== 模拟移动 ===== */
+/* ===== 模拟移动 + 围栏事件 ===== */
 let timer = null
 onMounted(() => {
   timer = setInterval(() => {
+    // 围栏事件：偏离/超时自动写异常单（flow 内按车次+事件类型去重）
+    const created = checkFenceEvents()
+    if (created.length) {
+      ElMessage.warning(`围栏预警：生成 ${created.length} 条异常单（${created.map((e) => e.dispatchId).join('、')}）`)
+    }
     for (const d of db.dispatches) {
       if (d.status === 'intransit') {
         d.progress = Math.min(95, d.progress + Math.random() * 0.9)
@@ -501,6 +492,24 @@ onBeforeUnmount(() => {
 
 .track-alert {
   border-radius: 8px;
+}
+
+/* 围栏参数配置 */
+.fence-config__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--text-primary);
+  padding: 6px 0;
+}
+
+.fence-config__tip {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 8px;
+  line-height: 1.6;
 }
 
 .track-map-panel {

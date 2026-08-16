@@ -1,5 +1,5 @@
 <template>
-  <div class="page" v-loading="loading">
+  <div class="page">
     <PageHeader title="商品管理" desc="大宗商品目录、质量指标与参考运价维护">
       <el-button type="primary" :icon="Plus" @click="openDialog()">新建商品</el-button>
     </PageHeader>
@@ -123,15 +123,13 @@
 
 <script setup>
 defineOptions({ name: 'Commodity' })
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, Plus, Refresh } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db } from '@/mock'
 
-const loading = ref(true)
-onMounted(() => setTimeout(() => (loading.value = false), 300))
 
 const statusMap = {
   active: { label: '启用', type: 'success' },

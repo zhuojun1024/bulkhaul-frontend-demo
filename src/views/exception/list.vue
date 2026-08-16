@@ -1,5 +1,5 @@
 <template>
-  <div class="page" v-loading="loading">
+  <div class="page">
     <PageHeader title="异常处理" desc="运输过程异常的受理、处置与闭环管理" />
 
     <div class="stat-row">
@@ -47,9 +47,10 @@
             </template>
           </el-table-column>
           <el-table-column prop="dispatchId" label="关联调度单" width="110" />
-          <el-table-column label="类型" width="90" align="center">
+          <el-table-column label="类型" width="120" align="center">
             <template #default="{ row }">
               <el-tag size="small" effect="plain">{{ typeMap[row.type] }}</el-tag>
+              <el-tag v-if="row.source === 'fence'" size="small" type="warning" effect="light" style="margin-left: 4px">围栏</el-tag>
             </template>
           </el-table-column>
           <el-table-column label="级别" width="90" align="center">
@@ -161,7 +162,7 @@
 
 <script setup>
 defineOptions({ name: 'Exception' })
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Refresh } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
@@ -175,8 +176,6 @@ import { usePerm } from '@/permission'
 const tokens = useTokens()
 const { can } = usePerm()
 
-const loading = ref(true)
-onMounted(() => setTimeout(() => (loading.value = false), 300))
 
 const typeMap = { delay: '延误', accident: '事故', damage: '货损', quality: '质量', overload: '超载', other: '其他' }
 const levelMap = {

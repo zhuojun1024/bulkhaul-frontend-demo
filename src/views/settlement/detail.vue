@@ -1,5 +1,5 @@
 <template>
-  <div class="page" v-loading="loading">
+  <div class="page">
     <div class="panel settlement-detail__header">
       <div class="settlement-detail__head">
         <el-button :icon="ArrowLeft" circle @click="$router.back()" />
@@ -101,7 +101,7 @@
             <el-steps direction="vertical" :active="stepActive">
               <el-step title="数据归集" :description="`${settlement?.dispatchCount} 车次 / ${formatNum(settlement?.totalQuantity)} 吨`" />
               <el-step title="发起对账" :description="settlement?.status === 'pending' ? '待发起' : '已完成'" />
-              <el-step title="客户确认" :description="settlement?.status === 'settled' ? '已确认' : '待客户确认'" />
+              <el-step title="客户确认" :description="customerConfirmDesc" />
               <el-step
                 title="结算收款"
                 :description="settlement?.settleDate ? `结算日 ${settlement.settleDate} · 已付 ${formatNum(settlement.paidAmount)} / ${formatNum(settlement.totalAmount)}` : '—'"
@@ -241,7 +241,7 @@
 
 <script setup>
 defineOptions({ name: 'SettlementDetail' })
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, DocumentChecked, CircleCheck, Printer, Money, Refresh } from '@element-plus/icons-vue'
@@ -253,12 +253,15 @@ import { formatMoney, formatNum } from '@/utils'
 
 const route = useRoute()
 const { can } = usePerm()
-const loading = ref(true)
-onMounted(() => setTimeout(() => (loading.value = false), 200))
 
 const settlement = computed(() => find.settlement(route.params.id))
 const customer = computed(() => find.customer(settlement.value?.customerId))
-const invoice = computed(() => db.invoices.find((i) => i.settlementId === settlement.value?.id))
+/** 发票：优先取最新一张非红冲发票（红冲后重开时不展示旧红冲票） */
+const invoice = computed(() => {
+  const list = db.invoices.filter((i) => i.settlementId === settlement.value?.id)
+  if (!list.length) return null
+  return list.find((i) => i.status !== 'red-flushed') || list[list.length - 1]
+})
 
 const statusMap = {
   pending: { label: '待对账', type: 'info' },
@@ -320,6 +323,13 @@ const stepActive = computed(() => {
   if (s.status === 'pending') return 1
   if (s.status === 'reconciling') return 2
   return 4
+})
+
+/** 客户确认状态：按客户门户实际确认记录（customerConfirmed），不再按账单状态推断 */
+const customerConfirmDesc = computed(() => {
+  const s = settlement.value
+  if (s?.customerConfirmed) return `已确认 · ${s.customerConfirmed.time}`
+  return '待客户确认（客户门户可确认）'
 })
 
 function invoiceType(status) {

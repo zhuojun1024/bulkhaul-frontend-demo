@@ -1,5 +1,5 @@
 <template>
-  <div class="page" v-loading="loading">
+  <div class="page">
     <PageHeader title="司机管理" desc="司机档案、证照效期与出勤状态管理">
       <el-button :icon="Download" @click="exportCsv">导出</el-button>
     </PageHeader>
@@ -119,7 +119,7 @@
 
 <script setup>
 defineOptions({ name: 'Driver' })
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Download, Refresh } from '@element-plus/icons-vue'
@@ -136,8 +136,6 @@ const tokens = useTokens()
 const { can } = usePerm()
 
 const router = useRouter()
-const loading = ref(true)
-onMounted(() => setTimeout(() => (loading.value = false), 300))
 
 const statusMap = {
   onduty: { label: '出勤中', type: 'primary' },

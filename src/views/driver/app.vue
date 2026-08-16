@@ -47,7 +47,7 @@
                 <el-button size="small" :type="d.accepted ? 'success' : 'primary'" plain :disabled="d.accepted" @click="onAccept(d)">
                   {{ d.accepted ? '已接单' : '接单' }}
                 </el-button>
-                <el-button size="small" type="warning" :disabled="!d.accepted" @click="onLoad(d)">确认装货</el-button>
+                <el-button size="small" type="warning" :disabled="!d.accepted" @click="openScanLoad(d)">扫码装货</el-button>
               </template>
               <el-button v-if="d.status === 'loading'" size="small" type="primary" @click="onDepart(d)">发车</el-button>
               <el-button v-if="d.status === 'intransit'" size="small" type="success" @click="onArrive(d)">到达卸货场</el-button>
@@ -74,19 +74,49 @@
       </div>
     </div>
 
+    <!-- 扫码确认装货 -->
+    <el-dialog v-model="scanDialog" title="扫码确认装货" width="420px">
+      <div v-if="scanTarget">
+        <el-alert :title="`调度单 ${scanTarget.id}：${find.commodity(scanTarget.commodityId)?.name} ${scanTarget.quantity} 吨`" type="info" :closable="false" show-icon />
+        <div class="scan-box">
+          <div class="scan-box__label">装货场装货码（模拟张贴码）</div>
+          <div class="scan-box__code num">{{ loadCodeOf(scanTarget) }}</div>
+        </div>
+        <el-form label-width="90px" style="margin-top: 16px">
+          <el-form-item label="扫描结果">
+            <el-input v-model="scanCode" placeholder="扫码或输入装货码" clearable />
+          </el-form-item>
+        </el-form>
+        <el-button size="small" :icon="Aim" @click="scanCode = loadCodeOf(scanTarget)">模拟扫码</el-button>
+        <div class="sign-tip">装货码张贴于装货场站，扫码核验通过后自动确认装货并登记进磅单。</div>
+      </div>
+      <template #footer>
+        <el-button @click="scanDialog = false">取消</el-button>
+        <el-button type="primary" @click="submitScanLoad">确认扫码</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 电子签收 -->
     <el-dialog v-model="signDialog" title="电子签收" width="420px">
       <div v-if="signTarget">
         <el-alert :title="`调度单 ${signTarget.id}：${find.commodity(signTarget.commodityId)?.name} ${signTarget.quantity} 吨`" type="info" :closable="false" show-icon />
+        <div class="scan-box">
+          <div class="scan-box__label">卸货场卸货码（模拟张贴码）</div>
+          <div class="scan-box__code num">{{ unloadCodeOf(signTarget) }}</div>
+        </div>
         <el-form label-width="90px" style="margin-top: 16px">
           <el-form-item label="签收人">
             <el-input v-model="signer" placeholder="收货方签收人姓名" />
+          </el-form-item>
+          <el-form-item label="扫描结果">
+            <el-input v-model="scanCode" placeholder="扫码或输入卸货码" clearable />
           </el-form-item>
           <el-form-item label="签收数量">
             <span class="num">{{ signTarget.quantity }} 吨</span>
           </el-form-item>
         </el-form>
-        <div class="sign-tip">签收后生成电子签收单，作为结算与对账的收货凭证。</div>
+        <el-button size="small" :icon="Aim" @click="scanCode = unloadCodeOf(signTarget)">模拟扫码</el-button>
+        <div class="sign-tip">扫卸货码核验通过后确认卸货并生成电子签收单，作为结算与对账的收货凭证。</div>
       </div>
       <template #footer>
         <el-button @click="signDialog = false">取消</el-button>
@@ -100,16 +130,18 @@
 defineOptions({ name: 'DriverApp' })
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { Van, CircleCheck } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
+import { Van, CircleCheck, Aim } from '@element-plus/icons-vue'
 import { db, find } from '@/mock'
 import {
   acceptDispatch,
   signReceipt,
-  confirmLoad as flowConfirmLoad,
   depart as flowDepart,
   arrive as flowArrive,
-  confirmUnload as flowConfirmUnload
+  loadCodeOf,
+  unloadCodeOf,
+  scanConfirmLoad,
+  scanConfirmUnload
 } from '@/mock/flow'
 import { useTokens } from '@/utils/tokens'
 
@@ -163,11 +195,22 @@ function onAccept(d) {
   acceptDispatch(d)
   ElMessage.success('接单成功')
 }
-function onLoad(d) {
-  ElMessageBox.confirm(`确认已完成装货（${d.quantity} 吨）？`, '确认装货', { type: 'info' }).then(() => {
-    if (guardError(flowConfirmLoad(d))) return
-    ElMessage.success('装货确认成功，进磅单已登记')
-  }).catch(() => {})
+
+/* ===== 扫码确认装货（装货码核验通过后走 flow.confirmLoad） ===== */
+const scanDialog = ref(false)
+const scanTarget = ref(null)
+const scanCode = ref('')
+
+function openScanLoad(d) {
+  scanTarget.value = d
+  scanCode.value = ''
+  scanDialog.value = true
+}
+
+function submitScanLoad() {
+  if (guardError(scanConfirmLoad(scanTarget.value, scanCode.value))) return
+  scanDialog.value = false
+  ElMessage.success('装货确认成功，进磅单已登记')
 }
 function onDepart(d) {
   if (guardError(flowDepart(d))) return
@@ -187,6 +230,7 @@ function openSign(d) {
   signTarget.value = d
   const consignee = find.customer(find.contract(d.contractId)?.consigneeId)
   signer.value = consignee?.contact || ''
+  scanCode.value = ''
   signDialog.value = true
 }
 
@@ -195,7 +239,8 @@ function submitSign() {
     ElMessage.warning('请填写签收人姓名')
     return
   }
-  if (guardError(flowConfirmUnload(signTarget.value))) return
+  // 先扫卸货码核验（走 flow.confirmUnload），再生成电子签收单
+  if (guardError(scanConfirmUnload(signTarget.value, scanCode.value))) return
   signReceipt(signTarget.value, signer.value.trim())
   signDialog.value = false
   ElMessage.success('卸货完成，电子签收单已生成')
@@ -341,5 +386,30 @@ function submitSign() {
 .sign-tip {
   font-size: 12px;
   color: var(--text-secondary);
+  margin-top: 8px;
+}
+
+/* 模拟张贴码 */
+.scan-box {
+  margin-top: 16px;
+  padding: 12px;
+  background: var(--color-neutral-50);
+  border: 1px dashed var(--color-neutral-300);
+  border-radius: 8px;
+  text-align: center;
+}
+
+.scan-box__label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.scan-box__code {
+  font-family: Consolas, Menlo, monospace;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  color: var(--color-primary);
 }
 </style>

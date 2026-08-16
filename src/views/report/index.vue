@@ -1,5 +1,5 @@
 <template>
-  <div class="page" v-loading="loading">
+  <div class="page">
     <PageHeader title="报表中心" desc="按业务口径实时汇总（月度运营 / 客户经营 / 商品运量 / 场站吞吐），支持导出">
       <el-button :icon="Download" @click="exportCurrent">导出当前报表</el-button>
     </PageHeader>
@@ -109,32 +109,152 @@
           </div>
         </div>
       </el-tab-pane>
+
+      <!-- 成本利润 -->
+      <el-tab-pane label="成本利润" name="cost">
+        <div class="cost-tab">
+          <div class="stat-row">
+            <StatCard title="总成本" :value="formatMoney(cost.summary.cost)" icon="Money" color="var(--color-danger)" :sub="cost.summary.trips + ' 个完成车次'" />
+            <StatCard title="总收入" :value="formatMoney(cost.summary.revenue)" icon="Coin" color="var(--color-success)" sub="调度单约定运费" />
+            <StatCard
+              title="毛利"
+              :value="formatMoney(cost.summary.profit)"
+              icon="TrendCharts"
+              :color="cost.summary.profit >= 0 ? 'var(--color-primary)' : 'var(--color-danger)'"
+            />
+            <StatCard
+              title="毛利率"
+              :value="cost.summary.margin"
+              unit="%"
+              icon="PieChart"
+              :color="cost.summary.margin >= 0 ? 'var(--color-success)' : 'var(--color-danger)'"
+            />
+          </div>
+
+          <el-row :gutter="16">
+            <el-col :span="10">
+              <ChartCard title="月度成本与收入（万元）" :option="costOption" height="300" />
+            </el-col>
+            <el-col :span="14">
+              <div class="panel">
+                <div class="panel__header"><span class="panel__title">月度成本利润</span></div>
+                <div class="panel__body">
+                  <el-table :data="cost.byMonth" stripe size="small">
+                    <el-table-column prop="month" label="月份" width="100" />
+                    <el-table-column prop="trips" label="完成车次" width="90" align="right" />
+                    <el-table-column label="成本" width="110" align="right">
+                      <template #default="{ row }"><span class="num">{{ formatMoney(row.cost) }}</span></template>
+                    </el-table-column>
+                    <el-table-column label="收入" width="110" align="right">
+                      <template #default="{ row }"><span class="num">{{ formatMoney(row.revenue) }}</span></template>
+                    </el-table-column>
+                    <el-table-column label="毛利" width="110" align="right">
+                      <template #default="{ row }">
+                        <span class="num" :class="row.profit < 0 ? 'text-danger' : 'amount'">{{ formatMoney(row.profit) }}</span>
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="毛利率" width="80" align="right">
+                      <template #default="{ row }">
+                        <span :class="{ 'text-danger': row.margin < 0 }">{{ row.margin }}%</span>
+                      </template>
+                    </el-table-column>
+                  </el-table>
+                </div>
+              </div>
+            </el-col>
+          </el-row>
+
+          <el-row :gutter="16">
+            <el-col :span="12">
+              <div class="panel">
+                <div class="panel__header">
+                  <span class="panel__title">单车效益</span>
+                  <el-tag size="small" type="info" effect="plain">公路车次 · 按车次降序</el-tag>
+                </div>
+                <div class="panel__body">
+                  <el-table :data="cost.byVehicle" stripe size="small" max-height="360">
+                    <el-table-column prop="plate" label="车牌" width="110" />
+                    <el-table-column prop="type" label="车型" width="110" />
+                    <el-table-column prop="trips" label="车次" width="70" align="right" />
+                    <el-table-column label="成本" width="100" align="right">
+                      <template #default="{ row }"><span class="num">{{ formatMoney(row.cost) }}</span></template>
+                    </el-table-column>
+                    <el-table-column label="收入" width="100" align="right">
+                      <template #default="{ row }"><span class="num">{{ formatMoney(row.revenue) }}</span></template>
+                    </el-table-column>
+                    <el-table-column label="毛利" width="100" align="right">
+                      <template #default="{ row }">
+                        <span class="num" :class="row.profit < 0 ? 'text-danger' : 'amount'">{{ formatMoney(row.profit) }}</span>
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="毛利率" width="80" align="right">
+                      <template #default="{ row }">
+                        <span :class="{ 'text-danger': row.margin < 0 }">{{ row.margin }}%</span>
+                      </template>
+                    </el-table-column>
+                  </el-table>
+                </div>
+              </div>
+            </el-col>
+            <el-col :span="12">
+              <div class="panel">
+                <div class="panel__header">
+                  <span class="panel__title">单线效益</span>
+                  <el-tag size="small" type="info" effect="plain">按线路车次降序</el-tag>
+                </div>
+                <div class="panel__body">
+                  <el-table :data="cost.byRoute" stripe size="small" max-height="360">
+                    <el-table-column prop="route" label="线路" min-width="180" show-overflow-tooltip />
+                    <el-table-column prop="trips" label="车次" width="70" align="right" />
+                    <el-table-column label="成本" width="100" align="right">
+                      <template #default="{ row }"><span class="num">{{ formatMoney(row.cost) }}</span></template>
+                    </el-table-column>
+                    <el-table-column label="收入" width="100" align="right">
+                      <template #default="{ row }"><span class="num">{{ formatMoney(row.revenue) }}</span></template>
+                    </el-table-column>
+                    <el-table-column label="毛利" width="100" align="right">
+                      <template #default="{ row }">
+                        <span class="num" :class="row.profit < 0 ? 'text-danger' : 'amount'">{{ formatMoney(row.profit) }}</span>
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="毛利率" width="80" align="right">
+                      <template #default="{ row }">
+                        <span :class="{ 'text-danger': row.margin < 0 }">{{ row.margin }}%</span>
+                      </template>
+                    </el-table-column>
+                  </el-table>
+                </div>
+              </div>
+            </el-col>
+          </el-row>
+        </div>
+      </el-tab-pane>
     </el-tabs>
   </div>
 </template>
 
 <script setup>
 defineOptions({ name: 'Report' })
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Download } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import ChartCard from '@/components/ChartCard.vue'
-import { monthlyReport, customerReport, commodityReport, terminalReport } from '@/mock/report'
+import StatCard from '@/components/StatCard.vue'
+import { monthlyReport, customerReport, commodityReport, terminalReport, costReport } from '@/mock/report'
 import { formatMoney, formatNum } from '@/utils'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
 
 const tokens = useTokens()
 
-const loading = ref(true)
-onMounted(() => setTimeout(() => (loading.value = false), 300))
 
 const activeTab = ref('monthly')
 const monthly = computed(() => monthlyReport())
 const customer = computed(() => customerReport())
 const commodity = computed(() => commodityReport())
 const terminal = computed(() => terminalReport())
+const cost = computed(() => costReport())
 
 const monthlyOption = computed(() => ({
   tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
@@ -170,6 +290,40 @@ const monthlyOption = computed(() => ({
   ]
 }))
 
+const costOption = computed(() => ({
+  tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+  legend: { data: ['成本', '收入'], bottom: 0 },
+  grid: { left: 55, right: 20, top: 30, bottom: 40 },
+  xAxis: {
+    type: 'category',
+    data: cost.value.byMonth.map((m) => m.month),
+    axisLine: { lineStyle: { color: tokens.border } },
+    axisLabel: { color: tokens.info }
+  },
+  yAxis: {
+    type: 'value',
+    name: '万元',
+    splitLine: { lineStyle: { color: tokens.neutral100 } },
+    axisLabel: { color: tokens.info }
+  },
+  series: [
+    {
+      name: '成本',
+      type: 'bar',
+      data: cost.value.byMonth.map((m) => Math.round(m.cost / 10000)),
+      itemStyle: { color: tokens.danger, borderRadius: [4, 4, 0, 0] },
+      barWidth: 18
+    },
+    {
+      name: '收入',
+      type: 'bar',
+      data: cost.value.byMonth.map((m) => Math.round(m.revenue / 10000)),
+      itemStyle: { color: tokens.success, borderRadius: [4, 4, 0, 0] },
+      barWidth: 18
+    }
+  ]
+}))
+
 /* ===== 导出当前页签 ===== */
 const exportConfigs = {
   monthly: {
@@ -191,6 +345,15 @@ const exportConfigs = {
     title: '场站吞吐报表',
     headers: ['场站', '装货车次', '装货量(吨)', '卸货车次', '卸货量(吨)'],
     rows: () => terminal.value.map((t) => [t.name, t.loadTrips, t.loadVolume, t.unloadTrips, t.unloadVolume])
+  },
+  cost: {
+    title: '成本利润报表',
+    headers: ['维度', '名称', '完成车次', '成本(元)', '收入(元)', '毛利(元)', '毛利率(%)'],
+    rows: () => [
+      ...cost.value.byMonth.map((m) => ['月度', m.month, m.trips, m.cost, m.revenue, m.profit, m.margin]),
+      ...cost.value.byRoute.map((r) => ['单线', r.route, r.trips, r.cost, r.revenue, r.profit, r.margin]),
+      ...cost.value.byVehicle.map((v) => ['单车', v.plate, v.trips, v.cost, v.revenue, v.profit, v.margin])
+    ]
   }
 }
 
@@ -212,6 +375,18 @@ function exportCurrent() {
 </script>
 
 <style scoped>
+.cost-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.stat-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
 .amount {
   font-weight: 600;
   color: var(--text-primary);

@@ -53,6 +53,19 @@ db.contracts = Array.from({ length: 40 }, (_, i) => {
     signDate: start.subtract(7, 'day').format('YYYY-MM-DD'),
     status,
     progress: status === 'executing' ? randInt(15, 88) : status === 'completed' ? 100 : 0,
+    // 审批链（多级审批）：待审批→首级待审；已执行/已完成/已终止→全链通过（历史数据）；草稿→未提交
+    approvalChain:
+      status === 'pending'
+        ? [
+            { level: 1, name: '部门审批', status: 'pending', approver: '', comment: '', time: null },
+            { level: 2, name: '公司审批', status: 'waiting', approver: '', comment: '', time: null }
+          ]
+        : status === 'draft'
+          ? null
+          : [
+              { level: 1, name: '部门审批', status: 'approved', approver: '部门负责人', comment: '同意', time: `${start.format('YYYY-MM-DD')} 10:00` },
+              { level: 2, name: '公司审批', status: 'approved', approver: '公司领导', comment: '同意', time: `${start.format('YYYY-MM-DD')} 16:00` }
+            ],
     contact: shipper.contact,
     phone: randomPhone(),
     remark: '按月度计划分批执行，运费按月结算。'

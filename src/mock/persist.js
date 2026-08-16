@@ -11,7 +11,9 @@ import { db } from './base'
 const KEY = 'blms_db_snapshot'
 // 结构升级（调度单增加 accepted、事故与异常单建立关联等）后递增，自动丢弃旧快照
 // v3：角色权限表数据化（db.rolePerms）、结算调整记录（adjustments/settleApplied）、种子磅单皮重按车辆派生
-const VERSION = 3
+// v4：围栏参数（db.fenceConfig）、围栏事件记忆（dispatch.fenceAlerted）、合同审批链（approvalChain）、
+//     培训参训司机（training.driverIds）、客户角色与门户账号（roles/users）、客户确认对账（settlement.customerConfirmed）
+const VERSION = 4
 
 const canUse = typeof window !== 'undefined' && !!window.localStorage
 
