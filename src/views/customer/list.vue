@@ -2,6 +2,7 @@
   <div class="page">
     <PageHeader title="客户管理" desc="发货方 / 收货方客户档案、信用等级与业务往来">
       <el-button :icon="Download" @click="exportCsv">导出</el-button>
+      <el-button v-if="can('customer')" :icon="Upload" @click="openImport">导入</el-button>
     </PageHeader>
 
     <div class="stat-row">
@@ -105,6 +106,16 @@
         </div>
       </div>
     </div>
+
+    <!-- 数据导入（Excel/CSV） -->
+    <ImportDialog
+      v-model="importVisible"
+      title="导入客户"
+      :columns="importColumns"
+      :sample="importSample"
+      :result="importResult"
+      @confirm="doImport"
+    />
   </div>
 </template>
 
@@ -113,11 +124,12 @@ defineOptions({ name: 'Customer' })
 import { ref, reactive, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Download, Refresh } from '@element-plus/icons-vue'
+import { Search, Download, Refresh, Upload } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
+import ImportDialog from '@/components/ImportDialog.vue'
 import { db } from '@/mock'
-import { logAction } from '@/mock/flow'
+import { logAction, importCustomers } from '@/mock/flow'
 import { formatMoney } from '@/utils'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
@@ -199,6 +211,31 @@ function toggleStatus(row) {
     logAction('客户管理', '客户解冻', `客户 ${row.name} 解冻，恢复合作`)
     ElMessage.success('客户已解冻')
   }
+}
+
+/* ===== 数据导入（Excel/CSV → flow.importCustomers） ===== */
+const importVisible = ref(false)
+const importResult = ref(null)
+const importColumns = [
+  { key: 'name', label: '客户名称', required: true },
+  { key: 'type', label: '类型(发货方/收货方/双向客户)' },
+  { key: 'level', label: '等级(A/B/C)' },
+  { key: 'region', label: '区域' },
+  { key: 'contact', label: '联系人' },
+  { key: 'phone', label: '电话' },
+  { key: 'creditLimit', label: '授信额度(元)' }
+]
+const importSample = [['晋秀煤业集团', '发货方', 'A', '山西', '王经理', '13900000000', 5000000]]
+
+function openImport() {
+  importResult.value = null
+  importVisible.value = true
+}
+
+function doImport(rows) {
+  importResult.value = importCustomers(rows)
+  const r = importResult.value
+  ElMessage.success(`导入完成：新增 ${r.created.length} 条，跳过重复 ${r.skipped.length} 条${r.errors.length ? `，失败 ${r.errors.length} 条` : ''}`)
 }
 
 function exportCsv() {

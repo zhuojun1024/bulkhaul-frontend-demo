@@ -124,7 +124,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, Position } from '@element-plus/icons-vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
-import { createDispatches, creditCheck, isRoadMode } from '@/mock/flow'
+import { createDispatches, creditCheck, isRoadMode, vehicleInspectionExpired } from '@/mock/flow'
 import { formatNum } from '@/utils'
 import { usePerm } from '@/permission'
 
@@ -173,9 +173,15 @@ const selectedVehicles = ref([])
 const busyVehicleIds = computed(() =>
   new Set(db.dispatches.filter((d) => ['pending', 'loading', 'exception'].includes(d.status)).map((d) => d.vehicleId))
 )
+/** 可选车辆：空闲 + 非铁路/水运车型 + 无未完结车次 + 年检未过期（与 createDispatches 守卫同口径） */
 const idleVehicles = computed(() =>
   db.vehicles.filter(
-    (v) => v.status === 'idle' && v.type !== '铁路敞车' && v.type !== '散货船' && !busyVehicleIds.value.has(v.id)
+    (v) =>
+      v.status === 'idle' &&
+      v.type !== '铁路敞车' &&
+      v.type !== '散货船' &&
+      !vehicleInspectionExpired(v) &&
+      !busyVehicleIds.value.has(v.id)
   )
 )
 const isRoad = computed(() => isRoadMode(plan.value?.mode))

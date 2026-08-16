@@ -2,6 +2,7 @@
   <div class="page">
     <PageHeader title="车辆管理" desc="自有与外协运力资源管理，含维保与年检状态跟踪">
       <el-button :icon="Download" @click="exportCsv">导出</el-button>
+      <el-button v-if="can('vehicle')" :icon="Upload" @click="openImport">导入</el-button>
     </PageHeader>
 
     <div class="stat-row">
@@ -101,6 +102,16 @@
         </div>
       </div>
     </div>
+
+    <!-- 数据导入（Excel/CSV） -->
+    <ImportDialog
+      v-model="importVisible"
+      title="导入车辆"
+      :columns="importColumns"
+      :sample="importSample"
+      :result="importResult"
+      @confirm="doImport"
+    />
   </div>
 </template>
 
@@ -109,11 +120,12 @@ defineOptions({ name: 'Vehicle' })
 import { ref, reactive, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Download, Refresh } from '@element-plus/icons-vue'
+import { Search, Download, Refresh, Upload } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
+import ImportDialog from '@/components/ImportDialog.vue'
 import { db } from '@/mock'
-import { logAction } from '@/mock/flow'
+import { logAction, importVehicles } from '@/mock/flow'
 import { formatNum } from '@/utils'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
@@ -199,6 +211,29 @@ function backToService(row) {
     logAction('车辆管理', '车辆恢复', `车辆 ${row.plate} 维修完成，恢复空闲`)
     ElMessage.success(`${row.plate} 已恢复空闲`)
   }).catch(() => {})
+}
+
+/* ===== 数据导入（Excel/CSV → flow.importVehicles） ===== */
+const importVisible = ref(false)
+const importResult = ref(null)
+const importColumns = [
+  { key: 'plate', label: '车牌号', required: true },
+  { key: 'type', label: '类型' },
+  { key: 'capacity', label: '核定载重(吨)' },
+  { key: 'owner', label: '归属(自有/外协)' },
+  { key: 'fuelType', label: '燃料' }
+]
+const importSample = [['冀B·D12345', '重型半挂车', 35, '外协', '柴油']]
+
+function openImport() {
+  importResult.value = null
+  importVisible.value = true
+}
+
+function doImport(rows) {
+  importResult.value = importVehicles(rows)
+  const r = importResult.value
+  ElMessage.success(`导入完成：新增 ${r.created.length} 条，跳过重复 ${r.skipped.length} 条${r.errors.length ? `，失败 ${r.errors.length} 条` : ''}`)
 }
 
 function exportCsv() {

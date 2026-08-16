@@ -13,7 +13,9 @@ const KEY = 'blms_db_snapshot'
 // v3：角色权限表数据化（db.rolePerms）、结算调整记录（adjustments/settleApplied）、种子磅单皮重按车辆派生
 // v4：围栏参数（db.fenceConfig）、围栏事件记忆（dispatch.fenceAlerted）、合同审批链（approvalChain）、
 //     培训参训司机（training.driverIds）、客户角色与门户账号（roles/users）、客户确认对账（settlement.customerConfirmed）
-const VERSION = 4
+// v5：客户运输需求（db.transportRequests）、客户发起需求权限（customer-request）
+// v6：司机账号（司机角色 users，手机号登录）、消息中心（db.messages）、银行流水（db.bankRecords）
+const VERSION = 6
 
 const canUse = typeof window !== 'undefined' && !!window.localStorage
 

@@ -33,6 +33,7 @@ export const db = reactive({
   vehicles: [],
   drivers: [],
   contracts: [],
+  transportRequests: [], // 客户运输需求（门户发起 → 合同草稿）
   plans: [],
   dispatches: [],
   weighings: [],
@@ -40,7 +41,9 @@ export const db = reactive({
   inventories: [],
   settlements: [],
   payments: [],
+  bankRecords: [], // 银行流水（对账核销：unmatched 待核销 / matched 已核销）
   invoices: [],
+  messages: [], // 消息中心（flow 事件驱动 + 种子）
   exceptions: [],
   accidents: [],
   trainings: [],

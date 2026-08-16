@@ -1,7 +1,10 @@
 <template>
   <div class="page">
-    <PageHeader title="客户门户" desc="查看本方合同执行、账单对账与回款进度，并对对账结果进行确认">
+    <PageHeader title="客户门户" desc="查看本方合同执行、账单对账与回款进度，确认对账结果，或发起运输需求">
       <el-tag v-if="customer" effect="light" round>{{ customer.name }}</el-tag>
+      <el-button v-if="customer && can('customer-request')" type="primary" :icon="Plus" @click="openRequest">
+        发起运输需求
+      </el-button>
     </PageHeader>
 
     <el-empty v-if="!customer" description="当前账号未绑定客户，无法访问门户" :image-size="80" />
@@ -50,6 +53,49 @@
             </el-table-column>
           </el-table>
           <el-empty v-if="!contracts.length" description="暂无合同" :image-size="60" />
+        </div>
+      </div>
+
+      <!-- 我的运输需求 -->
+      <div class="panel">
+        <div class="panel__header">
+          <span class="panel__title">我的运输需求</span>
+          <el-tag size="small" type="info" effect="plain">共 {{ myRequests.length }} 条</el-tag>
+        </div>
+        <div class="panel__body">
+          <el-table :data="myRequests" size="small" stripe>
+            <el-table-column prop="id" label="需求编号" width="100" />
+            <el-table-column label="商品" width="100" align="center">
+              <template #default="{ row }">{{ find.commodity(row.commodityId)?.name }}</template>
+            </el-table-column>
+            <el-table-column label="数量(吨)" width="100" align="right">
+              <template #default="{ row }">{{ formatNum(row.quantity) }}</template>
+            </el-table-column>
+            <el-table-column label="线路" min-width="200" show-overflow-tooltip>
+              <template #default="{ row }">
+                {{ find.terminal(row.loadTerminalId)?.name }} → {{ find.terminal(row.unloadTerminalId)?.name }}
+              </template>
+            </el-table-column>
+            <el-table-column prop="mode" label="方式" width="90" align="center" />
+            <el-table-column label="期望单价" width="100" align="right">
+              <template #default="{ row }">{{ row.unitPrice ? row.unitPrice + ' 元/吨' : '—' }}</template>
+            </el-table-column>
+            <el-table-column prop="expectDate" label="期望开始" width="110" />
+            <el-table-column prop="createTime" label="提交时间" width="140" />
+            <el-table-column label="状态" width="100" align="center">
+              <template #default="{ row }">
+                <StatusTag :status="row.status" :map="requestStatusMap" />
+              </template>
+            </el-table-column>
+            <el-table-column label="处理结果" min-width="160" show-overflow-tooltip>
+              <template #default="{ row }">
+                <span v-if="row.status === 'converted'" class="text-success">已转合同 {{ row.contractId }}</span>
+                <span v-else-if="row.status === 'rejected'" class="text-danger">{{ row.rejectReason }}</span>
+                <span v-else class="text-muted">待平台处理</span>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-empty v-if="!myRequests.length" description="暂无运输需求，点击右上角「发起运输需求」" :image-size="60" />
         </div>
       </div>
 
@@ -142,22 +188,117 @@
           </div>
         </el-col>
       </el-row>
+
+      <!-- 发起运输需求 -->
+      <el-dialog v-model="requestDialog" title="发起运输需求" width="560px">
+        <el-alert
+          title="提交后由平台销售审核，通过后将为您生成运输合同草稿并进入审批流程"
+          type="info"
+          :closable="false"
+          show-icon
+        />
+        <el-form label-width="100px" style="margin-top: 16px">
+          <el-row :gutter="12">
+            <el-col :span="12">
+              <el-form-item label="商品" required>
+                <el-select v-model="requestForm.commodityId" filterable placeholder="请选择" style="width: 100%">
+                  <el-option
+                    v-for="c in db.commodities.filter((x) => x.status === 'active')"
+                    :key="c.id"
+                    :label="c.name + '（' + c.category + '）'"
+                    :value="c.id"
+                  />
+                </el-select>
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="计划数量(吨)" required>
+                <el-input-number v-model="requestForm.quantity" :min="1" :step="35" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="装货场站" required>
+                <el-select v-model="requestForm.loadTerminalId" filterable placeholder="请选择" style="width: 100%">
+                  <el-option
+                    v-for="t in db.terminals.filter((x) => x.type !== 'unloading' && x.status === 'operating')"
+                    :key="t.id"
+                    :label="t.name"
+                    :value="t.id"
+                  />
+                </el-select>
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="卸货场站" required>
+                <el-select v-model="requestForm.unloadTerminalId" filterable placeholder="请选择" style="width: 100%">
+                  <el-option
+                    v-for="t in db.terminals.filter((x) => x.type !== 'loading' && x.status === 'operating')"
+                    :key="t.id"
+                    :label="t.name"
+                    :value="t.id"
+                  />
+                </el-select>
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="收货方" required>
+                <el-select v-model="requestForm.consigneeId" filterable placeholder="请选择" style="width: 100%">
+                  <el-option
+                    v-for="c in db.customers.filter((x) => (x.type === 'consignee' || x.type === 'both') && x.status === 'active')"
+                    :key="c.id"
+                    :label="c.name"
+                    :value="c.id"
+                  />
+                </el-select>
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="运输方式" required>
+                <el-select v-model="requestForm.mode" style="width: 100%">
+                  <el-option v-for="m in modes" :key="m" :label="m" :value="m" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="期望开始日期">
+                <el-date-picker v-model="requestForm.expectDate" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="期望单价">
+                <el-input-number v-model="requestForm.unitPrice" :min="0" :step="1" :precision="1" placeholder="元/吨（选填）" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="24">
+              <el-form-item label="备注">
+                <el-input v-model="requestForm.remark" type="textarea" :rows="2" maxlength="200" show-word-limit placeholder="货物特性、装卸要求等（选填）" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+        </el-form>
+        <template #footer>
+          <el-button @click="requestDialog = false">取消</el-button>
+          <el-button type="primary" @click="submitRequest">提交需求</el-button>
+        </template>
+      </el-dialog>
     </template>
   </div>
 </template>
 
 <script setup>
 defineOptions({ name: 'Portal' })
-import { computed } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Plus } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import StatusTag from '@/components/StatusTag.vue'
-import { db } from '@/mock'
-import { customerConfirm, outstandingOf } from '@/mock/flow'
+import { db, find } from '@/mock'
+import { customerConfirm, outstandingOf, submitTransportRequest } from '@/mock/flow'
 import { useUserStore } from '@/store'
 import { usePerm } from '@/permission'
 import { formatMoney, formatNum } from '@/utils'
+import dayjs from 'dayjs'
 
 const userStore = useUserStore()
 const { can } = usePerm()
@@ -167,6 +308,66 @@ const user = computed(() => db.users.find((u) => u.username === userStore.userIn
 const customer = computed(() => (user.value?.customerId ? db.customers.find((c) => c.id === user.value.customerId) : null))
 
 const contracts = computed(() => db.contracts.filter((c) => c.shipperId === customer.value?.id))
+
+/** 本客户发起的运输需求（新提交在前） */
+const myRequests = computed(() =>
+  db.transportRequests
+    .filter((r) => r.customerId === customer.value?.id)
+    .sort((a, b) => (a.createTime < b.createTime ? 1 : -1))
+)
+const requestStatusMap = {
+  pending: { label: '待处理', type: 'warning' },
+  converted: { label: '已转合同', type: 'success' },
+  rejected: { label: '已驳回', type: 'danger' }
+}
+
+/* ===== 发起运输需求 ===== */
+const modes = ['公路', '铁路', '水运', '多式联运', '管道']
+const requestDialog = ref(false)
+const requestForm = reactive({
+  commodityId: '',
+  quantity: 350,
+  loadTerminalId: '',
+  unloadTerminalId: '',
+  consigneeId: '',
+  mode: '公路',
+  expectDate: dayjs().add(14, 'day').format('YYYY-MM-DD'),
+  unitPrice: null,
+  remark: ''
+})
+
+function openRequest() {
+  Object.assign(requestForm, {
+    commodityId: '',
+    quantity: 350,
+    loadTerminalId: '',
+    unloadTerminalId: '',
+    consigneeId: '',
+    mode: '公路',
+    expectDate: dayjs().add(14, 'day').format('YYYY-MM-DD'),
+    unitPrice: null,
+    remark: ''
+  })
+  requestDialog.value = true
+}
+
+function submitRequest() {
+  if (!requestForm.commodityId || !requestForm.loadTerminalId || !requestForm.unloadTerminalId || !requestForm.consigneeId) {
+    ElMessage.warning('请完整填写商品、装/卸货场站与收货方')
+    return
+  }
+  if (requestForm.loadTerminalId === requestForm.unloadTerminalId) {
+    ElMessage.warning('装货场站与卸货场站不能相同')
+    return
+  }
+  const r = submitTransportRequest(customer.value.id, requestForm)
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
+  requestDialog.value = false
+  ElMessage.success(`运输需求 ${r.id} 已提交，请等待平台处理`)
+}
 const executingCount = computed(() => contracts.value.filter((c) => c.status === 'executing').length)
 /** 累计运量：按实际已完成车次运量汇总（与客户详情同口径） */
 const totalVolume = computed(() => {
@@ -251,5 +452,13 @@ const invoiceStatusMap = {
 
 .text-muted {
   color: var(--text-secondary);
+}
+
+.text-success {
+  color: var(--color-success);
+}
+
+.text-danger {
+  color: var(--color-danger);
 }
 </style>

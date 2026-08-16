@@ -13,6 +13,7 @@
  *  weighing   磅单补录                       warehouse  库存锁定/解锁/临期
  *  vehicle    车辆报修/恢复                  driver     司机停用/启用
  *  customer   客户冻结/解冻                  customer-confirm 客户确认对账（门户）
+ *  customer-request 客户发起运输需求（门户）
  */
 /** 注意：路径必须与 router 实际注册路径一致（如 /contract，而非 /transport/contract） */
 export const ROLE_MENUS = {
@@ -20,6 +21,7 @@ export const ROLE_MENUS = {
   只读用户: null,
   调度员: [
     '/workbench',
+    '/message',
     '/monitor',
     '/contract',
     '/plan',
@@ -31,10 +33,11 @@ export const ROLE_MENUS = {
     '/terminal',
     '/terminal/weighing'
   ],
-  结算专员: ['/workbench', '/monitor', '/contract', '/customer', '/settlement', '/settlement/invoice', '/report'],
-  场站操作员: ['/workbench', '/dispatch', '/terminal', '/terminal/weighing', '/warehouse', '/warehouse/inventory'],
-  安全管理员: ['/workbench', '/dispatch', '/exception', '/safety'],
-  客户: ['/workbench', '/portal']
+  结算专员: ['/workbench', '/message', '/monitor', '/contract', '/customer', '/settlement', '/settlement/invoice', '/report'],
+  场站操作员: ['/workbench', '/message', '/dispatch', '/terminal', '/terminal/weighing', '/warehouse', '/warehouse/inventory'],
+  安全管理员: ['/workbench', '/message', '/dispatch', '/exception', '/safety'],
+  客户: ['/workbench', '/portal', '/message'],
+  司机: ['/workbench']
 }
 
 export const ROLE_ACTIONS = {
@@ -44,12 +47,14 @@ export const ROLE_ACTIONS = {
   结算专员: ['settlement', 'invoice', 'customer'],
   场站操作员: ['dispatch', 'weighing', 'warehouse'],
   安全管理员: ['dispatch', 'exception', 'safety'],
-  客户: ['customer-confirm']
+  客户: ['customer-confirm', 'customer-request'],
+  司机: []
 }
 
 /** 菜单权限选项（角色管理页勾选用，与 router 注册路径一致） */
 export const MENU_OPTIONS = [
   { path: '/workbench', label: '工作台' },
+  { path: '/message', label: '消息中心' },
   { path: '/portal', label: '客户门户' },
   { path: '/monitor', label: '数据看板' },
   { path: '/contract', label: '合同管理' },
@@ -89,5 +94,6 @@ export const ACTION_OPTIONS = [
   { code: 'vehicle', label: '车辆报修/恢复' },
   { code: 'driver', label: '司机停用/启用' },
   { code: 'customer', label: '客户冻结/解冻' },
-  { code: 'customer-confirm', label: '客户确认对账（门户）' }
+  { code: 'customer-confirm', label: '客户确认对账（门户）' },
+  { code: 'customer-request', label: '客户发起运输需求（门户）' }
 ]

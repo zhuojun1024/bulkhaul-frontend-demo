@@ -10,7 +10,8 @@ db.roles = [
   { id: 'R004', name: '场站操作员', code: 'terminal', userCount: 4, description: '场站/磅单/仓储', builtIn: false },
   { id: 'R005', name: '安全管理员', code: 'safety', userCount: 1, description: '安全/异常/事故', builtIn: false },
   { id: 'R006', name: '只读用户', code: 'viewer', userCount: 0, description: '仅查看权限', builtIn: false },
-  { id: 'R007', name: '客户', code: 'customer', userCount: 0, description: '客户门户：查看合同/账单/回款并确认对账', builtIn: false }
+  { id: 'R007', name: '客户', code: 'customer', userCount: 0, description: '客户门户：查看合同/账单/回款并确认对账', builtIn: false },
+  { id: 'R008', name: '司机', code: 'driver', userCount: 0, description: '司机端：接单/扫码确认/电子签收/收入结算（手机号登录）', builtIn: false }
 ]
 
 /** 角色权限表（数据化）：内置角色按权限表种子；角色管理页的修改写入此处并随快照持久化 */
@@ -78,6 +79,25 @@ db.users.push(
     createdAt: dayjs(NOW).subtract(randInt(30, 800), 'day').format('YYYY-MM-DD')
   }
 )
+
+/** 司机账号（G5 司机账号体系）：每个司机一个平台账号，手机号即登录账号，绑定 driverId
+ *  对接后由司机独立鉴权（手机号+短信）承接，此处为静态演示口径 */
+db.drivers.forEach((d, i) => {
+  db.users.push({
+    id: `U${String(19 + i).padStart(3, '0')}`,
+    username: d.phone,
+    name: d.name,
+    role: '司机',
+    driverId: d.id,
+    password: '123456',
+    phone: d.phone,
+    email: '',
+    status: d.status === 'disabled' ? 'disabled' : 'active',
+    lastLogin: d.joinDate,
+    createdAt: d.joinDate
+  })
+})
+db.roles.find((r) => r.name === '司机').userCount = db.drivers.length
 
 /** 平台公告（数据源化：由 mock 统一提供，后续可替换为真实接口） */
 db.announcements = [

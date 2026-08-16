@@ -60,7 +60,7 @@ export const useUserStore = defineStore('user', () => {
   const savedUser = savedUsername ? db.users.find((u) => u.username === savedUsername && u.status === 'active') : null
   const userInfo = reactive(
     savedUser
-      ? { name: savedUser.name, username: savedUser.username, role: savedUser.role, phone: savedUser.phone }
+      ? { name: savedUser.name, username: savedUser.username, role: savedUser.role, phone: savedUser.phone, driverId: savedUser.driverId || '' }
       : {}
   )
 
@@ -72,6 +72,8 @@ export const useUserStore = defineStore('user', () => {
     userInfo.username = user.username
     userInfo.role = user.role
     userInfo.phone = user.phone
+    // 司机账号绑定司机档案（司机端锁定账号用）
+    userInfo.driverId = user.driverId || ''
     return Promise.resolve(true)
   }
 
@@ -83,6 +85,7 @@ export const useUserStore = defineStore('user', () => {
     userInfo.username = ''
     userInfo.role = ''
     userInfo.phone = ''
+    userInfo.driverId = ''
   }
 
   return { token, userInfo, login, logout }

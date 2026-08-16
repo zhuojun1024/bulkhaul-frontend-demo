@@ -1,13 +1,17 @@
 <template>
   <div class="driver-app">
     <div class="driver-app__frame">
-      <!-- 顶部：模拟司机登录 -->
+      <!-- 顶部：司机账号登录态（司机账号锁定本人；其他角色为演示切换） -->
       <div class="driver-app__header">
         <div class="driver-app__title">
           <el-icon :size="18"><Van /></el-icon>
           司机端
         </div>
-        <el-select v-model="driverId" size="small" style="width: 170px" placeholder="选择司机（模拟登录）">
+        <template v-if="isDriverUser">
+          <span class="driver-app__account">{{ driver?.name }}</span>
+          <el-button size="small" :icon="SwitchButton" @click="logout">切换账号</el-button>
+        </template>
+        <el-select v-else v-model="driverId" size="small" style="width: 170px" placeholder="选择司机（模拟登录）">
           <el-option v-for="d in driverOptions" :key="d.id" :label="d.name + '（' + d.phone.slice(0, 3) + '****' + d.phone.slice(-4) + '）'" :value="d.id" />
         </el-select>
       </div>
@@ -23,6 +27,28 @@
             <el-tag size="small" :type="driver.status === 'onduty' ? 'success' : 'info'" effect="light">
               {{ driver.status === 'onduty' ? '执行中' : driver.status === 'available' ? '空闲' : '休息' }}
             </el-tag>
+          </div>
+
+          <!-- 收入结算（司机分成与成本侧司机项同口径） -->
+          <div class="income-card">
+            <div class="income-card__head">
+              <span>收入结算</span>
+              <span class="income-card__total">本月 {{ formatMoney(monthIncome) }} · 累计 {{ formatMoney(totalIncome) }}（{{ myCompleted.length }} 趟）</span>
+            </div>
+            <div class="income-card__body">
+              <div v-for="d in incomeTrips" :key="d.id" class="income-row">
+                <span class="income-row__id">{{ d.id }}</span>
+                <span>{{ d.unloadTime ? d.unloadTime.slice(5, 10) : '—' }}</span>
+                <span>{{ d.quantity }} 吨</span>
+                <span class="income-row__amount num">+{{ formatMoney(driverIncomeOf(d)) }}</span>
+              </div>
+              <el-empty v-if="!myCompleted.length" description="暂无已完成趟次" :image-size="50" />
+              <div v-if="myCompleted.length > 5" class="income-more">
+                <el-button link type="primary" size="small" @click="showAllIncome = !showAllIncome">
+                  {{ showAllIncome ? '收起' : '展开全部 ' + myCompleted.length + ' 趟' }}
+                </el-button>
+              </div>
+            </div>
           </div>
 
           <!-- 任务卡 -->
@@ -129,9 +155,9 @@
 <script setup>
 defineOptions({ name: 'DriverApp' })
 import { ref, computed, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Van, CircleCheck, Aim } from '@element-plus/icons-vue'
+import { Van, CircleCheck, Aim, SwitchButton } from '@element-plus/icons-vue'
 import { db, find } from '@/mock'
 import {
   acceptDispatch,
@@ -141,12 +167,21 @@ import {
   loadCodeOf,
   unloadCodeOf,
   scanConfirmLoad,
-  scanConfirmUnload
+  scanConfirmUnload,
+  driverIncomeOf
 } from '@/mock/flow'
+import { formatMoney } from '@/utils'
+import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
+import { useUserStore } from '@/store'
 
 const tokens = useTokens()
 const route = useRoute()
+const router = useRouter()
+const userStore = useUserStore()
+
+/** 司机账号登录态（G5）：司机角色锁定本人账号，不可切换；其他角色保留演示切换 */
+const isDriverUser = computed(() => userStore.userInfo.role === '司机' && !!userStore.userInfo.driverId)
 
 /** 模拟司机登录：默认取 URL 传入的司机（从调度详情页进入），否则第一个可用司机 */
 const driverId = ref(route.query.driverId || '')
@@ -154,11 +189,21 @@ const focusId = ref(route.query.focus || '')
 const driverOptions = computed(() => db.drivers.filter((d) => d.status !== 'disabled'))
 
 onMounted(() => {
+  if (isDriverUser.value) {
+    driverId.value = userStore.userInfo.driverId
+    return
+  }
   if (!driverId.value || !db.drivers.some((d) => d.id === driverId.value)) {
     const first = db.drivers.find((d) => db.dispatches.some((x) => x.driverId === d.id))
     driverId.value = first ? first.id : driverOptions.value[0]?.id || ''
   }
 })
+
+/** 司机账号退出（切换账号） */
+function logout() {
+  userStore.logout()
+  router.push('/login')
+}
 
 const driver = computed(() => db.drivers.find((d) => d.id === driverId.value))
 
@@ -177,6 +222,21 @@ const statusMap = {
   completed: { label: '已完成', type: 'success' },
   exception: { label: '异常', type: 'danger' }
 }
+
+/* ===== 收入结算（已完成趟次，司机分成与成本侧司机项同口径） ===== */
+const myCompleted = computed(() =>
+  db.dispatches
+    .filter((d) => d.driverId === driverId.value && d.status === 'completed')
+    .sort((a, b) => (a.unloadTime < b.unloadTime ? 1 : -1))
+)
+const totalIncome = computed(() => myCompleted.value.reduce((s, d) => s + driverIncomeOf(d), 0))
+const monthIncome = computed(() =>
+  myCompleted.value
+    .filter((d) => d.unloadTime && dayjs(d.unloadTime).isSame(dayjs(), 'month'))
+    .reduce((s, d) => s + driverIncomeOf(d), 0)
+)
+const showAllIncome = ref(false)
+const incomeTrips = computed(() => (showAllIncome.value ? myCompleted.value : myCompleted.value.slice(0, 5)))
 
 function progressColor(status) {
   return { loading: tokens.warning, intransit: tokens.primary, unloading: tokens.warning, completed: tokens.success, exception: tokens.danger }[status] || tokens.neutral300
@@ -282,6 +342,12 @@ function submitSign() {
   gap: 8px;
 }
 
+.driver-app__account {
+  font-size: 13px;
+  font-weight: 600;
+  margin-right: 10px;
+}
+
 .driver-app__body {
   padding: 16px;
   display: flex;
@@ -381,6 +447,65 @@ function submitSign() {
   font-size: 12px;
   font-weight: 400;
   color: var(--text-secondary);
+}
+
+/* 收入结算 */
+.income-card {
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.income-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  background: var(--color-neutral-50);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.income-card__total {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+
+.income-card__body {
+  padding: 2px 12px 6px;
+}
+
+.income-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  border-bottom: 1px dashed var(--border-color);
+}
+
+.income-row:last-of-type {
+  border-bottom: none;
+}
+
+.income-row__id {
+  font-weight: 600;
+  color: var(--text-primary);
+  width: 92px;
+}
+
+.income-row__amount {
+  margin-left: auto;
+  font-weight: 600;
+  color: var(--color-success);
+}
+
+.income-more {
+  display: flex;
+  justify-content: center;
+  padding-top: 4px;
 }
 
 .sign-tip {

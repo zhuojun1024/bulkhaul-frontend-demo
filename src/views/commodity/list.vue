@@ -1,6 +1,7 @@
 <template>
   <div class="page">
     <PageHeader title="商品管理" desc="大宗商品目录、质量指标与参考运价维护">
+      <el-button :icon="Upload" @click="openImport">导入</el-button>
       <el-button type="primary" :icon="Plus" @click="openDialog()">新建商品</el-button>
     </PageHeader>
 
@@ -118,6 +119,16 @@
         <el-button type="primary" @click="save">保存</el-button>
       </template>
     </el-dialog>
+
+    <!-- 数据导入（Excel/CSV） -->
+    <ImportDialog
+      v-model="importVisible"
+      title="导入商品"
+      :columns="importColumns"
+      :sample="importSample"
+      :result="importResult"
+      @confirm="doImport"
+    />
   </div>
 </template>
 
@@ -125,10 +136,12 @@
 defineOptions({ name: 'Commodity' })
 import { ref, reactive, computed } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Search, Plus, Refresh } from '@element-plus/icons-vue'
+import { Search, Plus, Refresh, Upload } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
+import ImportDialog from '@/components/ImportDialog.vue'
 import { db } from '@/mock'
+import { importCommodities } from '@/mock/flow'
 
 
 const statusMap = {
@@ -214,6 +227,29 @@ function save() {
 function toggleStatus(row) {
   row.status = row.status === 'active' ? 'inactive' : 'active'
   ElMessage.success(`商品 ${row.name} 已${row.status === 'active' ? '启用' : '停用'}`)
+}
+
+/* ===== 数据导入（Excel/CSV → flow.importCommodities） ===== */
+const importVisible = ref(false)
+const importResult = ref(null)
+const importColumns = [
+  { key: 'name', label: '商品名称', required: true },
+  { key: 'category', label: '类别' },
+  { key: 'unit', label: '单位' },
+  { key: 'density', label: '密度(t/m³)' },
+  { key: 'price', label: '参考运价(元/吨)' }
+]
+const importSample = [['焦煤', '煤炭', '吨', 1.3, 620]]
+
+function openImport() {
+  importResult.value = null
+  importVisible.value = true
+}
+
+function doImport(rows) {
+  importResult.value = importCommodities(rows)
+  const r = importResult.value
+  ElMessage.success(`导入完成：新增 ${r.created.length} 条，跳过重复 ${r.skipped.length} 条${r.errors.length ? `，失败 ${r.errors.length} 条` : ''}`)
 }
 </script>
 

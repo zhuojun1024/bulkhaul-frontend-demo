@@ -6,6 +6,8 @@
       <el-button v-if="can('invoice')" :icon="Postcard" @click="$router.push('/settlement/invoice')">发票管理</el-button>
     </PageHeader>
 
+    <el-tabs v-model="activeTab" class="settlement-tabs">
+      <el-tab-pane label="结算账单" name="settlement">
     <div class="stat-row">
       <div
         v-for="s in statItems"
@@ -114,6 +116,68 @@
         </div>
       </div>
     </div>
+      </el-tab-pane>
+
+      <el-tab-pane :label="'银行对账（待核销 ' + unmatchedCount + '）'" name="bank">
+        <div class="panel">
+          <div class="panel__header">
+            <span class="panel__title">待核销银行流水</span>
+            <el-button
+              v-if="can('settlement')"
+              type="primary"
+              size="small"
+              :icon="MagicStick"
+              :disabled="!unmatched.length"
+              @click="autoMatch"
+            >
+              自动核销
+            </el-button>
+          </div>
+          <div class="panel__body">
+            <el-alert type="info" :closable="false" style="margin-bottom: 12px">
+              自动核销规则：流水对手方与金额同账单（已结算/逾期）未付余额精确一致时自动核销并登记收款；其余流水需手动核销或线下核实后登记。
+            </el-alert>
+            <el-table :data="unmatched" stripe size="small">
+              <el-table-column prop="id" label="流水号" width="100" />
+              <el-table-column prop="time" label="到账时间" width="150" />
+              <el-table-column prop="counterparty" label="对手方" min-width="180" show-overflow-tooltip />
+              <el-table-column label="金额(元)" width="140" align="right">
+                <template #default="{ row }">
+                  <span class="num amount">{{ formatMoney(row.amount) }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="summary" label="摘要" min-width="160" show-overflow-tooltip />
+              <el-table-column label="操作" width="90" align="center" fixed="right">
+                <template #default="{ row }">
+                  <el-button v-if="can('settlement')" link type="primary" size="small" @click="openMatch(row)">核销</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <el-empty v-if="!unmatched.length" description="暂无待核销银行流水" :image-size="60" />
+          </div>
+        </div>
+
+        <div class="panel" style="margin-top: 16px">
+          <div class="panel__header"><span class="panel__title">核销历史</span></div>
+          <div class="panel__body">
+            <el-table :data="matchedRecords" stripe size="small">
+              <el-table-column prop="id" label="流水号" width="100" />
+              <el-table-column prop="counterparty" label="对手方" min-width="180" show-overflow-tooltip />
+              <el-table-column label="金额(元)" width="140" align="right">
+                <template #default="{ row }">
+                  <span class="num">{{ formatMoney(row.amount) }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="核销账单" width="140">
+                <template #default="{ row }">{{ find.settlement(row.settlementId)?.billNo || '—' }}</template>
+              </el-table-column>
+              <el-table-column prop="matchTime" label="核销时间" width="150" />
+              <el-table-column prop="matchBy" label="核销人" width="110" />
+            </el-table>
+          </div>
+        </div>
+      </el-tab-pane>
+    </el-tabs>
 
     <!-- 生成结算单 -->
     <el-dialog v-model="genDialog" title="生成结算单" width="760px">
@@ -146,6 +210,37 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- 银行核销（手动：待核销流水 → 指定账单） -->
+    <el-dialog v-model="matchDialog" title="银行核销" width="480px">
+      <div v-if="matchTarget">
+        <el-descriptions :column="1" border size="small">
+          <el-descriptions-item label="流水号">{{ matchTarget.id }}</el-descriptions-item>
+          <el-descriptions-item label="对手方">{{ matchTarget.counterparty }}</el-descriptions-item>
+          <el-descriptions-item label="金额">
+            <span class="num amount">{{ formatMoney(matchTarget.amount) }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="摘要">{{ matchTarget.summary }}</el-descriptions-item>
+        </el-descriptions>
+        <el-form label-width="100px" style="margin-top: 16px">
+          <el-form-item label="核销账单">
+            <el-select v-model="matchSettlementId" placeholder="选择账单（该客户已结算/逾期且有未付余额）" style="width: 100%">
+              <el-option
+                v-for="s in matchCandidates"
+                :key="s.id"
+                :label="s.billNo + ' · 未付 ' + formatMoney(s.totalAmount - s.paidAmount)"
+                :value="s.id"
+              />
+            </el-select>
+          </el-form-item>
+        </el-form>
+        <div class="convert-tip">核销后将按流水金额登记收款（银行转账），流水金额超过账单未付余额将被拦截。</div>
+      </div>
+      <template #footer>
+        <el-button @click="matchDialog = false">取消</el-button>
+        <el-button type="primary" :disabled="!matchSettlementId" @click="doMatch">确认核销</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -154,11 +249,11 @@ defineOptions({ name: 'Settlement' })
 import { ref, reactive, computed, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Download, Refresh, Postcard, DocumentAdd } from '@element-plus/icons-vue'
+import { Search, Download, Refresh, Postcard, DocumentAdd, MagicStick } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
-import { settlementCandidates, generateSettlements, startReconcile as flowStartReconcile, confirmSettle, recalcSettlement } from '@/mock/flow'
+import { settlementCandidates, generateSettlements, startReconcile as flowStartReconcile, confirmSettle, recalcSettlement, autoMatchBank, matchBankRecord } from '@/mock/flow'
 import { usePerm } from '@/permission'
 import { formatMoney, formatNum } from '@/utils'
 import dayjs from 'dayjs'
@@ -181,6 +276,52 @@ const invoiceMap = { 'not-issued': '未开票', issued: '已开票', pending: '�
 const filter = reactive({ keyword: '', status: '', period: '' })
 const page = ref(1)
 const pageSize = ref(10)
+
+/* ===== 页签：结算账单 / 银行对账（G8 收款核销） ===== */
+const activeTab = ref('settlement')
+const unmatched = computed(() => db.bankRecords.filter((b) => b.status === 'unmatched'))
+const unmatchedCount = computed(() => unmatched.value.length)
+const matchedRecords = computed(() => db.bankRecords.filter((b) => b.status === 'matched'))
+
+const matchDialog = ref(false)
+const matchTarget = ref(null)
+const matchSettlementId = ref('')
+/** 核销候选：该流水对手方名下、已结算/逾期且有未付余额的账单 */
+const matchCandidates = computed(() => {
+  if (!matchTarget.value) return []
+  const c = db.customers.find((x) => x.name === matchTarget.value.counterparty)
+  return db.settlements.filter(
+    (s) => (s.status === 'settled' || s.status === 'overdue') && s.customerId === c?.id && s.totalAmount - s.paidAmount > 0
+  )
+})
+
+function openMatch(row) {
+  matchTarget.value = row
+  matchSettlementId.value = ''
+  matchDialog.value = true
+}
+
+function doMatch() {
+  const s = find.settlement(matchSettlementId.value)
+  const r = matchBankRecord(matchTarget.value, s)
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
+  matchDialog.value = false
+  ElMessage.success(`核销完成：${formatMoney(r.real)} 已核销至账单 ${s.billNo}`)
+}
+
+function autoMatch() {
+  ElMessageBox.confirm(
+    '自动核销将匹配「对手方 + 金额与账单未付余额精确一致」的流水并登记收款，其余流水保留待人工处理。确定执行？',
+    '自动核销',
+    { type: 'info', confirmButtonText: '确认核销' }
+  ).then(() => {
+    const matched = autoMatchBank()
+    ElMessage.success(matched.length ? `自动核销完成：${matched.length} 笔银行流水已核销` : '暂无满足自动核销条件的流水')
+  }).catch(() => {})
+}
 
 const periods = computed(() => [...new Set(db.settlements.map((s) => s.period))].sort().reverse())
 
@@ -379,5 +520,16 @@ function exportCsv() {
 
 .amount {
   font-weight: 600;
+}
+
+.settlement-tabs :deep(.el-tab-pane) {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.convert-tip {
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 </style>

@@ -64,10 +64,10 @@
     <div class="login__form-area">
       <div class="login__form-card">
         <h2 class="login__title">欢迎登录</h2>
-        <p class="login__tip">请使用平台账号登录，演示环境统一密码 123456</p>
+        <p class="login__tip">请使用平台账号或司机手机号登录，演示环境统一密码 123456</p>
         <el-form ref="formRef" :model="form" :rules="rules" size="large" @keyup.enter="onLogin">
           <el-form-item prop="username">
-            <el-input v-model="form.username" placeholder="用户名" :prefix-icon="User" clearable />
+            <el-input v-model="form.username" placeholder="用户名 / 司机手机号" :prefix-icon="User" clearable />
           </el-form-item>
           <el-form-item prop="password">
             <el-input v-model="form.password" type="password" placeholder="密码" :prefix-icon="Lock" show-password clearable />
@@ -86,6 +86,7 @@
         </el-form>
         <div class="login__footer">
           <el-tag size="small" effect="plain" type="info">演示账号：admin / 123456（调度员 user02、结算专员 user04、客户 customer01、只读 user16 等）</el-tag>
+          <el-tag size="small" effect="plain" type="info" style="margin-top: 6px">司机端：司机手机号 + 123456 登录（手机号见司机管理列表）</el-tag>
         </div>
       </div>
     </div>
@@ -128,10 +129,11 @@ const features = [
 function onLogin() {
   formRef.value.validate((valid) => {
     if (!valid) return
-    // 真实校验：用户名 + 密码 + 账号状态
-    const user = db.users.find((u) => u.username === form.username.trim())
+    // 真实校验：用户名/司机手机号 + 密码 + 账号状态（司机账号以手机号为登录名）
+    const id = form.username.trim()
+    const user = db.users.find((u) => u.username === id || u.phone === id)
     if (!user || user.password !== form.password) {
-      logAction('系统', '登录系统', `账号 ${form.username} 登录失败（用户名或密码错误）`, 'fail')
+      logAction('系统', '登录系统', `账号 ${id} 登录失败（用户名或密码错误）`, 'fail')
       ElMessage.error('用户名或密码错误')
       return
     }
@@ -145,8 +147,9 @@ function onLogin() {
     logAction('系统', '登录系统', `账号 ${user.username}（${user.role}）登录成功`)
     user.lastLogin = dayjs().format('YYYY-MM-DD HH:mm')
     ElMessage.success(`登录成功，欢迎回来，${user.name}`)
-    // 客户角色默认进入门户，其余角色进工作台
-    router.push(route.query.redirect || (user.role === '客户' ? '/portal' : '/workbench'))
+    // 司机角色进司机端，客户角色进门户，其余角色进工作台
+    const home = user.role === '司机' ? '/driver-app' : user.role === '客户' ? '/portal' : '/workbench'
+    router.push(route.query.redirect || home)
   })
 }
 </script>

@@ -9,14 +9,17 @@ import './terminal'
 import './vehicle'
 import './driver'
 import './contract'
+import './request' // 客户运输需求（依赖 customers/contracts）
 import './plan'
 import './dispatch'
 import './weighing'
 import './warehouse'
 import './exception'
 import './settlement' // 依赖异常单（异常损失扣减），需在 exception 之后
+import './bank' // 银行流水（依赖 settlements/payments，G8 收款核销）
 import './safety'
 import './system'
+import './message' // 消息中心种子（依赖 contracts/settlements/exceptions/dispatches，G6）
 import './flow' // 业务流转中枢：导入时执行全量校准（计划/合同进度对齐实际执行）
 import { dashboard, workbenchTodos, weatherOf } from './dashboard'
 import { hydrateDb } from './persist'

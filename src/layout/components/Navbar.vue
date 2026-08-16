@@ -47,6 +47,10 @@
                 <div class="navbar__notice-time">{{ item.time }}</div>
               </div>
             </div>
+            <div class="navbar__dropdown-more" @click="router.push('/message')">
+              查看全部消息
+              <el-icon :size="12"><ArrowRight /></el-icon>
+            </div>
           </el-dropdown-menu>
         </template>
       </el-dropdown>
@@ -81,11 +85,10 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import screenfull from 'screenfull'
 import { useAppStore, useUserStore } from '@/store'
 import { storeToRefs } from 'pinia'
-import { db, find } from '@/mock'
+import { db } from '@/mock'
 import { resetDb } from '@/mock/persist'
-import { fromNow } from '@/utils'
+import { markMessageRead } from '@/mock/flow'
 import { useTokens } from '@/utils/tokens'
-import dayjs from 'dayjs'
 
 const tokens = useTokens()
 
@@ -95,86 +98,36 @@ const appStore = useAppStore()
 const userStore = useUserStore()
 const { collapsed } = storeToRefs(appStore)
 
-/** 通知：待处理异常 + 待审批合同 + 待结算 */
-const noticeList = computed(() => {
-  const list = []
-  db.exceptions
-    .filter((e) => e.status !== 'closed')
-    .slice(0, 4)
-    .forEach((e) =>
-      list.push({
-        id: 'ex' + e.id,
-        icon: 'Warning',
-        color: e.level === 'high' ? tokens.danger : tokens.warning,
-        title: `异常单 ${e.id}：${e.description}`,
-        time: fromNow(e.occurTime),
-        path: '/exception'
-      })
-    )
-  db.contracts
-    .filter((c) => c.status === 'pending')
-    .slice(0, 2)
-    .forEach((c) =>
-      list.push({
-        id: 'ct' + c.id,
-        icon: 'Document',
-        color: tokens.primary,
-        title: `合同 ${c.id} 待审批：${c.name}`,
-        time: fromNow(c.signDate),
-        path: '/contract'
-      })
-    )
-  db.settlements
-    .filter((s) => s.status === 'overdue')
-    .slice(0, 2)
-    .forEach((s) =>
-      list.push({
-        id: 'st' + s.id,
-        icon: 'Wallet',
-        color: tokens.danger,
-        title: `结算单 ${s.billNo} 已逾期，请及时处理`,
-        time: fromNow(s.period + '-01'),
-        path: '/settlement'
-      })
-    )
-  // 到站提醒：在途且 3 小时内到达
-  db.dispatches
-    .filter((d) => d.status === 'intransit' && d.eta && dayjs(d.eta).diff(dayjs(), 'hour') <= 3)
-    .slice(0, 2)
-    .forEach((d) =>
-      list.push({
-        id: 'ar' + d.id,
-        icon: 'Position',
-        color: tokens.success,
-        title: `车辆 ${find.vehicle(d.vehicleId)?.plate || d.vehicleId} 预计 ${d.eta.slice(11, 16)} 到达卸货场站`,
-        time: fromNow(d.eta),
-        path: '/dispatch'
-      })
-    )
-  // 待办提醒：待装货调度单
-  const pendingCount = db.dispatches.filter((d) => d.status === 'pending').length
-  if (pendingCount) {
-    list.push({
-      id: 'pd-pending',
-      icon: 'Van',
-      color: tokens.warning,
-      title: `${pendingCount} 张调度单待装货，请及时安排`,
-      time: '待办',
-      path: '/dispatch'
-    })
-  }
-  return list.slice(0, 6)
-})
+/** 消息类型 → 图标/颜色（与消息中心页同一口径） */
+const typeIcon = { approval: 'Document', dispatch: 'Van', exception: 'Warning', settlement: 'Wallet', request: 'Shop', system: 'Setting' }
+const typeColor = {
+  approval: tokens.primary,
+  dispatch: tokens.success,
+  exception: tokens.danger,
+  settlement: tokens.warning,
+  request: tokens.info,
+  system: tokens.neutral300
+}
 
-const unreadCount = computed(() => noticeList.value.length)
+/** 通知：消息中心最新 6 条（未读优先，按时间倒序） */
+const noticeList = computed(() =>
+  [...db.messages]
+    .sort((a, b) => (a.read === b.read ? (a.time < b.time ? 1 : -1) : a.read ? 1 : -1))
+    .slice(0, 6)
+    .map((m) => ({ ...m, icon: typeIcon[m.type] || 'Bell', color: typeColor[m.type] || tokens.primary }))
+)
+
+const unreadCount = computed(() => db.messages.filter((m) => !m.read).length)
 
 function toggleFull() {
   if (screenfull.isEnabled) screenfull.toggle()
 }
 
-/** 点击通知跳转对应模块（无独立消息中心页，不提供"查看全部"入口） */
+/** 点击通知：标记已读并跳转对应模块（"查看全部"进消息中心页） */
 function goNotice(item) {
-  if (item) router.push(item.path)
+  if (!item) return
+  markMessageRead(item)
+  if (item.path) router.push(item.path)
 }
 
 function onCommand(cmd) {
@@ -364,5 +317,21 @@ function onCommand(cmd) {
   font-size: 12px;
   color: var(--text-secondary);
   margin-top: 2px;
+}
+
+.navbar__dropdown-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 10px 12px;
+  margin-top: 4px;
+  border-top: 1px solid var(--border-color);
+  font-size: 13px;
+  color: var(--color-primary);
+  cursor: pointer;
+}
+.navbar__dropdown-more:hover {
+  background: var(--bg-page);
 }
 </style>

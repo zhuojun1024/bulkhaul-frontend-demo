@@ -50,7 +50,26 @@ import {
   checkFenceEvents,
   maxDeviationOf,
   tripCostOf,
-  customerConfirm
+  customerConfirm,
+  registerAccident,
+  closeAccident,
+  addTraining,
+  completeTraining,
+  addInspection,
+  submitTransportRequest,
+  convertRequestToContract,
+  rejectTransportRequest,
+  driverIncomeOf,
+  vehicleInspectionExpired,
+  driverLicenseExpired,
+  notify,
+  markMessageRead,
+  markAllMessagesRead,
+  importCustomers,
+  importCommodities,
+  importVehicles,
+  matchBankRecord,
+  autoMatchBank
 } from '../src/mock/flow.js'
 import { monthlyReport, customerReport, commodityReport, terminalReport, costReport } from '../src/mock/report.js'
 import { menuAllowed, actionAllowed } from '../src/permission.js'
@@ -894,6 +913,248 @@ if (n5s) {
 } else {
   console.log('  - 跳过 N5（无未开票已结算账单）')
 }
+
+console.log('== 13. P1 产品完整度回归（G1 安全登记 / G2 运输需求 / G3 司机收入 / G4 年检驾照拦截） ==')
+
+// G4 年检/驾照过期拦截（createDispatches 守卫）
+const g4plan = db.plans.find((p) => {
+  if (p.status !== 'pending') return false
+  const c = db.contracts.find((x) => x.id === p.contractId)
+  return c && c.status === 'executing' && isRoadMode(p.mode || '公路')
+})
+if (g4plan) {
+  const g4v = db.vehicles.find((v) => v.status === 'idle' && v.type !== '铁路敞车' && v.type !== '散货船' && !vehicleInspectionExpired(v))
+  if (g4v) {
+    const oldInsp = g4v.nextInspection
+    g4v.nextInspection = dayjs(NOW).subtract(1, 'day').format('YYYY-MM-DD')
+    const { created: g4auto } = createDispatches(g4plan, 2)
+    check('G4：年检过期车辆不被派车（自动匹配）', g4auto.length === 2 && g4auto.every((d) => d.vehicleId !== g4v.id))
+    const g4manual = createDispatches(g4plan, 1, [g4v.id])
+    check('G4：手动指定年检过期车辆被拦截（明确报错）', !!g4manual.error && g4manual.created.length === 0 && g4manual.error.includes('年检过期'))
+    g4v.nextInspection = oldInsp
+    check('G4：年检恢复后可再被派车', !vehicleInspectionExpired(g4v))
+  }
+  const g4d = db.drivers.find((x) => x.status === 'available' && !driverLicenseExpired(x))
+  if (g4d) {
+    const oldExp = g4d.licenseExpire
+    g4d.licenseExpire = dayjs(NOW).subtract(1, 'day').format('YYYY-MM-DD')
+    const { created: g4autoD } = createDispatches(g4plan, 2)
+    check('G4：驾照过期司机不被派车（自动匹配）', g4autoD.length === 2 && g4autoD.every((d) => d.driverId !== g4d.id))
+    g4d.licenseExpire = oldExp
+  }
+} else {
+  console.log('  - 跳过 G4（无执行中合同的待执行公路计划）')
+}
+
+// G1 安全模块登记入口（事故 / 培训 / 检查）
+const g1accBefore = db.accidents.length
+const g1acc = registerAccident({
+  time: dayjs(NOW).format('YYYY-MM-DD'),
+  type: '碰撞',
+  level: '一般',
+  vehicleId: db.vehicles[0].id,
+  location: '测试地点',
+  description: 'G1 测试：手工事故登记',
+  loss: 5000
+})
+check(
+  'G1：事故登记（新记录 + 车牌联动 + 审计日志）',
+  db.accidents.length === g1accBefore + 1 &&
+    db.accidents[0].id === g1acc.id &&
+    db.accidents[0].plate === db.vehicles[0].plate &&
+    db.logs[0].module === '安全管理'
+)
+check('G1：事故结案（handling → closed）', closeAccident(g1acc).ok === true && g1acc.status === 'closed')
+check('G1：守卫：已结案事故不可重复结案', !!closeAccident(g1acc)?.error)
+
+const g1tBefore = db.trainings.length
+const g1t = addTraining({ title: 'G1 测试培训', date: dayjs(NOW).format('YYYY-MM-DD'), trainer: '测试讲师' })
+check('G1：培训计划（计划中，参训未记录）', db.trainings.length === g1tBefore + 1 && g1t.status === 'scheduled' && g1t.participants === 0)
+check(
+  'G1：守卫：培训日期不能早于今天',
+  !!addTraining({ title: '过去培训', date: dayjs(NOW).subtract(1, 'day').format('YYYY-MM-DD'), trainer: 'x' })?.error
+)
+const g1tFuture = addTraining({ title: '未来培训', date: dayjs(NOW).add(7, 'day').format('YYYY-MM-DD'), trainer: 'x' })
+check('G1：守卫：日期未到的培训不可标记完成', !!completeTraining(g1tFuture)?.error)
+const g1ids = db.drivers.slice(0, 5).map((d) => d.id)
+check(
+  'G1：培训完成（completed + 参训司机记录）',
+  completeTraining(g1t, g1ids).ok === true && g1t.status === 'completed' && g1t.participants === 5 && g1t.driverIds.length === 5
+)
+check('G1：守卫：已完成培训不可重复标记完成', !!completeTraining(g1t, g1ids)?.error)
+
+const g1iBefore = db.inspections.length
+const g1i = addInspection({ vehicleId: db.vehicles[1].id, date: dayjs(NOW).format('YYYY-MM-DD'), item: '出车前例行检查', result: 'pass', inspector: '测试检查员' })
+check(
+  'G1：车辆检查登记（新记录 + 车牌联动）',
+  db.inspections.length === g1iBefore + 1 && db.inspections[0].id === g1i.id && db.inspections[0].plate === db.vehicles[1].plate
+)
+check('G1：守卫：未选车辆的检查登记被拦截', !!addInspection({ vehicleId: '', date: dayjs(NOW).format('YYYY-MM-DD'), item: 'x', result: 'pass' })?.error)
+
+// G2 客户运输需求（门户发起 → 合同草稿）
+check('G2：客户角色具备 customer-request 权限', actionAllowed('客户', 'customer-request') === true)
+check(
+  'G2：种子需求数据一致性（已转换需求关联真实合同且客户对齐）',
+  (() => {
+    const conv = db.transportRequests.filter((r) => r.status === 'converted')
+    return conv.length > 0 && conv.every((r) => db.contracts.some((c) => c.id === r.contractId && c.shipperId === r.customerId))
+  })()
+)
+const g2cust = db.customers.find((c) => (c.type === 'shipper' || c.type === 'both') && c.status === 'active')
+const g2consignee = db.customers.find((c) => (c.type === 'consignee' || c.type === 'both') && c.status === 'active')
+const g2reqBefore = db.transportRequests.length
+const g2req = submitTransportRequest(g2cust.id, {
+  commodityId: 'CM001',
+  quantity: 700,
+  loadTerminalId: 'T005',
+  unloadTerminalId: 'T001',
+  consigneeId: g2consignee.id,
+  mode: '公路',
+  expectDate: dayjs(NOW).add(14, 'day').format('YYYY-MM-DD'),
+  unitPrice: 60
+})
+check(
+  'G2：客户发起运输需求（新记录 + 待处理 + 审计日志）',
+  db.transportRequests.length === g2reqBefore + 1 && g2req.status === 'pending' && db.logs[0].module === '客户门户'
+)
+const g2frozen = db.customers.find((c) => c.status === 'frozen')
+check(
+  'G2：守卫：冻结客户不可发起需求',
+  g2frozen
+    ? !!submitTransportRequest(g2frozen.id, { commodityId: 'CM001', quantity: 100, loadTerminalId: 'T005', unloadTerminalId: 'T001', consigneeId: g2consignee.id })?.error
+    : true
+)
+check('G2：守卫：需求要素不全被拦截', !!submitTransportRequest(g2cust.id, { commodityId: 'CM001', quantity: 100 })?.error)
+const g2c = convertRequestToContract(g2req, { unitPrice: 65, quantity: 700, paymentDays: 30, endDate: dayjs(NOW).add(180, 'day').format('YYYY-MM-DD') })
+check(
+  'G2：需求转合同草稿（草稿 + 字段联动 + 需求标记已转换）',
+  g2c.status === 'draft' &&
+    g2c.shipperId === g2cust.id &&
+    g2c.consigneeId === g2consignee.id &&
+    g2c.amount === 700 * 65 &&
+    g2req.status === 'converted' &&
+    g2req.contractId === g2c.id
+)
+check('G2：守卫：已转换需求不可重复转换', !!convertRequestToContract(g2req)?.error)
+const g2pending = db.transportRequests.find((r) => r.status === 'pending')
+if (g2pending) {
+  const rj = rejectTransportRequest(g2pending, 'G2 测试驳回')
+  check('G2：需求驳回（rejected + 原因记录）', rj.ok === true && g2pending.status === 'rejected' && g2pending.rejectReason === 'G2 测试驳回')
+  check('G2：守卫：已驳回需求不可再转换', !!convertRequestToContract(g2pending)?.error)
+} else {
+  console.log('  - 跳过 G2 驳回（无待处理需求）')
+}
+
+// G3 司机端收入（与成本侧司机项同口径）
+const g3d = db.dispatches.find((d) => d.status === 'completed' && d.driverId)
+check('G3：司机趟次收入 = 成本侧司机项（底薪 600 + 0.25 元/公里）', !!g3d && driverIncomeOf(g3d) === Math.round(600 + (g3d.distance || 300) * 0.25))
+const g3nr = db.dispatches.find((d) => d.status === 'completed' && !d.driverId)
+check('G3：非公路车次无司机收入', g3nr ? driverIncomeOf(g3nr) === 0 : true)
+
+console.log('== 14. P1 产品完整度回归（G5 司机账号 / G6 消息中心 / G7 数据导入 / G8 收款核销） ==')
+
+// G5 司机账号体系（司机角色 + 手机号账号 + 停用联动）
+check(
+  'G5：司机角色已注册权限表（菜单 + 操作）',
+  !!db.rolePerms['司机'] && Array.isArray(db.rolePerms['司机'].menus) && db.rolePerms['司机'].menus.includes('/workbench') && Array.isArray(db.rolePerms['司机'].actions)
+)
+check(
+  'G5：每个司机均有平台账号（手机号=账号，driverId 绑定）',
+  db.drivers.every((d) => db.users.some((u) => u.role === '司机' && u.driverId === d.id && u.username === d.phone))
+)
+check(
+  'G5：司机账号可按手机号检索（登录口径）',
+  (() => {
+    const d = db.drivers[0]
+    const u = db.users.find((x) => x.phone === d.phone)
+    return !!u && u.username === d.phone && u.driverId === d.id && u.status === 'active'
+  })()
+)
+check(
+  'G5：停用司机的账号同步停用（登录拦截）',
+  (() => {
+    const d = db.drivers.find((x) => x.status === 'disabled')
+    return !!d && db.users.find((u) => u.driverId === d.id)?.status === 'disabled'
+  })()
+)
+
+// G6 消息中心（事件驱动 + 已读管理）
+check('G6：种子消息非空且含未读', db.messages.length > 0 && db.messages.some((m) => !m.read))
+const g6m = notify('G6 测试消息', 'system', '/workbench', '内容')
+check('G6：notify 写入新消息（最新 + 未读）', db.messages[0].id === g6m.id && g6m.read === false)
+markMessageRead(g6m)
+check('G6：markMessageRead 标记已读', g6m.read === true)
+notify('G6 测试消息 2', 'system', '/workbench', '')
+const g6n = markAllMessagesRead()
+check('G6：markAllMessagesRead 全部已读', g6n > 0 && db.messages.every((m) => m.read))
+check(
+  'G6：业务事件生成消息（前序章节的审批/调度/结算事件均有消息）',
+  db.messages.some((m) => m.type === 'settlement') && db.messages.some((m) => m.type === 'dispatch') && db.messages.some((m) => m.type === 'approval')
+)
+
+// G7 数据导入（去重 + 校验 + 默认口径）
+const g7custBefore = db.customers.length
+const g7r1 = importCustomers([
+  { name: 'G7 测试导入客户', type: '发货方', level: 'B', region: '山西', contact: '张三', phone: '13811112222', creditLimit: 1000000 },
+  { name: db.customers[0].name },
+  { name: '   ' }
+])
+check(
+  'G7：客户导入（新增 + 重名跳过 + 空名报错）',
+  g7r1.created.length === 1 &&
+    g7r1.skipped.length === 1 &&
+    g7r1.errors.length === 1 &&
+    db.customers.length === g7custBefore + 1 &&
+    db.customers.some((c) => c.name === 'G7 测试导入客户' && c.level === 'B' && c.creditLimit === 1000000)
+)
+const g7cmBefore = db.commodities.length
+const g7r2 = importCommodities([{ name: 'G7 测试导入商品', category: '煤炭', unit: '吨', density: 1.2, price: 500 }, { name: '动力煤' }])
+check('G7：商品导入（新增 + 重名跳过）', g7r2.created.length === 1 && g7r2.skipped.length === 1 && db.commodities.length === g7cmBefore + 1)
+const g7vBefore = db.vehicles.length
+const g7r3 = importVehicles([{ plate: '冀B·G79999', type: '重型半挂车', capacity: 35, owner: '自有', fuelType: '柴油' }, { plate: db.vehicles[0].plate }])
+const g7v = db.vehicles.find((v) => v.plate === '冀B·G79999')
+check(
+  'G7：车辆导入（新增 + 车牌去重 + 默认口径：空闲/年检一年）',
+  g7r3.created.length === 1 &&
+    g7r3.skipped.length === 1 &&
+    db.vehicles.length === g7vBefore + 1 &&
+    !!g7v &&
+    g7v.status === 'idle' &&
+    g7v.owner === '自有' &&
+    dayjs(g7v.nextInspection).isAfter(dayjs(NOW), 'day')
+)
+
+// G8 收款核销（银行流水 → 账单核销）
+// 口径：银行流水由银行侧异步到达，种子流水（matchBy=系统）须与收款流水一一对应；
+// 运行期手工登记的收款不强制要求流水（正是核销环节要处理的情形）
+check(
+  'G8：种子一致性（系统核销流水均有对应银行转账收款）',
+  db.bankRecords
+    .filter((b) => b.status === 'matched' && b.matchBy === '系统')
+    .every((b) => db.payments.some((p) => p.settlementId === b.settlementId && p.amount === b.amount && p.method === '银行转账'))
+)
+const g8unmatched = db.bankRecords.filter((b) => b.status === 'unmatched')
+check('G8：待核销流水存在（自动核销演示数据）', g8unmatched.length > 0)
+// 手动核销：首笔待核销流水（金额=账单未付余额）核销至对应账单
+const g8b = g8unmatched[0]
+const g8c = db.customers.find((x) => x.name === g8b.counterparty)
+const g8s = db.settlements.find(
+  (x) => x.customerId === g8c?.id && (x.status === 'settled' || x.status === 'overdue') && Math.abs(x.totalAmount - x.paidAmount - g8b.amount) < 0.01
+)
+const g8paidBefore = g8s ? g8s.paidAmount : 0
+const g8mr = matchBankRecord(g8b, g8s)
+check(
+  'G8：手动核销（核销成功 + 登记收款 + 流水状态）',
+  g8mr.ok === true && g8b.status === 'matched' && g8b.settlementId === g8s.id && g8s.paidAmount === g8paidBefore + g8mr.real
+)
+check('G8：守卫：已核销流水不可重复核销', !!matchBankRecord(g8b, g8s)?.error)
+const g8deposit = db.bankRecords.find((b) => b.status === 'unmatched' && b.summary === '质量保证金')
+check('G8：守卫：流水金额超账单未付余额被拦截', g8deposit ? !!matchBankRecord(g8deposit, g8s)?.error : true)
+const g8am = autoMatchBank()
+check(
+  'G8：自动核销（核销均为精确匹配，质量保证金不误核销）',
+  Array.isArray(g8am) && g8am.every((b) => b.status === 'matched' && b.settlementId) && (!g8deposit || g8deposit.status === 'unmatched')
+)
 
 console.log(`\n结果：${pass} 通过，${fail} 失败`)
 process.exit(fail ? 1 : 0)

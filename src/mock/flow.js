@@ -63,6 +63,40 @@ export function logAction(module, action, detail, result = 'success') {
   })
 }
 
+/* ========== 消息中心（G6：flow 事件驱动，顶栏未读角标 + 消息中心页） ========== */
+
+/** 发送平台消息（关键业务事件调用；type: approval/dispatch/exception/settlement/request/system） */
+export function notify(title, type, path, content = '') {
+  db.messages.unshift({
+    id: `MSG-${String(db.messages.length + 1).padStart(4, '0')}`,
+    title,
+    content,
+    type,
+    path,
+    time: dayjs().format('YYYY-MM-DD HH:mm'),
+    read: false
+  })
+  return db.messages[0]
+}
+
+/** 标记消息已读 */
+export function markMessageRead(m) {
+  if (m && !m.read) m.read = true
+  return { ok: true }
+}
+
+/** 全部标记已读，返回本次标记条数 */
+export function markAllMessagesRead() {
+  let n = 0
+  for (const m of db.messages) {
+    if (!m.read) {
+      m.read = true
+      n += 1
+    }
+  }
+  return n
+}
+
 /** 登记磅单 */
 function pushWeighing(d, type, net, time) {
   const v = vehicleOf(d.vehicleId)
@@ -277,6 +311,7 @@ export function reportException(d, description, type = 'other', level = 'medium'
   }
   rollupPlan(d.planId)
   logAction('异常处理', '上报异常', `调度单 ${d.id} 上报异常（${type}），生成异常单 ${e.id}${type === 'accident' ? ' 及事故记录 ' + e.accidentId : ''}`)
+  notify(`调度单 ${d.id} 上报异常`, 'exception', '/exception', description)
   return e
 }
 
@@ -356,11 +391,104 @@ export function closeException(e) {
     }
   }
   logAction('异常处理', '关闭异常单', `异常单 ${e.id} 关闭归档${e.accidentId ? `，事故 ${e.accidentId} 结案` : ''}`)
+  notify(`异常单 ${e.id} 已关闭`, 'exception', '/exception', e.result)
+}
+
+/* ===== 安全管理（事故登记 / 培训计划 / 车辆检查） ===== */
+
+/** 事故登记：手工登记事故记录（不一定关联车次异常单，如场外/历史事故补录） */
+export function registerAccident(payload) {
+  const v = payload.vehicleId ? vehicleOf(payload.vehicleId) : null
+  const a = {
+    id: `SG-${String(db.accidents.length + 1).padStart(3, '0')}`,
+    time: payload.time,
+    type: payload.type,
+    level: payload.level,
+    vehicleId: v ? v.id : '',
+    plate: v ? v.plate : payload.plate || '-',
+    location: payload.location || '',
+    description: payload.description || '',
+    handling: payload.handling || '',
+    loss: payload.loss || 0,
+    status: payload.status || 'handling'
+  }
+  db.accidents.unshift(a)
+  logAction('安全管理', '事故登记', `事故 ${a.id} 登记（${a.level}·${a.type}，车辆 ${a.plate}，损失 ${formatMoney(a.loss)}）`)
+  return a
+}
+
+/** 事故结案：handling → closed（独立入口，不依赖异常单关闭） */
+export function closeAccident(a) {
+  if (a.status !== 'handling') return { error: `事故 ${a.id} 当前非"处理中"状态，无法结案` }
+  a.status = 'closed'
+  a.handling = a.handling || '已结案'
+  logAction('安全管理', '事故结案', `事故 ${a.id} 结案`)
+  return { ok: true }
+}
+
+/** 培训计划：新建培训（计划中，参训司机待标记完成时记录） */
+export function addTraining(payload) {
+  if (!payload.title || !payload.title.trim()) return { error: '请填写培训主题' }
+  if (!payload.date) return { error: '请选择培训日期' }
+  if (dayjs(payload.date).isBefore(dayjs(), 'day')) return { error: '培训日期不能早于今天' }
+  const t = {
+    id: `PX-${String(db.trainings.length + 1).padStart(3, '0')}`,
+    title: payload.title.trim(),
+    date: payload.date,
+    trainer: payload.trainer || '',
+    participants: 0,
+    driverIds: [],
+    status: 'scheduled'
+  }
+  db.trainings.unshift(t)
+  logAction('安全管理', '培训计划', `培训 ${t.id} 计划：${t.title}（${t.date}）`)
+  return t
+}
+
+/** 培训完成：计划中 → 已完成，记录实际参训司机（覆盖率口径按 driverIds 计算） */
+export function completeTraining(t, driverIds) {
+  if (t.status !== 'scheduled') return { error: `培训 ${t.id} 当前非"计划中"状态，无法标记完成` }
+  if (dayjs(t.date).isAfter(dayjs(), 'day')) return { error: `培训 ${t.id} 日期（${t.date}）未到，无法标记完成` }
+  t.status = 'completed'
+  t.driverIds = driverIds || []
+  t.participants = t.driverIds.length
+  logAction('安全管理', '培训完成', `培训 ${t.id} 完成，${t.participants} 名司机参训`)
+  return { ok: true }
+}
+
+/** 车辆检查登记 */
+export function addInspection(payload) {
+  const v = payload.vehicleId ? vehicleOf(payload.vehicleId) : null
+  if (!v) return { error: '请选择被检车辆' }
+  const i = {
+    id: `JC-${String(db.inspections.length + 1).padStart(3, '0')}`,
+    vehicleId: v.id,
+    plate: v.plate,
+    date: payload.date,
+    item: payload.item || '',
+    result: payload.result === 'fail' ? 'fail' : 'pass',
+    inspector: payload.inspector || '',
+    remark: payload.remark || ''
+  }
+  db.inspections.unshift(i)
+  logAction('安全管理', '检查登记', `车辆 ${v.plate} 检查（${i.item}）：${i.result === 'pass' ? '合格' : '不合格'}`)
+  return i
+}
+
+/** 车辆年检过期（nextInspection 早于今天） */
+export function vehicleInspectionExpired(v) {
+  return !!v && !!v.nextInspection && dayjs(v.nextInspection).isBefore(dayjs(), 'day')
+}
+
+/** 驾照过期（licenseExpire 早于今天） */
+export function driverLicenseExpired(d) {
+  return !!d && !!d.licenseExpire && dayjs(d.licenseExpire).isBefore(dayjs(), 'day')
 }
 
 /** 计划调度：生成 count 张调度单，数量按批次均摊，距离取实际线路
  *  公路/多式联运 → 匹配车辆+司机；铁路/水运/管道 → 按运输单元派车（车号/船名/管段），不占车辆司机
- *  守卫：合同已终止不可再派车；车辆/司机排除已有未完结车次（待装货/装货中/异常）者，防重复占用 */
+ *  守卫：合同已终止不可再派车；车辆/司机排除已有未完结车次（待装货/装货中/异常）者，防重复占用；
+ *  年检/驾照过期拦截：自动匹配排除年检过期车辆与驾照过期司机，手动指定年检过期车辆直接报错 */
 export function createDispatches(p, count, vehicleIds = []) {
   const c = contractOf(p.contractId)
   if (c && c.status === 'terminated') return { created: [], error: '合同已终止，不能再下发调度单' }
@@ -372,11 +500,23 @@ export function createDispatches(p, count, vehicleIds = []) {
     const BUSY = ['pending', 'loading', 'exception']
     const busyV = new Set(db.dispatches.filter((x) => BUSY.includes(x.status)).map((x) => x.vehicleId))
     const busyD = new Set(db.dispatches.filter((x) => BUSY.includes(x.status)).map((x) => x.driverId))
+    // 手动指定：年检过期车辆硬拦截（明确报错，避免静默少派车）
+    if (vehicleIds.length) {
+      const expiredSel = db.vehicles.filter((v) => vehicleIds.includes(v.id) && vehicleInspectionExpired(v))
+      if (expiredSel.length) {
+        return { created, error: `年检过期车辆不可派车：${expiredSel.map((v) => v.plate).join('、')}` }
+      }
+    }
     const pool = vehicleIds.length
       ? db.vehicles.filter((v) => v.type !== '铁路敞车' && v.type !== '散货船' && vehicleIds.includes(v.id) && !busyV.has(v.id))
-      : db.vehicles.filter((v) => v.type !== '铁路敞车' && v.type !== '散货船' && v.status === 'idle' && !busyV.has(v.id))
-    const avail = db.drivers.filter((x) => x.status === 'available' && !busyD.has(x.id))
-    if (!pool.length || !avail.length) return { created, error: '无可用车辆或司机（须空闲且无未完结车次）' }
+      : db.vehicles.filter((v) => v.type !== '铁路敞车' && v.type !== '散货船' && v.status === 'idle' && !vehicleInspectionExpired(v) && !busyV.has(v.id))
+    const avail = db.drivers.filter((x) => x.status === 'available' && !driverLicenseExpired(x) && !busyD.has(x.id))
+    if (!pool.length || !avail.length) {
+      const reasons = []
+      if (!pool.length) reasons.push('无可用车辆（须空闲、年检未过期且无未完结车次）')
+      if (!avail.length) reasons.push('无可用司机（须空闲、驾照未过期且无未完结车次）')
+      return { created, error: reasons.join('；') }
+    }
     for (let i = 0; i < count; i++) {
       const v = pool[i % pool.length]
       const dr = avail[(db.dispatches.length + i) % avail.length]
@@ -445,6 +585,7 @@ export function createDispatches(p, count, vehicleIds = []) {
     '下发调度单',
     `计划 ${p.id} 生成 ${created.length} 张调度单（${p.mode}${road ? '' : '，按运输单元执行' }）`
   )
+  if (created.length) notify(`计划 ${p.id} 下发 ${created.length} 张调度单`, 'dispatch', '/dispatch')
   return { created }
 }
 
@@ -539,7 +680,10 @@ export function generateSettlements(keys) {
     }
     created.push(s)
   }
-  if (created.length) logAction('结算管理', '生成结算单', `生成 ${created.length} 张结算单（${created.map((s) => s.billNo).join('、')}）`)
+  if (created.length) {
+    logAction('结算管理', '生成结算单', `生成 ${created.length} 张结算单（${created.map((s) => s.billNo).join('、')}）`)
+    notify(`生成 ${created.length} 张结算单`, 'settlement', '/settlement', created.map((s) => s.billNo).join('、'))
+  }
   return created
 }
 
@@ -641,6 +785,7 @@ export function confirmSettle(s) {
   s.status = 'settled'
   s.settleDate = dayjs().format('YYYY-MM-DD')
   logAction('结算管理', '确认结算', `账单 ${s.billNo} 结算金额 ${formatMoney(s.totalAmount)}，累计已付 ${formatMoney(s.paidAmount)}`)
+  notify(`账单 ${s.billNo} 已确认结算`, 'settlement', '/settlement', `结算金额 ${formatMoney(s.totalAmount)}，进入收款`)
 }
 
 /** 登记收款：写入收款流水并更新已付金额，超收按未付余额截断 */
@@ -657,6 +802,7 @@ export function recordPayment(s, amount, method) {
   s.paidAmount += real
   recalcSettlementStatus(s)
   logAction('结算管理', '登记收款', `账单 ${s.billNo} 收款 ${formatMoney(real)}（${method}）`)
+  notify(`账单 ${s.billNo} 收款到账`, 'settlement', '/settlement', `${method} ${formatMoney(real)}`)
   return real
 }
 
@@ -699,6 +845,96 @@ export function customerConfirm(s) {
   if (s.customerConfirmed) return { error: `账单 ${s.billNo} 客户已确认过，无需重复确认` }
   s.customerConfirmed = { time: dayjs().format('YYYY-MM-DD HH:mm'), comment: '对账结果确认，无异议' }
   logAction('客户门户', '确认对账', `客户确认账单 ${s.billNo} 对账结果（差异 ${s.reconciliation.diffCount} 车次，损耗 ${s.reconciliation.lossQty} 吨）`)
+  notify(`客户已确认对账结果`, 'settlement', '/settlement', `账单 ${s.billNo} 客户已确认，可确认结算`)
+  return { ok: true }
+}
+
+/* ===== 客户运输需求（门户发起 → 合同草稿） ===== */
+
+/** 客户发起运输需求（门户）：生成待处理需求单，由销售在合同管理转为合同草稿 */
+export function submitTransportRequest(customerId, payload) {
+  const c = db.customers.find((x) => x.id === customerId)
+  if (!c) return { error: '当前账号未绑定客户，无法发起运输需求' }
+  if (c.status === 'frozen') return { error: `客户 ${c.name} 已冻结，无法发起运输需求` }
+  if (!payload.commodityId || !payload.loadTerminalId || !payload.unloadTerminalId || !payload.consigneeId) {
+    return { error: '请完整填写商品、装/卸货场站与收货方' }
+  }
+  if (!payload.quantity || payload.quantity <= 0) return { error: '计划数量须大于 0' }
+  const r = {
+    id: `YS-${String(db.transportRequests.length + 1).padStart(4, '0')}`,
+    customerId: c.id,
+    consigneeId: payload.consigneeId,
+    commodityId: payload.commodityId,
+    quantity: payload.quantity,
+    loadTerminalId: payload.loadTerminalId,
+    unloadTerminalId: payload.unloadTerminalId,
+    mode: payload.mode || '公路',
+    expectDate: payload.expectDate || dayjs().add(14, 'day').format('YYYY-MM-DD'),
+    unitPrice: payload.unitPrice || 0,
+    remark: payload.remark || '',
+    status: 'pending',
+    createTime: dayjs().format('YYYY-MM-DD HH:mm'),
+    contractId: null,
+    rejectReason: ''
+  }
+  db.transportRequests.unshift(r)
+  logAction(
+    '客户门户',
+    '发起运输需求',
+    `客户 ${c.name} 发起运输需求 ${r.id}（${db.commodities.find((x) => x.id === r.commodityId)?.name || ''} ${r.quantity} 吨）`
+  )
+  notify(`客户发起运输需求`, 'request', '/contract', `客户 ${c.name} 需求 ${r.id}，请及时处理`)
+  return r
+}
+
+/** 需求转合同草稿（合同管理：销售确认商务条款后生成草稿，进入正常审批流） */
+export function convertRequestToContract(r, fields = {}) {
+  if (r.status !== 'pending') return { error: `运输需求 ${r.id} 当前非"待处理"状态，无法转换` }
+  const c = db.customers.find((x) => x.id === r.customerId)
+  const consignee = db.customers.find((x) => x.id === r.consigneeId)
+  const commodity = db.commodities.find((x) => x.id === r.commodityId)
+  const quantity = fields.quantity ?? r.quantity
+  const unitPrice = fields.unitPrice ?? r.unitPrice ?? 0
+  const contract = {
+    id: `HT-${String(db.contracts.length + 1).padStart(4, '0')}`,
+    name: `${c?.name || ''}→${consignee?.name || ''} ${commodity?.name || ''}运输合同`,
+    shipperId: r.customerId,
+    consigneeId: r.consigneeId,
+    commodityId: r.commodityId,
+    mode: r.mode,
+    loadTerminalId: r.loadTerminalId,
+    unloadTerminalId: r.unloadTerminalId,
+    quantity,
+    unitPrice,
+    amount: Math.round(quantity * unitPrice),
+    paymentDays: fields.paymentDays ?? 30,
+    startDate: dayjs().format('YYYY-MM-DD'),
+    endDate: fields.endDate || dayjs().add(180, 'day').format('YYYY-MM-DD'),
+    signDate: dayjs().format('YYYY-MM-DD'),
+    status: 'draft',
+    progress: 0,
+    approvalChain: null,
+    contact: c?.contact || '—',
+    phone: c?.phone || '—',
+    remark: `由客户运输需求 ${r.id} 生成${r.remark ? '；' + r.remark : ''}`,
+    source: 'request',
+    requestId: r.id
+  }
+  db.contracts.unshift(contract)
+  r.status = 'converted'
+  r.contractId = contract.id
+  logAction('合同管理', '需求转合同', `运输需求 ${r.id} 转为合同草稿 ${contract.id}（${contract.name}）`)
+  notify(`运输需求转合同`, 'request', '/contract', `需求 ${r.id} 转为合同草稿 ${contract.id}`)
+  return contract
+}
+
+/** 驳回运输需求：pending → rejected（须记录原因） */
+export function rejectTransportRequest(r, reason) {
+  if (r.status !== 'pending') return { error: `运输需求 ${r.id} 当前非"待处理"状态，无法驳回` }
+  r.status = 'rejected'
+  r.rejectReason = reason || '未通过'
+  logAction('合同管理', '驳回需求', `运输需求 ${r.id} 驳回：${r.rejectReason}`, 'fail')
+  notify(`运输需求被驳回`, 'request', '/contract', `需求 ${r.id}：${r.rejectReason}`)
   return { ok: true }
 }
 
@@ -724,12 +960,19 @@ export function tripCostOf(d) {
   return { fuel, wear, driver, toll, depreciation, total: fuel + wear + driver + toll + depreciation }
 }
 
+/** 司机趟次收入：与成本侧司机项同口径（底薪 600 + 0.25 元/公里）；非公路车次无司机收入 */
+export function driverIncomeOf(d) {
+  if (!d || !d.driverId) return 0
+  return tripCostOf(d).driver
+}
+
 /* ===== 司机端（接单 / 电子签收） ===== */
 
 /** 司机接单：标记已接单（不改状态机，装货确认前司机需先接单） */
 export function acceptDispatch(d) {
   d.accepted = true
   logAction('司机端', '司机接单', `调度单 ${d.id} 司机 ${driverOf(d.driverId)?.name || '-'} 接单`)
+  notify(`司机接单提醒`, 'dispatch', '/dispatch', `调度单 ${d.id} 司机 ${driverOf(d.driverId)?.name || '-'} 已接单`)
 }
 
 /** 司机端电子签收：卸货完成后生成签收单（签收人+时间+签收码） */
@@ -883,6 +1126,7 @@ export function submitContractApproval(c) {
   c.status = 'pending'
   c.approvalChain = buildApprovalChain()
   logAction('合同管理', '提交合同审批', `合同 ${c.id} 提交审批（部门审批 → 公司审批）`)
+  notify(`合同 ${c.id} 提交审批`, 'approval', '/contract', '请及时处理（部门审批 → 公司审批）')
   return { ok: true }
 }
 
@@ -899,12 +1143,14 @@ export function approveContract(c, comment) {
   if (next) {
     next.status = 'pending'
     logAction('合同管理', '合同审批', `合同 ${c.id} ${step.name}通过（${step.approver}），进入${next.name}`)
+    notify(`合同 ${c.id} ${step.name}通过`, 'approval', '/contract', `进入${next.name}（审批人 ${step.approver}）`)
     return { ok: true, final: false, step: step.name }
   }
   c.status = 'executing'
   c.startDate = dayjs().format('YYYY-MM-DD')
   c.approval = { approver: operator.name, time: step.time, comment: step.comment }
   logAction('合同管理', '合同审批', `合同 ${c.id} 全级审批通过（末级：${step.name} ${step.approver}），进入执行`)
+  notify(`合同 ${c.id} 全级审批通过`, 'approval', '/contract', '合同进入执行，可拆批计划')
   return { ok: true, final: true, step: step.name }
 }
 
@@ -920,6 +1166,7 @@ export function rejectContract(c, reason) {
   c.status = 'draft'
   c.approval = { approver: operator.name, time: step.time, comment: `驳回：${reason}` }
   logAction('合同管理', '合同审批', `合同 ${c.id} ${step.name}驳回：${reason}`, 'fail')
+  notify(`合同 ${c.id} 审批被驳回`, 'approval', '/contract', `${step.name}驳回：${reason}`)
   return { ok: true, step: step.name }
 }
 
@@ -978,6 +1225,7 @@ export function terminateContract(c, reason, settleNow = true) {
     }
   }
   logAction('合同管理', '终止合同', `合同 ${c.id} 提前终止（${reason}）${billNo ? `，已完成车次生成提前结算单 ${billNo}` : ''}`)
+  notify(`合同 ${c.id} 提前终止`, 'approval', '/contract', reason)
   return billNo
 }
 
@@ -996,6 +1244,7 @@ export function completeContract(c) {
   c.progress = 100
   pushChange(c, '合同完结', '计划全部完成，手动完结合同')
   logAction('合同管理', '合同完结', `合同 ${c.id} 手动完结（计划全部完成，进度置 100%）`)
+  notify(`合同 ${c.id} 已完结`, 'approval', '/contract', '计划全部完成，合同手动关单')
   return { ok: true }
 }
 
@@ -1026,6 +1275,7 @@ export function issueInvoice(s) {
   })
   s.invoiceStatus = 'issued'
   logAction('发票管理', '开具发票', `账单 ${s.billNo} 开具发票 ${invoiceNo}，金额 ${formatMoney(s.totalAmount)}`)
+  notify(`账单 ${s.billNo} 已开票`, 'settlement', '/settlement', `发票号码 ${invoiceNo}`)
   return invoiceNo
 }
 
@@ -1050,6 +1300,163 @@ export function redFlushInvoiceRow(inv, reason) {
   if (s) s.invoiceStatus = 'not-issued'
   logAction('发票管理', '发票红冲', `发票 ${inv.invoiceNo} 红冲：${reason || '未填写原因'}`)
   return { ok: true }
+}
+
+/* ===== 数据导入（G7：Excel/CSV → 客户/商品/车辆，flow 统一守卫+去重+审计） ===== */
+
+/** 客户导入：按客户名称去重（已存在跳过）；必填：客户名称 */
+export function importCustomers(rows) {
+  const created = []
+  const skipped = []
+  const errors = []
+  rows.forEach((row, i) => {
+    const name = String(row.name || '').trim()
+    if (!name) {
+      errors.push({ row: i + 1, reason: '客户名称不能为空' })
+      return
+    }
+    if (db.customers.some((c) => c.name === name)) {
+      skipped.push(name)
+      return
+    }
+    const level = ['A', 'B', 'C'].includes(row.level) ? row.level : 'C'
+    db.customers.push({
+      id: `CUS${String(db.customers.length + 1).padStart(3, '0')}`,
+      name,
+      type: { 发货方: 'shipper', 收货方: 'consignee', 双向客户: 'both' }[row.type] || 'shipper',
+      region: String(row.region || '').trim() || '其他',
+      address: '',
+      level,
+      contact: String(row.contact || '').trim() || '-',
+      phone: String(row.phone || '').trim() || '-',
+      creditLimit: Number(row.creditLimit) > 0 ? Math.round(Number(row.creditLimit)) : level === 'A' ? 5000000 : level === 'B' ? 2000000 : 500000,
+      totalBusiness: 0,
+      joinDate: dayjs().format('YYYY-MM-DD'),
+      status: 'active',
+      remark: '导入'
+    })
+    created.push(name)
+  })
+  if (created.length || skipped.length || errors.length) {
+    logAction('客户管理', '数据导入', `导入客户 ${created.length} 条，跳过重复 ${skipped.length} 条，失败 ${errors.length} 条`)
+    notify('客户数据导入完成', 'system', '/customer', `导入 ${created.length} 条，跳过重复 ${skipped.length} 条，失败 ${errors.length} 条`)
+  }
+  return { created, skipped, errors }
+}
+
+/** 商品导入：按商品名称去重（已存在跳过）；必填：商品名称 */
+export function importCommodities(rows) {
+  const created = []
+  const skipped = []
+  const errors = []
+  rows.forEach((row, i) => {
+    const name = String(row.name || '').trim()
+    if (!name) {
+      errors.push({ row: i + 1, reason: '商品名称不能为空' })
+      return
+    }
+    if (db.commodities.some((c) => c.name === name)) {
+      skipped.push(name)
+      return
+    }
+    db.commodities.push({
+      id: `CM${String(db.commodities.length + 1).padStart(3, '0')}`,
+      name,
+      category: String(row.category || '').trim() || '煤炭',
+      unit: String(row.unit || '').trim() || '吨',
+      density: Number(row.density) > 0 ? Number(row.density) : 1,
+      price: Number(row.price) > 0 ? Math.round(Number(row.price)) : 0,
+      indicators: [{ name: '质量要求', value: '按合同约定' }],
+      status: 'active',
+      totalVolume: 0,
+      remark: '导入'
+    })
+    created.push(name)
+  })
+  if (created.length || skipped.length || errors.length) {
+    logAction('商品管理', '数据导入', `导入商品 ${created.length} 条，跳过重复 ${skipped.length} 条，失败 ${errors.length} 条`)
+    notify('商品数据导入完成', 'system', '/commodity', `导入 ${created.length} 条，跳过重复 ${skipped.length} 条，失败 ${errors.length} 条`)
+  }
+  return { created, skipped, errors }
+}
+
+/** 车辆导入：按车牌去重（已存在跳过）；必填：车牌号；新导入车辆默认空闲、年检一年有效 */
+export function importVehicles(rows) {
+  const created = []
+  const skipped = []
+  const errors = []
+  rows.forEach((row, i) => {
+    const plate = String(row.plate || '').trim()
+    if (!plate) {
+      errors.push({ row: i + 1, reason: '车牌号不能为空' })
+      return
+    }
+    if (db.vehicles.some((v) => v.plate === plate)) {
+      skipped.push(plate)
+      return
+    }
+    db.vehicles.push({
+      id: `V${String(db.vehicles.length + 1).padStart(3, '0')}`,
+      plate,
+      type: String(row.type || '').trim() || '重型半挂车',
+      capacity: Number(row.capacity) > 0 ? Number(row.capacity) : 35,
+      owner: row.owner === '自有' ? '自有' : '外协',
+      fuelType: String(row.fuelType || '').trim() || '柴油',
+      status: 'idle',
+      purchaseDate: dayjs().format('YYYY-MM-DD'),
+      nextInspection: dayjs().add(365, 'day').format('YYYY-MM-DD'),
+      mileage: 0,
+      monthlyCost: 0,
+      remark: '导入'
+    })
+    created.push(plate)
+  })
+  if (created.length || skipped.length || errors.length) {
+    logAction('车辆管理', '数据导入', `导入车辆 ${created.length} 条，跳过重复 ${skipped.length} 条，失败 ${errors.length} 条`)
+    notify('车辆数据导入完成', 'system', '/vehicle', `导入 ${created.length} 条，跳过重复 ${skipped.length} 条，失败 ${errors.length} 条`)
+  }
+  return { created, skipped, errors }
+}
+
+/* ===== 银行对账核销（G8：银行流水 → 账单核销，收款闭环） ===== */
+
+/** 手动核销：待核销银行流水核销至指定账单（写收款流水，超未付余额拦截）
+ *  守卫：流水须待核销；流水金额不可超过账单未付余额 */
+export function matchBankRecord(b, s) {
+  if (!b) return { error: '请选择银行流水' }
+  if (b.status !== 'unmatched') return { error: `银行流水 ${b.id} 已核销，不能重复核销` }
+  if (!s) return { error: '请选择核销账单' }
+  const unpaid = s.totalAmount - s.paidAmount
+  if (b.amount > unpaid) {
+    return { error: `银行流水金额 ${formatMoney(b.amount)} 超过账单 ${s.billNo} 未付余额 ${formatMoney(unpaid)}` }
+  }
+  const real = recordPayment(s, b.amount, '银行转账')
+  b.status = 'matched'
+  b.settlementId = s.id
+  b.matchTime = dayjs().format('YYYY-MM-DD HH:mm')
+  b.matchBy = operator.name
+  logAction('结算管理', '银行核销', `银行流水 ${b.id}（${b.counterparty} ${formatMoney(b.amount)}）核销至账单 ${s.billNo}`)
+  return { ok: true, real }
+}
+
+/** 自动核销：待核销流水中，对手方+金额与账单（已结算/逾期）未付余额精确一致者自动核销
+ *  口径：金额精确匹配（容差 0.01 元），避免误核销；其余流水保留待人工处理 */
+export function autoMatchBank() {
+  const matched = []
+  for (const b of db.bankRecords.filter((x) => x.status === 'unmatched')) {
+    const c = db.customers.find((x) => x.name === b.counterparty)
+    const s = db.settlements.find(
+      (x) =>
+        (x.status === 'settled' || x.status === 'overdue') &&
+        x.customerId === c?.id &&
+        Math.abs(x.totalAmount - x.paidAmount - b.amount) < 0.01
+    )
+    if (!s) continue
+    const r = matchBankRecord(b, s)
+    if (r && !r.error) matched.push(b)
+  }
+  if (matched.length) logAction('结算管理', '自动核销', `自动核销完成，${matched.length} 笔银行流水已核销`)
+  return matched
 }
 
 /** 启动时全量校准：计划/合同进度与调度实际执行对齐 */

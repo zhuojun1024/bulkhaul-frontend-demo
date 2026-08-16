@@ -15,6 +15,12 @@ export const menuRoutes = [
     meta: { title: '工作台', icon: 'Odometer' }
   },
   {
+    path: '/message',
+    name: 'Message',
+    component: () => import('@/views/message/index.vue'),
+    meta: { title: '消息中心', icon: 'Bell' }
+  },
+  {
     path: '/portal',
     name: 'Portal',
     component: () => import('@/views/portal/index.vue'),

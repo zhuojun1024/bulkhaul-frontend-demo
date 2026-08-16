@@ -8,22 +8,24 @@
     </PageHeader>
 
     <!-- 状态统计 -->
-    <div class="stat-row">
-      <div
-        v-for="s in statItems"
-        :key="s.key"
-        class="stat-chip"
-        :class="{ active: filter.status === s.key }"
-        :style="{ '--chip-color': s.color }"
-        @click="filter.status = filter.status === s.key ? '' : s.key; page = 1"
-      >
-        <span class="stat-chip__num num">{{ s.count }}</span>
-        <span class="stat-chip__label">{{ s.label }}</span>
-      </div>
-    </div>
+    <el-tabs v-model="activeTab" class="contract-tabs">
+      <el-tab-pane label="合同列表" name="contract">
+        <div class="stat-row">
+          <div
+            v-for="s in statItems"
+            :key="s.key"
+            class="stat-chip"
+            :class="{ active: filter.status === s.key }"
+            :style="{ '--chip-color': s.color }"
+            @click="filter.status = filter.status === s.key ? '' : s.key; page = 1"
+          >
+            <span class="stat-chip__num num">{{ s.count }}</span>
+            <span class="stat-chip__label">{{ s.label }}</span>
+          </div>
+        </div>
 
-    <!-- 筛选 + 表格 -->
-    <div class="panel">
+        <!-- 筛选 + 表格 -->
+        <div class="panel">
       <div class="panel__body">
         <el-form inline class="filter-bar" @submit.prevent>
           <el-form-item>
@@ -140,7 +142,64 @@
           />
         </div>
       </div>
-    </div>
+      </div>
+      </el-tab-pane>
+
+      <!-- 运输需求（客户门户发起 → 转合同草稿） -->
+      <el-tab-pane :label="'运输需求（待处理 ' + pendingRequestCount + '）'" name="request">
+        <div class="panel">
+          <div class="panel__header">
+            <span class="panel__title">客户运输需求</span>
+            <el-tag size="small" type="info" effect="plain">共 {{ requestRows.length }} 条</el-tag>
+          </div>
+          <div class="panel__body">
+            <el-table :data="requestRows" stripe>
+              <el-table-column prop="id" label="需求编号" width="100" fixed />
+              <el-table-column label="客户" min-width="160" show-overflow-tooltip>
+                <template #default="{ row }">{{ find.customer(row.customerId)?.name }}</template>
+              </el-table-column>
+              <el-table-column label="商品" width="90" align="center">
+                <template #default="{ row }">{{ find.commodity(row.commodityId)?.name }}</template>
+              </el-table-column>
+              <el-table-column label="数量(吨)" width="100" align="right">
+                <template #default="{ row }">{{ formatNum(row.quantity) }}</template>
+              </el-table-column>
+              <el-table-column label="线路" min-width="200" show-overflow-tooltip>
+                <template #default="{ row }">
+                  {{ find.terminal(row.loadTerminalId)?.name }} → {{ find.terminal(row.unloadTerminalId)?.name }}
+                </template>
+              </el-table-column>
+              <el-table-column prop="mode" label="方式" width="90" align="center" />
+              <el-table-column label="期望单价" width="100" align="right">
+                <template #default="{ row }">{{ row.unitPrice ? row.unitPrice + ' 元/吨' : '—' }}</template>
+              </el-table-column>
+              <el-table-column prop="expectDate" label="期望开始" width="110" />
+              <el-table-column prop="createTime" label="提交时间" width="140" />
+              <el-table-column label="状态" width="100" align="center">
+                <template #default="{ row }">
+                  <StatusTag :status="row.status" :map="requestStatusMap" />
+                </template>
+              </el-table-column>
+              <el-table-column v-if="can('contract')" label="操作" width="170" align="center" fixed="right">
+                <template #default="{ row }">
+                  <template v-if="row.status === 'pending'">
+                    <el-button link type="primary" size="small" @click="openConvert(row)">生成合同草稿</el-button>
+                    <el-button link type="danger" size="small" @click="openReject(row)">驳回</el-button>
+                  </template>
+                  <el-button
+                    v-else-if="row.status === 'converted'"
+                    link type="primary" size="small"
+                    @click="goDetail(find.contract(row.contractId))"
+                  >查看合同</el-button>
+                  <span v-else class="text-muted" :title="row.rejectReason">已驳回</span>
+                </template>
+              </el-table-column>
+            </el-table>
+            <el-empty v-if="!requestRows.length" description="暂无运输需求" :image-size="60" />
+          </div>
+        </div>
+      </el-tab-pane>
+    </el-tabs>
 
     <!-- 合同审批（通过 / 驳回） -->
     <el-dialog v-model="approveDialog" title="合同审批" width="480px">
@@ -240,6 +299,59 @@
         <el-button type="danger" @click="doTerminate">确认终止</el-button>
       </template>
     </el-dialog>
+
+    <!-- 需求转合同草稿 -->
+    <el-dialog v-model="convertDialog" title="需求转合同草稿" width="480px">
+      <div v-if="convertTarget">
+        <el-descriptions :column="1" border size="small" style="margin-bottom: 16px">
+          <el-descriptions-item label="需求编号">{{ convertTarget.id }}</el-descriptions-item>
+          <el-descriptions-item label="客户">{{ find.customer(convertTarget.customerId)?.name }}</el-descriptions-item>
+          <el-descriptions-item label="线路">
+            {{ find.terminal(convertTarget.loadTerminalId)?.name }} → {{ find.terminal(convertTarget.unloadTerminalId)?.name }}
+          </el-descriptions-item>
+          <el-descriptions-item label="商品/方式">
+            {{ find.commodity(convertTarget.commodityId)?.name }} · {{ convertTarget.mode }}
+          </el-descriptions-item>
+        </el-descriptions>
+        <el-form label-width="100px">
+          <el-form-item label="合同数量(吨)">
+            <el-input-number v-model="convertForm.quantity" :min="1" :step="35" style="width: 100%" />
+          </el-form-item>
+          <el-form-item label="合同单价">
+            <el-input-number v-model="convertForm.unitPrice" :min="0" :step="1" :precision="1" style="width: 100%" />
+          </el-form-item>
+          <el-form-item label="结算账期">
+            <el-select v-model="convertForm.paymentDays" style="width: 100%">
+              <el-option v-for="d in [30, 45, 60, 90]" :key="d" :label="d + ' 天'" :value="d" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="截止日期">
+            <el-date-picker v-model="convertForm.endDate" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
+          </el-form-item>
+        </el-form>
+        <div class="convert-tip">生成后为"草稿"合同，可在合同列表提交审批（部门审批 → 公司审批）。</div>
+      </div>
+      <template #footer>
+        <el-button @click="convertDialog = false">取消</el-button>
+        <el-button type="primary" @click="doConvert">确认生成</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 驳回运输需求 -->
+    <el-dialog v-model="rejectDialog" title="驳回运输需求" width="440px">
+      <div v-if="rejectTarget">
+        <el-alert :title="'需求 ' + rejectTarget.id + '（' + (find.customer(rejectTarget.customerId)?.name || '') + '）'" type="warning" :closable="false" show-icon />
+        <el-form label-width="90px" style="margin-top: 16px">
+          <el-form-item label="驳回原因" required>
+            <el-input v-model="rejectReason" type="textarea" :rows="2" maxlength="200" show-word-limit placeholder="请填写驳回原因（将展示给客户）" />
+          </el-form-item>
+        </el-form>
+      </div>
+      <template #footer>
+        <el-button @click="rejectDialog = false">取消</el-button>
+        <el-button type="danger" @click="doRejectRequest">确认驳回</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -259,7 +371,9 @@ import {
   extendContract,
   completeContract,
   terminateContract,
-  archiveContract
+  archiveContract,
+  convertRequestToContract,
+  rejectTransportRequest
 } from '@/mock/flow'
 import { formatMoney, formatNum } from '@/utils'
 import dayjs from 'dayjs'
@@ -270,6 +384,8 @@ const tokens = useTokens()
 const { can } = usePerm()
 
 const router = useRouter()
+
+const activeTab = ref('contract')
 
 const statusMap = {
   draft: { label: '草稿', type: 'info' },
@@ -336,6 +452,73 @@ function goDetail(row) {
 
 function progressColor(status) {
   return { executing: tokens.primary, completed: tokens.success, terminated: tokens.danger }[status] || tokens.neutral300
+}
+
+/* ===== 运输需求（客户门户发起 → 转合同草稿 / 驳回） ===== */
+const requestStatusMap = {
+  pending: { label: '待处理', type: 'warning' },
+  converted: { label: '已转合同', type: 'success' },
+  rejected: { label: '已驳回', type: 'danger' }
+}
+const requestRows = computed(() =>
+  [...db.transportRequests].sort((a, b) => (a.createTime < b.createTime ? 1 : -1))
+)
+const pendingRequestCount = computed(() => db.transportRequests.filter((r) => r.status === 'pending').length)
+
+const convertDialog = ref(false)
+const convertTarget = ref(null)
+const convertForm = reactive({ quantity: 0, unitPrice: 0, paymentDays: 30, endDate: '' })
+
+function openConvert(row) {
+  convertTarget.value = row
+  convertForm.quantity = row.quantity
+  convertForm.unitPrice = row.unitPrice || 0
+  convertForm.paymentDays = 30
+  convertForm.endDate = dayjs().add(180, 'day').format('YYYY-MM-DD')
+  convertDialog.value = true
+}
+
+function doConvert() {
+  if (!convertForm.quantity || convertForm.quantity <= 0) {
+    ElMessage.warning('合同数量须大于 0')
+    return
+  }
+  const c = convertRequestToContract(convertTarget.value, {
+    quantity: convertForm.quantity,
+    unitPrice: convertForm.unitPrice,
+    paymentDays: convertForm.paymentDays,
+    endDate: convertForm.endDate
+  })
+  if (c && c.error) {
+    ElMessage.error(c.error)
+    return
+  }
+  convertDialog.value = false
+  ElMessage.success(`运输需求已转为合同草稿 ${c.id}，可提交审批`)
+}
+
+const rejectDialog = ref(false)
+const rejectTarget = ref(null)
+const rejectReason = ref('')
+
+function openReject(row) {
+  rejectTarget.value = row
+  rejectReason.value = ''
+  rejectDialog.value = true
+}
+
+function doRejectRequest() {
+  if (!rejectReason.value.trim()) {
+    ElMessage.warning('请填写驳回原因')
+    return
+  }
+  const r = rejectTransportRequest(rejectTarget.value, rejectReason.value.trim())
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
+  rejectDialog.value = false
+  ElMessage.success(`需求 ${rejectTarget.value.id} 已驳回`)
 }
 
 /* ===== 审批（通过 / 驳回） ===== */
@@ -574,5 +757,20 @@ function exportCsv() {
 .amount {
   font-weight: 600;
   color: var(--text-primary);
+}
+
+.contract-tabs :deep(.el-tab-pane) {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.text-muted {
+  color: var(--text-secondary);
+}
+
+.convert-tip {
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 </style>
