@@ -1,6 +1,8 @@
-import { db, randInt, randomName, ROUTES, NOW } from './base'
+import { db, randInt, randomName, ROUTES, NOW, tareOf } from './base'
 import dayjs from 'dayjs'
 import { round, formatMoney } from '@/utils'
+
+export { tareOf }
 
 /**
  * 业务流转中枢：集中管理调度单状态机，及向计划/合同/资源的回卷联动
@@ -59,13 +61,6 @@ export function logAction(module, action, detail, result = 'success') {
     ip: '192.168.1.100',
     result
   })
-}
-
-/** 车辆皮重（10-16t，按车辆 id 确定性派生，与预置磅单口径一致） */
-export function tareOf(vehicle) {
-  if (!vehicle) return 13
-  const n = vehicle.id.split('').reduce((s, ch) => s + ch.charCodeAt(0), 0)
-  return +(10 + (n % 61) / 10).toFixed(2)
 }
 
 /** 登记磅单 */
@@ -325,7 +320,8 @@ export function finishException(e, result, cost) {
   logAction('异常处理', '处置完成', `异常单 ${e.id} 处置完成，损失 ${cost || 0} 元`)
 }
 
-/** 关闭归档：closed；事故类同步结案并更新车辆状态 */
+/** 关闭归档：closed；事故类同步结案并更新车辆状态
+ *  结算联动：车次已入账单且损失未计入 → 补扣损失（结算调整），避免"结算后异常才关闭"损失漏扣 */
 export function closeException(e) {
   e.status = 'closed'
   if (!e.handler) e.handler = '系统'
@@ -339,22 +335,48 @@ export function closeException(e) {
       if (v && v.status === 'idle') v.status = 'maintenance'
     }
   }
+  if (e.cost > 0 && e.dispatchId && !e.settleApplied) {
+    const d = db.dispatches.find((x) => x.id === e.dispatchId)
+    const s = d && d.settlementId ? db.settlements.find((x) => x.id === d.settlementId) : null
+    if (s) {
+      s.exceptionLoss = (s.exceptionLoss || 0) + e.cost
+      s.totalAmount -= e.cost
+      s.adjustments = s.adjustments || []
+      s.adjustments.push({
+        time: dayjs().format('YYYY-MM-DD HH:mm'),
+        reason: `异常单 ${e.id} 关闭，损失补扣${s.invoiceStatus === 'issued' ? '（已开票，需红冲重开）' : ''}`,
+        amount: -e.cost
+      })
+      e.settleApplied = s.id
+      logAction(
+        '结算管理',
+        '结算调整',
+        `账单 ${s.billNo} 因异常单 ${e.id} 关闭补扣损失 ${formatMoney(e.cost)}，结算金额调整为 ${formatMoney(s.totalAmount)}`
+      )
+    }
+  }
   logAction('异常处理', '关闭异常单', `异常单 ${e.id} 关闭归档${e.accidentId ? `，事故 ${e.accidentId} 结案` : ''}`)
 }
 
 /** 计划调度：生成 count 张调度单，数量按批次均摊，距离取实际线路
- *  公路/多式联运 → 匹配车辆+司机；铁路/水运/管道 → 按运输单元派车（车号/船名/管段），不占车辆司机 */
+ *  公路/多式联运 → 匹配车辆+司机；铁路/水运/管道 → 按运输单元派车（车号/船名/管段），不占车辆司机
+ *  守卫：合同已终止不可再派车；车辆/司机排除已有未完结车次（待装货/装货中/异常）者，防重复占用 */
 export function createDispatches(p, count, vehicleIds = []) {
+  const c = contractOf(p.contractId)
+  if (c && c.status === 'terminated') return { created: [], error: '合同已终止，不能再下发调度单' }
   const route = ROUTES.find((r) => r.from === p.loadTerminalId && r.to === p.unloadTerminalId)
   const per = Math.max(1, Math.round(p.quantity / count))
   const road = isRoadMode(p.mode)
   const created = []
   if (road) {
+    const BUSY = ['pending', 'loading', 'exception']
+    const busyV = new Set(db.dispatches.filter((x) => BUSY.includes(x.status)).map((x) => x.vehicleId))
+    const busyD = new Set(db.dispatches.filter((x) => BUSY.includes(x.status)).map((x) => x.driverId))
     const pool = vehicleIds.length
-      ? db.vehicles.filter((v) => v.type !== '铁路敞车' && v.type !== '散货船' && vehicleIds.includes(v.id))
-      : db.vehicles.filter((v) => v.type !== '铁路敞车' && v.type !== '散货船' && v.status === 'idle')
-    const avail = db.drivers.filter((x) => x.status === 'available')
-    if (!pool.length || !avail.length) return { created, error: '无可用车辆或司机' }
+      ? db.vehicles.filter((v) => v.type !== '铁路敞车' && v.type !== '散货船' && vehicleIds.includes(v.id) && !busyV.has(v.id))
+      : db.vehicles.filter((v) => v.type !== '铁路敞车' && v.type !== '散货船' && v.status === 'idle' && !busyV.has(v.id))
+    const avail = db.drivers.filter((x) => x.status === 'available' && !busyD.has(x.id))
+    if (!pool.length || !avail.length) return { created, error: '无可用车辆或司机（须空闲且无未完结车次）' }
     for (let i = 0; i < count; i++) {
       const v = pool[i % pool.length]
       const dr = avail[(db.dispatches.length + i) % avail.length]
@@ -507,6 +529,8 @@ export function generateSettlements(keys) {
     for (const d of g.dispatches) {
       d.settled = true
       d.settlementId = s.id
+      // 已关闭异常损失已在账单中计入，标记防止 closeException 重复补扣
+      for (const e of db.exceptions.filter((x) => x.dispatchId === d.id && x.status === 'closed')) e.settleApplied = s.id
     }
     created.push(s)
   }
@@ -560,6 +584,31 @@ export function startReconcile(s) {
   s.status = 'reconciling'
   logAction('结算管理', '发起对账', `账单 ${s.billNo} 三方比对完成，${s.reconciliation.diffCount} 车次不一致，损耗 ${s.reconciliation.lossQty} 吨`)
   return s.reconciliation
+}
+
+/** 重算结算单（仅"待对账"账单）：按当前磅单与已关闭异常重算费用，差异记入调整记录
+ *  适用场景：生成账单后磅单补录/异常损失变化，对账前刷新金额 */
+export function recalcSettlement(s) {
+  if (s.status !== 'pending') return { error: `账单 ${s.billNo} 当前非"待对账"状态，无法重算` }
+  const c = contractOf(s.contractId)
+  const ds = db.dispatches.filter((d) => d.settlementId === s.id)
+  if (!ds.length) return { error: `账单 ${s.billNo} 下无车次，无法重算` }
+  const fees = calcSettlementFees(c, ds)
+  const oldTotal = s.totalAmount
+  Object.assign(s, fees)
+  s.totalAmount =
+    fees.freight + fees.loadingFee + fees.unloadingFee + (s.tollFee || 0) + (s.surcharge || 0) - fees.lossDeduction - fees.exceptionLoss
+  const delta = s.totalAmount - oldTotal
+  if (delta !== 0) {
+    s.adjustments = s.adjustments || []
+    s.adjustments.push({ time: dayjs().format('YYYY-MM-DD HH:mm'), reason: '重算结算（磅单/异常口径刷新）', amount: delta })
+    logAction(
+      '结算管理',
+      '重算结算',
+      `账单 ${s.billNo} 重算：结算金额 ${formatMoney(oldTotal)} → ${formatMoney(s.totalAmount)}（${delta > 0 ? '+' : ''}${formatMoney(delta)}）`
+    )
+  }
+  return { ok: true, delta }
 }
 
 /** 逾期规则：已结算且超账期未付清 → 逾期；逾期账单付清 → 回到已结算 */
@@ -702,7 +751,9 @@ export function extendContract(c, newDate, reason) {
   logAction('合同管理', '合同延期', `合同 ${c.id} 延期至 ${newDate}（${reason}）`)
 }
 
-/** 提前终止：executing → terminated；未取消计划批次一并取消；已完成未入账单车次生成提前结算单 */
+/** 提前终止：executing → terminated
+ *  口径：待执行计划批次取消；已调度/执行中计划及在途车次继续完成运输并正常结算（已发生业务照常履约），
+ *  终止后不可再新建计划（新建计划页仅列执行中合同）与下发调度单（createDispatches 守卫拦截） */
 export function terminateContract(c, reason, settleNow = true) {
   c.status = 'terminated'
   pushChange(c, reason, `提前终止（${reason}）`)
@@ -745,6 +796,29 @@ export function issueInvoice(s) {
   s.invoiceStatus = 'issued'
   logAction('发票管理', '开具发票', `账单 ${s.billNo} 开具发票 ${invoiceNo}，金额 ${formatMoney(s.totalAmount)}`)
   return invoiceNo
+}
+
+/** 发票开具（发票管理页：待开具 → 已开具，号码按 结算单ID-发票ID 确定性派生） */
+export function issueInvoiceRow(inv) {
+  if (inv.status !== 'pending') return { error: `发票 ${inv.id} 当前非"待开具"状态，无法开具` }
+  inv.invoiceNo = inv.invoiceNo || genInvoiceNo(inv.settlementId + '-' + inv.id)
+  inv.issueDate = dayjs().format('YYYY-MM-DD')
+  inv.status = 'issued'
+  const s = db.settlements.find((x) => x.id === inv.settlementId)
+  if (s) s.invoiceStatus = 'issued'
+  logAction('发票管理', '开具发票', `发票 ${inv.invoiceNo}（账单 ${s ? s.billNo : '-'}）开具，金额 ${formatMoney(inv.amount)}`)
+  return { ok: true, invoiceNo: inv.invoiceNo }
+}
+
+/** 发票红冲（发票管理页：已开具 → 已红冲，须填红冲原因） */
+export function redFlushInvoiceRow(inv, reason) {
+  if (inv.status !== 'issued') return { error: `发票 ${inv.id} 当前非"已开具"状态，无法红冲` }
+  inv.status = 'red-flushed'
+  inv.remark = reason || inv.remark || ''
+  const s = db.settlements.find((x) => x.id === inv.settlementId)
+  if (s) s.invoiceStatus = 'not-issued'
+  logAction('发票管理', '发票红冲', `发票 ${inv.invoiceNo} 红冲：${reason || '未填写原因'}`)
+  return { ok: true }
 }
 
 /** 启动时全量校准：计划/合同进度与调度实际执行对齐 */

@@ -1,5 +1,6 @@
 import { db, rng, randInt, randomName, NOW } from './base'
 import dayjs from 'dayjs'
+import { ROLE_MENUS, ROLE_ACTIONS } from '@/permission-table'
 
 /** 角色 */
 db.roles = [
@@ -10,6 +11,11 @@ db.roles = [
   { id: 'R005', name: '安全管理员', code: 'safety', userCount: 1, description: '安全/异常/事故', builtIn: false },
   { id: 'R006', name: '只读用户', code: 'viewer', userCount: 0, description: '仅查看权限', builtIn: false }
 ]
+
+/** 角色权限表（数据化）：内置角色按权限表种子；角色管理页的修改写入此处并随快照持久化 */
+db.rolePerms = Object.fromEntries(
+  Object.keys(ROLE_MENUS).map((name) => [name, { menus: ROLE_MENUS[name], actions: ROLE_ACTIONS[name] }])
+)
 
 /** 用户 */
 const roleNames = ['平台管理员', '调度员', '调度员', '结算专员', '场站操作员', '安全管理员']

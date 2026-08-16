@@ -47,8 +47,17 @@ export const db = reactive({
   inspections: [],
   users: [],
   roles: [],
+  // 角色权限表（数据化）：角色名 → { menus: null|路径[], actions: null|操作码[] }，null=全部，[]=无
+  rolePerms: {},
   logs: []
 })
+
+/** 车辆皮重（10-16t，按车辆 id 确定性派生）；种子磅单与运行时补录共用同一口径 */
+export function tareOf(vehicle) {
+  if (!vehicle) return 13
+  const n = vehicle.id.split('').reduce((s, ch) => s + ch.charCodeAt(0), 0)
+  return +(10 + (n % 61) / 10).toFixed(2)
+}
 
 /* ========== 基础词库 ========== */
 export const SURNAMES = '王李张刘陈杨黄赵吴周徐孙马朱胡郭何林罗郑梁谢宋唐许韩冯邓曹彭'.split('')

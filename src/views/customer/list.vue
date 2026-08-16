@@ -83,6 +83,7 @@
             <template #default="{ row }">
               <el-button link type="primary" size="small" @click.stop="goDetail(row)">详情</el-button>
               <el-button
+                v-if="can('customer')"
                 :link="true"
                 :type="row.status === 'active' ? 'danger' : 'success'"
                 size="small"
@@ -116,11 +117,14 @@ import { Search, Download, Refresh } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db } from '@/mock'
+import { logAction } from '@/mock/flow'
 import { formatMoney } from '@/utils'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
+import { usePerm } from '@/permission'
 
 const tokens = useTokens()
+const { can } = usePerm()
 
 const router = useRouter()
 const loading = ref(true)
@@ -189,10 +193,12 @@ function toggleStatus(row) {
   if (row.status === 'active') {
     ElMessageBox.confirm(`确认冻结客户 ${row.name}？冻结后不可新建合同。`, '冻结客户', { type: 'warning' }).then(() => {
       row.status = 'frozen'
+      logAction('客户管理', '客户冻结', `客户 ${row.name} 冻结，不可新建合同`)
       ElMessage.success('客户已冻结')
     }).catch(() => {})
   } else {
     row.status = 'active'
+    logAction('客户管理', '客户解冻', `客户 ${row.name} 解冻，恢复合作`)
     ElMessage.success('客户已解冻')
   }
 }

@@ -1,4 +1,4 @@
-import { db, rng, randomName } from './base'
+import { db, rng, randomName, tareOf } from './base'
 import { round } from '@/utils'
 
 /**
@@ -15,7 +15,7 @@ db.weighings = []
 
 for (const d of db.dispatches) {
   const vehicle = db.vehicles.find((v) => v.id === d.vehicleId)
-  const tare = round(10 + rng() * 6, 2) // 皮重 10-16t
+  const tare = tareOf(vehicle) // 皮重按车辆确定性派生，与运行时补录口径一致
 
   if (d.loadTime) {
     db.weighings.push({

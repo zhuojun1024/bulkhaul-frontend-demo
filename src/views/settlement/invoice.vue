@@ -65,12 +65,12 @@
           <el-table-column label="操作" width="140" align="center" fixed="right">
             <template #default="{ row }">
               <el-button
-                v-if="row.status === 'pending'"
+                v-if="row.status === 'pending' && can('invoice')"
                 link type="primary" size="small"
                 @click="issue(row)"
               >开具</el-button>
               <el-button
-                v-if="row.status === 'issued'"
+                v-if="row.status === 'issued' && can('invoice')"
                 link type="danger" size="small"
                 @click="redFlush(row)"
               >红冲</el-button>
@@ -125,9 +125,12 @@ import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
-import { genInvoiceNo } from '@/mock/flow'
+import { issueInvoiceRow, redFlushInvoiceRow } from '@/mock/flow'
+import { usePerm } from '@/permission'
 import { formatMoney, formatNum } from '@/utils'
 import dayjs from 'dayjs'
+
+const { can } = usePerm()
 
 const router = useRouter()
 const loading = ref(true)
@@ -178,23 +181,25 @@ function goSettlement(row) {
 }
 
 function issue(row) {
-  // 发票号按 结算单ID-发票ID 确定性派生，刷新/重开结果一致
-  row.invoiceNo = genInvoiceNo(row.settlementId + '-' + row.id)
-  row.issueDate = dayjs().format('YYYY-MM-DD')
-  row.status = 'issued'
-  const s = find.settlement(row.settlementId)
-  if (s) s.invoiceStatus = 'issued'
-  ElMessage.success('发票已开具')
+  // 统一走 flow：状态守卫 + 审计日志；发票号按 结算单ID-发票ID 确定性派生
+  const r = issueInvoiceRow(row)
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
+  ElMessage.success(`发票已开具：${r.invoiceNo}`)
 }
 
 function redFlush(row) {
   ElMessageBox.prompt('请输入红冲原因', `红冲发票 ${row.invoiceNo}`, {
     inputPattern: /.{2,}/,
     inputErrorMessage: '原因至少 2 个字符'
-  }).then(() => {
-    row.status = 'red-flushed'
-    const s = find.settlement(row.settlementId)
-    if (s) s.invoiceStatus = 'not-issued'
+  }).then(({ value }) => {
+    const r = redFlushInvoiceRow(row, value)
+    if (r && r.error) {
+      ElMessage.error(r.error)
+      return
+    }
     ElMessage.warning('发票已红冲')
   }).catch(() => {})
 }

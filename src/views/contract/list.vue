@@ -217,7 +217,7 @@
     <el-dialog v-model="terminateDialog" title="提前终止合同" width="480px">
       <div v-if="terminateTarget">
         <el-alert
-          title="终止后合同不可再新建计划，待执行计划批次将一并取消"
+          title="终止后合同不可再新建计划与下发调度单；待执行计划批次将一并取消，已调度/在途车次继续完成运输并正常结算"
           type="warning"
           :closable="false"
           show-icon

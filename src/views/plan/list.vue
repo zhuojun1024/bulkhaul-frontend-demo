@@ -87,7 +87,7 @@
                 @click.stop="openDispatch(row)"
               >调度</el-button>
               <el-button
-                v-if="row.status === 'pending' && can('dispatch')"
+                v-if="row.status === 'pending' && can('plan')"
                 link type="danger" size="small"
                 @click.stop="cancel(row)"
               >取消</el-button>
@@ -157,7 +157,7 @@ import { Search, Plus, Download, Refresh } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
-import { createDispatches, creditCheck, isRoadMode } from '@/mock/flow'
+import { createDispatches, creditCheck, isRoadMode, logAction } from '@/mock/flow'
 import { formatNum } from '@/utils'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
@@ -232,6 +232,7 @@ function progressColor(status) {
 function cancel(row) {
   ElMessageBox.confirm(`确认取消计划 ${row.id}？`, '提示', { type: 'warning' }).then(() => {
     row.status = 'cancelled'
+    logAction('运输计划', '取消计划', `计划 ${row.id} 取消（${find.contract(row.contractId)?.name || row.contractId}）`)
     ElMessage.success('计划已取消')
   }).catch(() => {})
 }
@@ -243,8 +244,14 @@ const currentPlan = ref(null)
 const dispatchCount = ref(3)
 const vehicleSource = ref('auto')
 const selectedVehicles = ref([])
+/** 已有未完结车次（待装货/装货中/异常）的车辆不可再被指定，与 createDispatches 互斥口径一致 */
+const busyVehicleIds = computed(() =>
+  new Set(db.dispatches.filter((d) => ['pending', 'loading', 'exception'].includes(d.status)).map((d) => d.vehicleId))
+)
 const idleVehicles = computed(() =>
-  db.vehicles.filter((v) => v.status === 'idle' && v.type !== '铁路敞车' && v.type !== '散货船')
+  db.vehicles.filter(
+    (v) => v.status === 'idle' && v.type !== '铁路敞车' && v.type !== '散货船' && !busyVehicleIds.value.has(v.id)
+  )
 )
 
 /** 公路口径（公路/多式联运）才需要匹配车辆司机 */

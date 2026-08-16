@@ -3,7 +3,8 @@ const ALIASES = {
   '@/utils': '../src/utils/index.js',
   '@/mock': '../src/mock/index.js',
   '@/store': '../src/store/index.js',
-  '@/permission': '../src/permission.js'
+  '@/permission': '../src/permission.js',
+  '@/permission-table': '../src/permission-table.js'
 }
 
 export async function resolve(specifier, context, nextResolve) {

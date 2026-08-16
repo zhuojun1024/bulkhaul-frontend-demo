@@ -23,31 +23,58 @@
         <div class="role-card__footer">
           <span>
             <el-icon :size="13"><User /></el-icon>
-            {{ r.userCount }} 名用户
+            {{ userCountOf(r.name) }} 名用户
           </span>
-          <el-button
-            v-if="!r.builtIn"
-            link type="danger" size="small"
-            @click="removeRole(r)"
-          >删除</el-button>
+          <span>
+            <el-tag size="small" :type="permSummary(r.name) === '全部权限' ? 'primary' : 'info'" effect="plain">
+              {{ permSummary(r.name) }}
+            </el-tag>
+            <el-button
+              v-if="!r.builtIn"
+              link type="danger" size="small"
+              style="margin-left: 8px"
+              @click="removeRole(r)"
+            >删除</el-button>
+          </span>
         </div>
       </div>
     </div>
 
-    <!-- 权限设置 -->
-    <el-drawer v-model="permVisible" :title="'权限设置 - ' + (currentRole?.name || '')" size="400px">
+    <!-- 权限设置（真实写入 db.rolePerms，保存后立即生效并持久化） -->
+    <el-drawer v-model="permVisible" :title="'权限设置 - ' + (currentRole?.name || '')" size="420px">
       <div v-if="currentRole" class="perm-drawer">
-        <el-checkbox-group v-model="permChecked" class="perm-group">
-          <div v-for="group in permGroups" :key="group.name" class="perm-group__item">
-            <div class="perm-group__title">{{ group.name }}</div>
-            <el-checkbox
-              v-for="p in group.perms"
-              :key="p"
-              :value="p"
-              class="perm-group__perm"
-            >{{ p }}</el-checkbox>
+        <el-checkbox v-model="permAll" class="perm-all">全部权限（不受限）</el-checkbox>
+        <template v-if="!permAll">
+          <div class="perm-group__item">
+            <div class="perm-group__title">菜单权限</div>
+            <el-checkbox-group v-model="checkedMenus" class="perm-group">
+              <el-checkbox
+                v-for="m in MENU_OPTIONS"
+                :key="m.path"
+                :value="m.path"
+                class="perm-group__perm"
+              >{{ m.label }}</el-checkbox>
+            </el-checkbox-group>
           </div>
-        </el-checkbox-group>
+          <div class="perm-group__item">
+            <div class="perm-group__title">操作权限</div>
+            <el-checkbox-group v-model="checkedActions" class="perm-group">
+              <el-checkbox
+                v-for="a in ACTION_OPTIONS"
+                :key="a.code"
+                :value="a.code"
+                class="perm-group__perm"
+              >{{ a.label }}</el-checkbox>
+            </el-checkbox-group>
+          </div>
+        </template>
+        <el-alert
+          v-else
+          type="info"
+          :closable="false"
+          show-icon
+          title="该角色可访问全部菜单并执行全部操作"
+        />
         <div class="perm-drawer__footer">
           <el-button @click="permVisible = false">取消</el-button>
           <el-button type="primary" @click="savePerm">保存权限</el-button>
@@ -83,31 +110,53 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Lock, User } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { db } from '@/mock'
+import { logAction } from '@/mock/flow'
+import { MENU_OPTIONS, ACTION_OPTIONS } from '@/permission'
 
 const loading = ref(true)
 onMounted(() => setTimeout(() => (loading.value = false), 300))
 
-const permGroups = [
-  { name: '运输管理', perms: ['合同管理', '运输计划', '调度管理', '在途监控', '异常处理'] },
-  { name: '资源管理', perms: ['车辆管理', '司机管理', '场站管理', '仓储管理', '商品管理'] },
-  { name: '经营管理', perms: ['客户管理', '结算管理', '发票管理'] },
-  { name: '系统管理', perms: ['用户管理', '角色管理', '操作日志', '安全管理'] }
-]
+/** 角色下实际用户数（按用户表实时统计，避免种子 userCount 过期） */
+function userCountOf(roleName) {
+  return db.users.filter((u) => u.role === roleName).length
+}
 
-/* ===== 权限抽屉 ===== */
+/** 角色卡片权限摘要 */
+function permSummary(roleName) {
+  const perm = db.rolePerms[roleName]
+  if (!perm) return '未授权'
+  if (perm.menus === null && perm.actions === null) return '全部权限'
+  return `菜单 ${perm.menus?.length || 0} / 操作 ${perm.actions?.length || 0}`
+}
+
+/* ===== 权限抽屉（真实读写 db.rolePerms） ===== */
 const permVisible = ref(false)
 const currentRole = ref(null)
-const permChecked = ref([])
+const permAll = ref(false)
+const checkedMenus = ref([])
+const checkedActions = ref([])
 
 function openPerm(role) {
   currentRole.value = role
-  permChecked.value = permGroups.flatMap((g) => g.perms).slice(0, role.builtIn ? 19 : 6)
+  const perm = db.rolePerms[role.name] || { menus: [], actions: [] }
+  permAll.value = perm.menus === null && perm.actions === null
+  checkedMenus.value = perm.menus === null ? [] : [...(perm.menus || [])]
+  checkedActions.value = perm.actions === null ? [] : [...(perm.actions || [])]
   permVisible.value = true
 }
 
 function savePerm() {
-  ElMessage.success(`角色 ${currentRole.value.name} 权限已更新（${permChecked.value.length} 项）`)
+  const name = currentRole.value.name
+  db.rolePerms[name] = permAll.value
+    ? { menus: null, actions: null }
+    : { menus: [...checkedMenus.value], actions: [...checkedActions.value] }
+  logAction(
+    '系统管理',
+    '角色权限更新',
+    `角色 ${name} 权限更新：${permAll.value ? '全部权限' : `菜单 ${checkedMenus.value.length} 项、操作 ${checkedActions.value.length} 项`}`
+  )
   permVisible.value = false
+  ElMessage.success(`角色 ${name} 权限已更新并生效`)
 }
 
 /* ===== 新增/删除 ===== */
@@ -120,30 +169,47 @@ function openDialog() {
 }
 
 function saveRole() {
-  if (!form.name || !form.code) {
+  const name = form.name.trim()
+  const code = form.code.trim()
+  if (!name || !code) {
     ElMessage.warning('请填写角色名称和编码')
     return
   }
+  if (db.roles.some((r) => r.name === name || r.code === code)) {
+    ElMessage.warning('角色名称或编码已存在，请更换')
+    return
+  }
+  // 取不冲突的角色 id（避免删除角色后长度回退导致 id 重复）
+  const max = db.roles.reduce((m, r) => {
+    const n = parseInt(String(r.id).replace(/\D/g, ''), 10)
+    return Number.isNaN(n) ? m : Math.max(m, n)
+  }, 0)
   db.roles.push({
-    id: `R${String(db.roles.length + 1).padStart(3, '0')}`,
-    name: form.name,
-    code: form.code,
+    id: `R${String(max + 1).padStart(3, '0')}`,
+    name,
+    code,
     userCount: 0,
     description: form.description || '—',
     builtIn: false
   })
+  // 新建角色默认无任何权限（deny），需到"权限"中显式授权
+  db.rolePerms[name] = { menus: [], actions: [] }
+  logAction('系统管理', '新增角色', `新增角色 ${name}（${code}），默认无权限`)
   dialogVisible.value = false
-  ElMessage.success('角色已创建')
+  ElMessage.success('角色已创建（默认无权限，请在"权限"中授权）')
 }
 
 function removeRole(role) {
-  if (role.userCount > 0) {
-    ElMessage.warning(`角色下还有 ${role.userCount} 名用户，无法删除`)
+  const count = userCountOf(role.name)
+  if (count > 0) {
+    ElMessage.warning(`角色下还有 ${count} 名用户，无法删除`)
     return
   }
   ElMessageBox.confirm(`确认删除角色 ${role.name}？`, '删除角色', { type: 'warning' }).then(() => {
     const idx = db.roles.findIndex((r) => r.id === role.id)
     if (idx > -1) db.roles.splice(idx, 1)
+    delete db.rolePerms[role.name]
+    logAction('系统管理', '删除角色', `删除角色 ${role.name}`)
     ElMessage.success('角色已删除')
   }).catch(() => {})
 }
@@ -226,6 +292,12 @@ function removeRole(role) {
 
 .role-card__footer .el-icon {
   margin-right: 4px;
+}
+
+.perm-all {
+  display: block;
+  margin-bottom: 16px;
+  font-weight: 600;
 }
 
 .perm-group {

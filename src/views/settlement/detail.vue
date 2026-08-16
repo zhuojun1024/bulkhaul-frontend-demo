@@ -23,6 +23,12 @@
             发起对账
           </el-button>
           <el-button
+            v-if="settlement?.status === 'pending' && can('settlement')"
+            :icon="Refresh" @click="recalc"
+          >
+            重算
+          </el-button>
+          <el-button
             v-if="settlement?.status === 'reconciling' && can('settlement')"
             type="success" :icon="CircleCheck" @click="settle"
           >
@@ -65,6 +71,24 @@
               <span>未付余额</span>
               <b class="num fee-total__value text-danger">{{ formatMoney(unpaid) }}</b>
             </div>
+          </div>
+        </div>
+
+        <!-- 调整记录（异常关闭补扣 / 重算） -->
+        <div v-if="settlement?.adjustments?.length" class="panel" style="margin-top: 16px">
+          <div class="panel__header"><span class="panel__title">调整记录</span></div>
+          <div class="panel__body">
+            <el-table :data="settlement.adjustments" stripe size="small">
+              <el-table-column prop="time" label="时间" width="150" />
+              <el-table-column prop="reason" label="调整原因" min-width="220" />
+              <el-table-column label="调整金额(元)" width="140" align="right">
+                <template #default="{ row }">
+                  <span class="num" :class="row.amount < 0 ? 'text-danger' : 'text-success'">
+                    {{ row.amount > 0 ? '+' : '' }}{{ formatNum(row.amount) }}
+                  </span>
+                </template>
+              </el-table-column>
+            </el-table>
           </div>
         </div>
       </el-col>
@@ -220,10 +244,10 @@ defineOptions({ name: 'SettlementDetail' })
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft, DocumentChecked, CircleCheck, Printer, Money } from '@element-plus/icons-vue'
+import { ArrowLeft, DocumentChecked, CircleCheck, Printer, Money, Refresh } from '@element-plus/icons-vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
-import { startReconcile as flowStartReconcile, confirmSettle, recordPayment, issueInvoice as flowIssueInvoice } from '@/mock/flow'
+import { startReconcile as flowStartReconcile, confirmSettle, recordPayment, issueInvoice as flowIssueInvoice, recalcSettlement } from '@/mock/flow'
 import { usePerm } from '@/permission'
 import { formatMoney, formatNum } from '@/utils'
 
@@ -306,6 +330,21 @@ function startReconcile() {
   ElMessageBox.confirm('确认发起对账？将执行调度量 vs 磅单净重 vs 结算量三方比对。', '发起对账', { type: 'info' }).then(() => {
     const r = flowStartReconcile(settlement.value)
     ElMessage.success(r.diffCount ? `对账完成：${r.diffCount} 车次存在差异` : '对账完成：无差异')
+  }).catch(() => {})
+}
+
+function recalc() {
+  ElMessageBox.confirm(
+    '重算将按当前磅单净重与已关闭异常损失刷新结算金额（适用于生成账单后磅单补录、异常损失变化），差异记入调整记录。',
+    '重算结算',
+    { type: 'info', confirmButtonText: '确认重算' }
+  ).then(() => {
+    const r = recalcSettlement(settlement.value)
+    if (r && r.error) {
+      ElMessage.error(r.error)
+      return
+    }
+    ElMessage.success(r.delta ? `重算完成：结算金额调整 ${r.delta > 0 ? '+' : ''}${formatMoney(r.delta)}` : '重算完成：金额无变化')
   }).catch(() => {})
 }
 

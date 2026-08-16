@@ -89,12 +89,12 @@
             <template #default="{ row }">
               <el-button link type="primary" size="small" @click.stop="goDetail(row)">详情</el-button>
               <el-button
-                v-if="row.status !== 'disabled'"
+                v-if="row.status !== 'disabled' && can('driver')"
                 link type="danger" size="small"
                 @click.stop="disable(row)"
               >停用</el-button>
               <el-button
-                v-else
+                v-else-if="can('driver')"
                 link type="success" size="small"
                 @click.stop="enable(row)"
               >启用</el-button>
@@ -126,11 +126,14 @@ import { Search, Download, Refresh } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db } from '@/mock'
+import { logAction } from '@/mock/flow'
 import { formatNum } from '@/utils'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
+import { usePerm } from '@/permission'
 
 const tokens = useTokens()
+const { can } = usePerm()
 
 const router = useRouter()
 const loading = ref(true)
@@ -200,12 +203,14 @@ function isExpiring(date) {
 function disable(row) {
   ElMessageBox.confirm(`确认停用司机 ${row.name}？停用后不可派单。`, '停用司机', { type: 'warning' }).then(() => {
     row.status = 'disabled'
+    logAction('司机管理', '司机停用', `司机 ${row.name} 停用，不可派单`)
     ElMessage.success(`${row.name} 已停用`)
   }).catch(() => {})
 }
 
 function enable(row) {
   row.status = 'available'
+  logAction('司机管理', '司机启用', `司机 ${row.name} 启用，恢复可派单`)
   ElMessage.success(`${row.name} 已启用`)
 }
 

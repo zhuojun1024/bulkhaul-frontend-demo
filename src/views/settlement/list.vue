@@ -89,6 +89,11 @@
                 @click.stop="startReconcile(row)"
               >对账</el-button>
               <el-button
+                v-if="row.status === 'pending' && can('settlement')"
+                link type="primary" size="small"
+                @click.stop="recalc(row)"
+              >重算</el-button>
+              <el-button
                 v-if="row.status === 'reconciling' && can('settlement')"
                 link type="success" size="small"
                 @click.stop="settle(row)"
@@ -153,7 +158,7 @@ import { Search, Download, Refresh, Postcard, DocumentAdd } from '@element-plus/
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
-import { settlementCandidates, generateSettlements, startReconcile as flowStartReconcile, confirmSettle } from '@/mock/flow'
+import { settlementCandidates, generateSettlements, startReconcile as flowStartReconcile, confirmSettle, recalcSettlement } from '@/mock/flow'
 import { usePerm } from '@/permission'
 import { formatMoney, formatNum } from '@/utils'
 import dayjs from 'dayjs'
@@ -229,6 +234,22 @@ function startReconcile(row) {
   ElMessageBox.confirm(`开始对账 ${row.billNo}？将执行调度量 vs 磅单净重 vs 结算量三方比对。`, '发起对账', { type: 'info' }).then(() => {
     const r = flowStartReconcile(row)
     ElMessage.success(r.diffCount ? `对账完成：${r.diffCount} 车次存在差异` : '对账完成：无差异')
+  }).catch(() => {})
+}
+
+/** 重算（仅待对账）：按当前磅单与已关闭异常刷新结算金额，差异记入调整记录 */
+function recalc(row) {
+  ElMessageBox.confirm(
+    `重算 ${row.billNo}？将按当前磅单净重与已关闭异常损失刷新结算金额（适用于生成账单后磅单补录、异常损失变化）。`,
+    '重算结算',
+    { type: 'info', confirmButtonText: '确认重算' }
+  ).then(() => {
+    const r = recalcSettlement(row)
+    if (r && r.error) {
+      ElMessage.error(r.error)
+      return
+    }
+    ElMessage.success(r.delta ? `重算完成：结算金额调整 ${r.delta > 0 ? '+' : ''}${formatMoney(r.delta)}` : '重算完成：金额无变化')
   }).catch(() => {})
 }
 

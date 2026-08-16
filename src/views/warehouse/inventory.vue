@@ -65,17 +65,17 @@
           <el-table-column label="操作" width="130" align="center" fixed="right">
             <template #default="{ row }">
               <el-button
-                v-if="row.status === 'normal'"
+                v-if="row.status === 'normal' && can('warehouse')"
                 link type="warning" size="small"
                 @click="lockRow(row)"
               >锁定</el-button>
               <el-button
-                v-if="row.status === 'locked'"
+                v-if="row.status === 'locked' && can('warehouse')"
                 link type="success" size="small"
                 @click="unlockRow(row)"
               >解锁</el-button>
               <el-button
-                v-if="row.status !== 'near-expiry'"
+                v-if="row.status !== 'near-expiry' && can('warehouse')"
                 link type="danger" size="small"
                 @click="expireRow(row)"
               >标记临期</el-button>
@@ -108,10 +108,13 @@ import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
+import { logAction } from '@/mock/flow'
 import { formatNum } from '@/utils'
 import dayjs from 'dayjs'
+import { usePerm } from '@/permission'
 
 const route = useRoute()
+const { can } = usePerm()
 const loading = ref(true)
 onMounted(() => setTimeout(() => (loading.value = false), 300))
 
@@ -167,16 +170,19 @@ function ageDays(inDate) {
 
 function lockRow(row) {
   row.status = 'locked'
+  logAction('仓储管理', '库存锁定', `批次 ${row.batch} 锁定 ${row.quantity} 吨（${find.warehouse(row.warehouseId)?.name || '-'}）`)
   ElMessage.success(`批次 ${row.batch} 已锁定`)
 }
 
 function unlockRow(row) {
   row.status = 'normal'
+  logAction('仓储管理', '库存解锁', `批次 ${row.batch} 解锁 ${row.quantity} 吨（${find.warehouse(row.warehouseId)?.name || '-'}）`)
   ElMessage.success(`批次 ${row.batch} 已解锁`)
 }
 
 function expireRow(row) {
   row.status = 'near-expiry'
+  logAction('仓储管理', '标记临期', `批次 ${row.batch} 标记临期（库龄 ${ageDays(row.inDate)} 天）`)
   ElMessage.warning(`批次 ${row.batch} 已标记临期`)
 }
 

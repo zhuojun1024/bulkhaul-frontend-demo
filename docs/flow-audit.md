@@ -107,14 +107,16 @@
 
 ### P1（一致性）
 
-| # | 事项 | 对应问题 |
-|---|------|---------|
-| 8 | 角色管理要么做真（权限表数据化）要么去掉假 UI | A1 |
-| 9 | 皮重统一为 `tareOf`（种子也按车辆派生） | C1 |
-| 10 | 资源类操作补按钮权限 + 审计日志 | B3 |
-| 11 | 合同终止时停止在途计划/车次，或明确口径并改文案 | A7 |
-| 12 | 派车时排除已有待装货单的车辆/司机 | A9 |
-| 13 | 结算调整机制（异常关闭后补扣/重算入口） | A8 |
+| # | 事项 | 对应问题 | 状态 |
+|---|------|---------|------|
+| 8 | 角色管理做真（权限表数据化） | A1 | ✅ 已修（2026-08-16，权限表下沉 `permission-table.js` 并种子化到 `db.rolePerms`，权限抽屉真实读写、保存即生效并持久化；新建角色默认 deny，删除角色同步清权限；角色卡片用户数改为按用户表实时统计） |
+| 9 | 皮重统一为 `tareOf`（种子也按车辆派生） | C1 | ✅ 已修（2026-08-16，`tareOf` 下沉 `mock/base.js`，种子磅单与运行时补录/交互磅单同一口径，同车进/出磅皮重一致） |
+| 10 | 资源类操作补按钮权限 + 审计日志 | B3 | ✅ 已修（2026-08-16，新增 vehicle/driver/customer 操作码；车辆报修/恢复、司机停用/启用、客户冻结/解冻、库存锁定/解锁/临期、计划取消全部补 `can()` + `logAction`；发票开具/红冲改走 flow（`issueInvoiceRow/redFlushInvoiceRow`，状态守卫 + 日志）） |
+| 11 | 合同终止口径明确 + 拦截新增调度 | A7 | ✅ 已修（2026-08-16，口径：待执行计划取消、在途车次继续完成并正常结算、终止后不可再新建计划/下发调度单（`createDispatches` 守卫拦截）；列表/详情终止弹窗文案同步） |
+| 12 | 派车时排除已有未完结车次的车辆/司机 | A9 | ✅ 已修（2026-08-16，`createDispatches` 排除待装货/装货中/异常车次的车辆与司机；计划页手动选车候选同口径过滤） |
+| 13 | 结算调整机制（异常关闭补扣 + 重算入口） | A8 | ✅ 已修（2026-08-16，`closeException` 对已入账单补扣损失并记 `adjustments` 调整记录（`settleApplied` 防重复）；新增 `recalcSettlement` 重算入口（仅待对账账单，列表/详情页"重算"按钮，差异记调整记录）；结算详情页展示调整记录） |
+
+> P1 修复后冒烟测试 85 → 103 项（新增角色权限数据化/皮重口径/发票走 flow/派车互斥/终止拦截/结算调整断言），全部通过；持久化快照版本升至 3。
 
 ### P2（产品完整度）
 
@@ -151,3 +153,4 @@
 
 - **2026-08-16（本轮审计）**：`npm run build` 构建通过；冒烟测试 75/75 通过（覆盖预置数据一致性、状态机全流程、异常闭环、结算闭环、收款/信用、模块互联、P3 产品完整度 7 大类）。UI 层问题（A1-A10、B1-B4、C、D）为人工代码审计发现，冒烟测试未覆盖。
 - **2026-08-16（P0 修复）**：P0 七项全部修复（见第五节状态列）。改动文件：`src/permission.js`、`src/router/index.js`、`src/mock/flow.js`、`src/mock/dispatch.js`、`src/mock/safety.js`、`src/mock/report.js`、`src/mock/persist.js`（快照版本 1→2）、`src/views/contract/detail.vue`、`src/views/system/user.vue`、`src/views/dispatch/list.vue`、`src/views/dispatch/detail.vue`、`src/views/driver/app.vue`、`src/views/settlement/list.vue`、`src/views/settlement/detail.vue`、`src/views/exception/list.vue`、`scripts/verify-flow.mjs`。冒烟测试 85/85 通过，`npm run build` 通过（仅既有 vendor 体积警告）。注意：P0-6 起新派车单须司机端接单后方可确认装货（种子待装货单不受影响），演示主链路在"派车"与"确认装货"之间多一步司机端接单。
+- **2026-08-16（P1 修复）**：P1 六项全部修复（见第五节状态列）。改动文件：新增 `src/permission-table.js`（权限表唯一数据源）；`src/permission.js`（判定改为 db.rolePerms 优先）、`src/mock/base.js`（db.rolePerms、tareOf 下沉）、`src/mock/system.js`（rolePerms 种子）、`src/mock/weighing.js`（种子皮重按车辆派生）、`src/mock/flow.js`（派车互斥/终止拦截/异常关闭补扣/recalcSettlement/issueInvoiceRow/redFlushInvoiceRow）、`src/mock/persist.js`（快照版本 2→3）、`src/views/system/role.vue`（权限抽屉真实读写）、`src/views/vehicle/list.vue`、`src/views/driver/list.vue`、`src/views/customer/list.vue`、`src/views/warehouse/inventory.vue`、`src/views/plan/list.vue`、`src/views/settlement/invoice.vue`、`src/views/settlement/list.vue`、`src/views/settlement/detail.vue`、`src/views/contract/list.vue`、`src/views/contract/detail.vue`、`scripts/verify-flow.mjs`、`scripts/alias-loader.mjs`。冒烟测试 103/103 通过，`npm run build` 通过（仅既有 vendor 体积警告）。注意：① 角色权限改在角色管理页"权限"抽屉中维护并持久化，内置角色默认值与原硬编码一致；② 合同终止口径为"在途车次继续完成并正常结算"（已发生业务照常履约）；③ 派车互斥按"待装货/装货中/异常"未完结车次排除车辆与司机，种子数据不受影响。

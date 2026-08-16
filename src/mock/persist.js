@@ -10,7 +10,8 @@ import { db } from './base'
  */
 const KEY = 'blms_db_snapshot'
 // 结构升级（调度单增加 accepted、事故与异常单建立关联等）后递增，自动丢弃旧快照
-const VERSION = 2
+// v3：角色权限表数据化（db.rolePerms）、结算调整记录（adjustments/settleApplied）、种子磅单皮重按车辆派生
+const VERSION = 3
 
 const canUse = typeof window !== 'undefined' && !!window.localStorage
 

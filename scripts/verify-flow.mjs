@@ -35,7 +35,10 @@ import {
   changeContract,
   extendContract,
   terminateContract,
-  archiveContract
+  archiveContract,
+  recalcSettlement,
+  issueInvoiceRow,
+  redFlushInvoiceRow
 } from '../src/mock/flow.js'
 import { monthlyReport, customerReport, commodityReport, terminalReport } from '../src/mock/report.js'
 import { menuAllowed, actionAllowed } from '../src/permission.js'
@@ -496,6 +499,180 @@ check(
   linkedAccExceptions.length > 0 &&
     linkedAccExceptions.every((e) => db.accidents.some((a) => a.id === e.accidentId && a.exceptionId === e.id))
 )
+
+console.log('== 9. P1 回归（角色权限数据化 / 皮重口径 / 资源操作日志 / 合同终止口径 / 派车互斥 / 结算调整） ==')
+
+// P1-8：角色权限表数据化（db.rolePerms 为运行时判定源）
+check(
+  'db.rolePerms 为内置角色种子权限条目',
+  ['平台管理员', '调度员', '结算专员', '场站操作员', '安全管理员', '只读用户'].every((n) => !!db.rolePerms[n])
+)
+check(
+  '角色权限以 db.rolePerms 为准（调度员无结算菜单、有调度菜单）',
+  menuAllowed('调度员', '/settlement') === false && menuAllowed('调度员', '/dispatch') === true
+)
+db.roles.push({ id: 'R-TEST', name: '测试角色', code: 'test_role', userCount: 0, description: '测试', builtIn: false })
+db.rolePerms['测试角色'] = { menus: [], actions: [] }
+check('新建角色默认无任何权限（deny）', menuAllowed('测试角色', '/workbench') === false && actionAllowed('测试角色', 'dispatch') === false)
+db.rolePerms['测试角色'] = { menus: ['/workbench', '/dispatch'], actions: ['dispatch'] }
+check(
+  '角色授权后立即生效（按授权放行、未授权拒绝）',
+  menuAllowed('测试角色', '/workbench') === true &&
+    menuAllowed('测试角色', '/settlement') === false &&
+    actionAllowed('测试角色', 'dispatch') === true &&
+    actionAllowed('测试角色', 'settlement') === false
+)
+delete db.rolePerms['测试角色']
+db.roles.splice(db.roles.findIndex((r) => r.id === 'R-TEST'), 1)
+check('角色删除后权限条目同步清除（回落到默认拒绝）', !db.rolePerms['测试角色'] && menuAllowed('测试角色', '/workbench') === false)
+
+// P1-9：皮重口径统一（种子磅单 = 运行时补录 = tareOf(车辆)）
+check(
+  '种子磅单皮重 = tareOf(车辆)（同一车辆进/出磅皮重一致）',
+  (() => {
+    const ws = db.weighings.filter((w) => {
+      const d = db.dispatches.find((x) => x.id === w.dispatchId)
+      return d && d.vehicleId
+    })
+    return ws.length > 0 && ws.every((w) => {
+      const d = db.dispatches.find((x) => x.id === w.dispatchId)
+      const v = db.vehicles.find((x) => x.id === d.vehicleId)
+      return w.tare === tareOf(v)
+    })
+  })()
+)
+
+// P1-10：资源类操作走 flow（状态守卫 + 审计日志）
+// 构造一张"待开具"发票（种子发票状态依赖 rng 流，直接构造保证用例可复现）
+const invSettle = db.settlements.find((s) => s.status === 'settled' || s.status === 'overdue')
+const invPending = invSettle
+  ? {
+      id: 'FP-TEST',
+      settlementId: invSettle.id,
+      invoiceNo: '',
+      type: '增值税专用发票',
+      amount: invSettle.totalAmount,
+      issueDate: null,
+      status: 'pending',
+      remark: ''
+    }
+  : null
+if (invPending) {
+  db.invoices.push(invPending)
+  const r1 = issueInvoiceRow(invPending)
+  check(
+    '发票开具走 flow（状态/号码/结算单开票状态 + 审计日志）',
+    r1.ok === true &&
+      invPending.status === 'issued' &&
+      !!invPending.invoiceNo &&
+      db.settlements.find((s) => s.id === invPending.settlementId)?.invoiceStatus === 'issued' &&
+      db.logs[0].module === '发票管理'
+  )
+  const r2 = redFlushInvoiceRow(invPending, '测试红冲')
+  check(
+    '发票红冲走 flow（状态回退 + 审计日志）',
+    r2.ok === true && invPending.status === 'red-flushed' && db.logs[0].action === '发票红冲'
+  )
+  check('守卫：已红冲发票不可重复红冲', !!redFlushInvoiceRow(invPending, '再次红冲')?.error)
+} else {
+  console.log('  - 跳过发票操作（无已结算/逾期账单可关联）')
+}
+
+// P1-12：派车资源互斥（排除已有未完结车次的车辆/司机）
+const p12 = db.plans.find((p) => {
+  if (p.status !== 'pending') return false
+  const c = db.contracts.find((x) => x.id === p.contractId)
+  return c && c.status === 'executing' && isRoadMode(p.mode || '公路')
+})
+if (p12) {
+  const busyBefore = new Set(
+    db.dispatches.filter((d) => ['pending', 'loading', 'exception'].includes(d.status)).map((d) => d.vehicleId)
+  )
+  const busyDriverBefore = new Set(
+    db.dispatches.filter((d) => ['pending', 'loading', 'exception'].includes(d.status)).map((d) => d.driverId)
+  )
+  const { created: c12 } = createDispatches(p12, 3)
+  check(
+    '派车排除已有未完结车次的车辆/司机',
+    c12.length === 3 &&
+      c12.every((d) => !busyBefore.has(d.vehicleId) && !busyDriverBefore.has(d.driverId))
+  )
+  check(
+    '新调度单之间车辆/司机不重复占用',
+    new Set(c12.map((d) => d.vehicleId)).size === c12.length &&
+      new Set(c12.map((d) => d.driverId)).size === c12.length
+  )
+} else {
+  console.log('  - 跳过派车互斥（无执行中合同的待执行公路计划）')
+}
+
+// P1-11：合同终止口径（待执行计划取消 + 终止后拦截新调度）
+const tc2 = db.contracts.find((c) => c.status === 'executing')
+if (tc2) {
+  const pendingPlans = db.plans.filter((p) => p.contractId === tc2.id && p.status === 'pending')
+  terminateContract(tc2, 'P1 终止口径测试', false)
+  check(
+    '合同终止：状态 terminated 且待执行计划全部取消',
+    tc2.status === 'terminated' && pendingPlans.every((p) => p.status === 'cancelled')
+  )
+  const anyPlan = db.plans.find((p) => p.contractId === tc2.id && p.status !== 'cancelled')
+  const r11 = anyPlan ? createDispatches(anyPlan, 1) : { created: [], error: '合同已终止，不能再下发调度单' }
+  check('守卫：已终止合同不可再下发调度单', !!r11.error && r11.created.length === 0)
+}
+
+// P1-13：结算调整（异常关闭补扣 + 重算入口）
+const c13 = db.contracts.find((c) => c.status === 'executing' && isRoadMode(c.mode))
+if (c13) {
+  const p13 = {
+    id: 'YH-P13',
+    contractId: c13.id,
+    commodityId: c13.commodityId,
+    quantity: 35,
+    loadTerminalId: c13.loadTerminalId,
+    unloadTerminalId: c13.unloadTerminalId,
+    mode: c13.mode,
+    unitPrice: c13.unitPrice,
+    status: 'pending',
+    progress: 0
+  }
+  db.plans.unshift(p13)
+  const { created: c13d } = createDispatches(p13, 1)
+  const d13 = c13d[0]
+  if (d13) {
+    acceptDispatch(d13)
+    confirmLoad(d13)
+    depart(d13)
+    const e13 = reportException(d13, 'P1 测试：结算时异常未关闭', 'damage', 'medium')
+    resumeDispatch(d13) // 先恢复运输、异常保持未关闭
+    arrive(d13)
+    confirmUnload(d13)
+    const g13 = settlementCandidates().find((x) => x.dispatches.some((x) => x.id === d13.id))
+    const s13 = generateSettlements([g13.key])[0]
+    const lossBefore = s13.exceptionLoss
+    const totalBefore = s13.totalAmount
+    const r13a = recalcSettlement(s13)
+    check('重算（待对账）：数据未变化时金额不变（幂等）', r13a.ok === true && r13a.delta === 0)
+    finishException(e13, '货损已处理', 8000)
+    closeException(e13)
+    check(
+      '异常关闭补扣：已入账单损失扣减 + 调整记录 + 防重复标记',
+      s13.exceptionLoss === lossBefore + 8000 &&
+        s13.totalAmount === totalBefore - 8000 &&
+        s13.adjustments.length === 1 &&
+        s13.adjustments[0].amount === -8000 &&
+        e13.settleApplied === s13.id
+    )
+    check('补扣写入审计日志（结算调整）', db.logs.some((l) => l.action === '结算调整' && l.detail.includes(s13.billNo)))
+    const r13b = recalcSettlement(s13)
+    check('重算与补扣结果一致（幂等，不重复扣减）', r13b.ok === true && r13b.delta === 0 && s13.totalAmount === totalBefore - 8000)
+    startReconcile(s13)
+    check('守卫：非待对账账单不可重算', !!recalcSettlement(s13)?.error)
+  } else {
+    console.log('  - 跳过结算调整（派车失败）')
+  }
+} else {
+  console.log('  - 跳过结算调整（无执行中的公路合同）')
+}
 
 console.log(`\n结果：${pass} 通过，${fail} 失败`)
 process.exit(fail ? 1 : 0)

@@ -76,12 +76,12 @@
             <template #default="{ row }">
               <el-button link type="primary" size="small" @click.stop="goDetail(row)">详情</el-button>
               <el-button
-                v-if="row.status === 'idle'"
+                v-if="row.status === 'idle' && can('vehicle')"
                 link type="warning" size="small"
                 @click.stop="sendRepair(row)"
               >报修</el-button>
               <el-button
-                v-if="row.status === 'maintenance'"
+                v-if="row.status === 'maintenance' && can('vehicle')"
                 link type="success" size="small"
                 @click.stop="backToService(row)"
               >恢复</el-button>
@@ -113,11 +113,14 @@ import { Search, Download, Refresh } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db } from '@/mock'
+import { logAction } from '@/mock/flow'
 import { formatNum } from '@/utils'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
+import { usePerm } from '@/permission'
 
 const tokens = useTokens()
+const { can } = usePerm()
 
 const router = useRouter()
 const loading = ref(true)
@@ -185,8 +188,9 @@ function sendRepair(row) {
   ElMessageBox.prompt('请输入报修原因', `车辆报修 - ${row.plate}`, {
     inputPattern: /.{2,}/,
     inputErrorMessage: '原因至少 2 个字符'
-  }).then(() => {
+  }).then(({ value }) => {
     row.status = 'maintenance'
+    logAction('车辆管理', '车辆报修', `车辆 ${row.plate} 报修：${value}`)
     ElMessage.success(`${row.plate} 已报修，进入维修状态`)
   }).catch(() => {})
 }
@@ -194,6 +198,7 @@ function sendRepair(row) {
 function backToService(row) {
   ElMessageBox.confirm(`确认 ${row.plate} 维修完成，恢复为空闲状态？`, '恢复车辆', { type: 'info' }).then(() => {
     row.status = 'idle'
+    logAction('车辆管理', '车辆恢复', `车辆 ${row.plate} 维修完成，恢复空闲`)
     ElMessage.success(`${row.plate} 已恢复空闲`)
   }).catch(() => {})
 }
