@@ -16,7 +16,10 @@ const KEY = 'blms_db_snapshot'
 // v5：客户运输需求（db.transportRequests）、客户发起需求权限（customer-request）
 // v6：司机账号（司机角色 users，手机号登录）、消息中心（db.messages）、银行流水（db.bankRecords）
 // v7：车辆/司机乐观锁版本字段（version，P2 并发控制）
-const VERSION = 7
+// v8：种子车辆/司机状态与实际执行对齐（在途车次占用车辆/司机，N-2 关联修复）
+// v9：消息定向（to 字段，M4 修复）；对账差异/损耗金额按车次快照单价（M2）
+// v10：登录安全（环节9）——用户表 password 改 passwordHash（SHA-256 哈希，不落明文）
+const VERSION = 10
 
 const canUse = typeof window !== 'undefined' && !!window.localStorage
 

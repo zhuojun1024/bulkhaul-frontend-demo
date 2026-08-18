@@ -14,6 +14,11 @@
  *  11. admin 银行对账页签 → 自动核销（G8）
  *  12. admin 客户数据导入：CSV 上传 → 预览校验 → 确认导入（G7）
  *  13. P2 架构下沉：在途进度由全局定时任务推进（UI 只读）+ 只读用户无操作按钮
+ *  14. N-1 回归：司机账号全链路扫码（接单→扫码装货→发车→到达→扫码卸货签收，司机端入口不被 RBAC 拦截）
+ *  15. M8 回归：登录失败锁定（连续 5 次失败 → 5 分钟锁定，刷新后仍生效）
+ *  16. 环节1-3 回归：补签入口 / 客户异议 / 改价审批（UI 接线）
+ *  17. 环节4-6：质量扣减费用项 / 预付款台账+收取+抵扣 / 消息免打扰（UI 接线）
+ *  18. 环节7-8：安全库存预警（预警面板+设置） / 数据权限行级过滤（user02 仅华北）
  * 运行：npm run build && node scripts/verify-ui.mjs
  */
 import { createServer } from 'node:http'
@@ -96,7 +101,7 @@ async function newPage(browser) {
   return { ctx, page }
 }
 
-/** 登录（el-input 通过原生 setter 触发 v-model；账号支持用户名或司机手机号） */
+/** 登录（el-input 通过原生 setter 触发 v-model；账号支持用户名或司机手机号；环节9 自动读取并填写图形验证码） */
 async function login(page, username, password) {
   await page.goto(BASE + '/#/login', { waitUntil: 'networkidle0' })
   await page.waitForSelector('input[placeholder="用户名 / 司机手机号"]')
@@ -109,6 +114,11 @@ async function login(page, username, password) {
       const passInput = document.querySelector('input[placeholder="密码"]')
       setter.call(passInput, p)
       passInput.dispatchEvent(new Event('input', { bubbles: true }))
+      // 环节9：读取图形验证码（SVG <text> 字符）并填写
+      const capCode = [...document.querySelectorAll('.login__captcha-img svg text')].map((t) => t.textContent).join('')
+      const capInput = document.querySelector('input[placeholder="验证码"]')
+      setter.call(capInput, capCode)
+      capInput.dispatchEvent(new Event('input', { bubbles: true }))
     },
     [username, password]
   )
@@ -713,6 +723,610 @@ try {
     })
     check('P2：只读用户用户管理页无新增按钮', userNoBtns)
     await ctx2.close()
+  }
+
+  /* ===== 场景 14：N-1 司机账号 UI 级全链路（接单→扫码装货→发车→到达→扫码卸货签收） ===== */
+  console.log('== 14. N-1：司机账号全链路扫码（司机端入口不被 RBAC 拦截） ==')
+  {
+    const { ctx, page } = await newPage(browser)
+    // 1) 从种子快照取"待装货公路车次 + 司机启用账号（手机号=登录账号）"组合
+    await page.goto(BASE + '/#/login', { waitUntil: 'networkidle0' })
+    const seedHandle = await page.waitForFunction(
+      () => {
+        const raw = localStorage.getItem('blms_db_snapshot')
+        if (!raw) return false
+        const snap = JSON.parse(raw)
+        const d = (snap.dispatches || []).find((x) => x.status === 'pending' && x.vehicleId)
+        if (!d) return false
+        const drv = (snap.drivers || []).find((x) => x.id === d.driverId && x.status !== 'disabled')
+        if (!drv) return false
+        const u = (snap.users || []).find((x) => x.username === drv.phone && x.status === 'active')
+        return u ? { dispatchId: d.id, phone: drv.phone } : false
+      },
+      { timeout: 15000 }
+    )
+    const seed = await seedHandle.jsonValue()
+    check('N-1：种子含待装货公路车次与司机手机号账号', !!seed)
+    if (seed) {
+      // 2) 手机号登录 → 直达司机端（账号锁定本人）
+      await login(page, seed.phone, '123456')
+      check('N-1：司机手机号登录直达司机端', page.url().includes('#/driver-app'))
+      await page.waitForSelector('.task-card')
+      // 页面内任务卡工具函数（hash 导航不重载文档，函数保持有效）
+      await page.evaluate(() => {
+        window.__card = (id) =>
+          [...document.querySelectorAll('.task-card')].find((c) => (c.querySelector('.task-card__id')?.textContent || '').trim() === id)
+        window.__tag = (id) => window.__card(id)?.querySelector('.el-tag')?.textContent?.trim() || null
+        window.__btn = (id, t) => {
+          const card = window.__card(id)
+          const b = card && [...card.querySelectorAll('button')].find((x) => x.textContent.replace(/\s/g, '').includes(t))
+          return b ? { exists: true, disabled: b.disabled, click: () => b.click() } : { exists: false }
+        }
+        window.__dbtn = (t, title) => {
+          // 已关闭的 el-dialog 仍留在 DOM（隐藏），且关闭动画期间旧弹窗仍"可见"——按标题定位目标弹窗
+          const vis = [...document.querySelectorAll('.el-dialog')].filter((x) => x.offsetParent !== null)
+          const d = (title && vis.find((x) => (x.textContent || '').includes(title))) || vis[vis.length - 1]
+          const b = d && [...d.querySelectorAll('button')].find((x) => x.textContent.replace(/\s/g, '').includes(t))
+          return b ? { exists: true, click: () => b.click() } : { exists: false }
+        }
+        window.__dialogVisible = (title) =>
+          [...document.querySelectorAll('.el-dialog')].some((d) => d.offsetParent !== null && (d.textContent || '').includes(title))
+        window.__receipt = (id) => !!window.__card(id)?.querySelector('.receipt')
+      })
+      // 3) 接单（种子未接单时）
+      const acceptBtn = await page.evaluate((id) => window.__btn(id, '接单'), seed.dispatchId)
+      if (acceptBtn.exists && !acceptBtn.disabled) {
+        await page.evaluate((id) => window.__btn(id, '接单').click(), seed.dispatchId)
+        await page.waitForFunction((id) => !window.__btn(id, '扫码装货').disabled, { timeout: 10000 }, seed.dispatchId)
+      }
+      check('N-1：司机端任务卡可见且扫码装货可用', (await page.evaluate((id) => window.__btn(id, '扫码装货'), seed.dispatchId)).exists)
+      // 4) 扫码确认装货（模拟扫码 → 确认扫码 → 装货中）
+      await page.evaluate((id) => window.__btn(id, '扫码装货').click(), seed.dispatchId)
+      await page.waitForFunction(() => window.__dialogVisible('扫码确认装货'), { timeout: 10000 })
+      await page.evaluate(() => window.__dbtn('模拟扫码', '扫码确认装货').click())
+      await page.evaluate(() => window.__dbtn('确认扫码', '扫码确认装货').click())
+      await page.waitForFunction((id) => window.__tag(id) === '装货中', { timeout: 10000 }, seed.dispatchId)
+      check('N-1：司机账号扫码确认装货（待装货→装货中）', true)
+      // 5) 发车 → 在途
+      await page.evaluate((id) => window.__btn(id, '发车').click(), seed.dispatchId)
+      await page.waitForFunction((id) => window.__tag(id) === '在途', { timeout: 10000 }, seed.dispatchId)
+      check('N-1：司机端发车（装货中→在途）', true)
+      // 6) 到达卸货场 → 卸货中
+      await page.evaluate((id) => window.__btn(id, '到达卸货场').click(), seed.dispatchId)
+      await page.waitForFunction((id) => window.__tag(id) === '卸货中', { timeout: 10000 }, seed.dispatchId)
+      check('N-1：司机端到达卸货场（在途→卸货中）', true)
+      // 7) 扫码确认卸货 + 电子签收 → 已完成
+      await page.evaluate((id) => window.__btn(id, '确认卸货并签收').click(), seed.dispatchId)
+      await page.waitForFunction(() => window.__dialogVisible('电子签收'), { timeout: 10000 })
+      await page.evaluate(() => window.__dbtn('模拟扫码', '电子签收').click())
+      await page.evaluate(() => window.__dbtn('确认签收', '电子签收').click())
+      await page.waitForFunction((id) => window.__tag(id) === '已完成' && window.__receipt(id), { timeout: 10000 }, seed.dispatchId)
+      check('N-1：司机账号扫码确认卸货 + 电子签收（卸货中→已完成）', true)
+    }
+    await ctx.close()
+  }
+
+  /* ===== 场景 15：M8 登录失败锁定（连续 5 次失败 → 5 分钟锁定，刷新后仍生效） ===== */
+  console.log('== 15. M8：登录失败锁定 ==')
+  {
+    const { ctx, page } = await newPage(browser)
+    await page.goto(BASE + '/#/login', { waitUntil: 'networkidle0' })
+    await page.waitForSelector('input[placeholder="用户名 / 司机手机号"]')
+    // 连续 5 次错误密码（默认账号 admin 已预填）
+    for (let i = 0; i < 5; i++) {
+      await page.evaluate(() => {
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+        const p = document.querySelector('input[placeholder="密码"]')
+        setter.call(p, 'wrong-pass')
+        p.dispatchEvent(new Event('input', { bubbles: true }))
+        document.querySelector('.login__btn').click()
+      })
+      await new Promise((r) => setTimeout(r, 400))
+    }
+    const locked = await page.evaluate(() => {
+      const btn = document.querySelector('.login__btn')
+      return !!btn && btn.disabled && /重试/.test(btn.textContent)
+    })
+    check('M8：连续 5 次登录失败 → 账号锁定（按钮禁用 + 倒计时）', locked)
+    // 锁定状态刷新后仍生效（localStorage 持久化）
+    await page.reload({ waitUntil: 'networkidle0' })
+    const stillLocked = await page.evaluate(() => {
+      const btn = document.querySelector('.login__btn')
+      return !!btn && btn.disabled && /重试/.test(btn.textContent)
+    })
+    check('M8：锁定状态刷新后仍生效（localStorage 持久化）', stillLocked)
+    await ctx.close()
+  }
+
+  /* ===== 场景 16：环节1-3 UI（补签入口 / 客户异议 / 改价审批） ===== */
+  console.log('== 16. 环节1-3：补签入口 + 客户异议 + 改价审批（UI 接线） ==')
+  {
+    const { ctx, page } = await newPage(browser)
+    // 页面工具：可见弹窗内按钮（按标题定位，规避已关闭弹窗残留 DOM）
+    await page.goto(BASE + '/#/login', { waitUntil: 'networkidle0' })
+    await page.evaluate(() => {
+      window.__visDialog = (title) =>
+        [...document.querySelectorAll('.el-dialog')].filter((x) => x.offsetParent !== null).find((x) => (x.textContent || '').includes(title))
+      window.__visDialogBtn = (title, t) => {
+        const d = window.__visDialog(title)
+        const b = d && [...d.querySelectorAll('button')].find((x) => x.textContent.replace(/\s/g, '').includes(t))
+        return b ? { exists: true, click: () => b.click() } : { exists: false }
+      }
+      window.__visDialogInput = (title, label) => {
+        const d = window.__visDialog(title)
+        if (!d) return null
+        const items = [...d.querySelectorAll('.el-form-item')]
+        const item = label ? items.find((i) => (i.querySelector('.el-form-item__label')?.textContent || '').includes(label)) : items[0]
+        return item && (item.querySelector('textarea') || item.querySelector('input'))
+      }
+      window.__setInput = (el, v) => {
+        const setter = Object.getOwnPropertyDescriptor(el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype, 'value').set
+        setter.call(el, v)
+        el.dispatchEvent(new Event('input', { bubbles: true }))
+      }
+    })
+    // 种子快照：取"已完成未签收公路车次"与"执行中合同"
+    const seedHandle = await page.waitForFunction(
+      () => {
+        const raw = localStorage.getItem('blms_db_snapshot')
+        if (!raw) return false
+        const snap = JSON.parse(raw)
+        const d = (snap.dispatches || []).find((x) => x.status === 'completed' && x.vehicleId && !x.receipt)
+        const c = (snap.contracts || []).find((x) => x.status === 'executing')
+        return d && c ? { dispatchId: d.id, contractId: c.id } : false
+      },
+      { timeout: 15000 }
+    )
+    const seed = await seedHandle.jsonValue()
+    check('环节1：种子含已完成未签收公路车次（补签演示前置）', !!seed)
+    if (seed) {
+      // 环节1：admin 调度详情"补签"
+      await login(page, 'admin', '123456')
+      await nav(page, '#/dispatch/' + seed.dispatchId)
+      await page.waitForSelector('.dispatch-detail__name')
+      const supBtn = await page.evaluate(() => [...document.querySelectorAll('button')].some((b) => b.textContent.replace(/\s/g, '').includes('补签')))
+      check('环节1：未签收已完成车次详情页有"补签"按钮', supBtn)
+      await page.evaluate(() => {
+        const btn = [...document.querySelectorAll('button')].find((b) => b.textContent.replace(/\s/g, '').includes('补签'))
+        btn.click()
+      })
+      await page.waitForFunction(() => window.__visDialog('补签电子签收单'), { timeout: 10000 })
+      await page.evaluate(() => {
+        const input = window.__visDialogInput('补签电子签收单', '签收人')
+        window.__setInput(input, '收货方仓管员')
+      })
+      await page.evaluate(() => window.__visDialogBtn('补签电子签收单', '确认补签').click())
+      await page.waitForFunction(() => /QS-B\d{5}/.test(document.querySelector('.page')?.textContent || ''), { timeout: 10000 })
+      check('环节1：补签提交后签收单生成（QS-B 码展示）', true)
+
+      // 环节3：admin 合同详情"变更（改价）→ 变更待审批 → 审批通过"
+      await nav(page, '#/contract/' + seed.contractId)
+      await page.waitForSelector('.contract-detail__name')
+      await page.evaluate(() => {
+        const btn = [...document.querySelectorAll('button')].find((b) => b.textContent.replace(/\s/g, '').includes('变更'))
+        btn.click()
+      })
+      await page.waitForFunction(() => window.__visDialog('合同变更'), { timeout: 10000 })
+      await page.evaluate(() => {
+        const priceInput = window.__visDialogInput('合同变更', '合同单价')
+        const next = String(Math.round(Number(priceInput.value) + 10))
+        window.__setInput(priceInput, next)
+        const reason = window.__visDialogInput('合同变更', '变更原因')
+        window.__setInput(reason, 'e2e 改价审批测试')
+      })
+      await page.evaluate(() => window.__visDialogBtn('合同变更', '确认变更').click())
+      await page.waitForFunction(() => (document.querySelector('.page')?.textContent || '').includes('变更待审批'), { timeout: 10000 })
+      check('环节3：改价提交后不即时生效，展示"变更待审批"面板', true)
+      // 两级审批通过（部门 → 公司）
+      for (let i = 0; i < 2; i++) {
+        await page.evaluate(() => {
+          const btn = [...document.querySelectorAll('button')].find((b) => b.textContent.replace(/\s/g, '').includes('审批变更'))
+          btn.click()
+        })
+        await page.waitForFunction(() => window.__visDialog('变更审批'), { timeout: 10000 })
+        await page.evaluate(() => window.__visDialogBtn('变更审批', '通过').click())
+        await page.waitForFunction(() => !window.__visDialog('变更审批'), { timeout: 10000 })
+      }
+      const pendingGone = await page.evaluate(() => !(document.querySelector('.page')?.textContent || '').includes('变更待审批'))
+      check('环节3：改价两级审批通过后待批面板消失（变更生效）', pendingGone)
+      await ctx.close()
+    }
+  }
+  {
+    // 环节2：客户门户"异议"（独立上下文：customer01 必有对账中账单，种子兜底保证）
+    const { ctx, page } = await newPage(browser)
+    await page.goto(BASE + '/#/login', { waitUntil: 'networkidle0' })
+    await page.evaluate(() => {
+      window.__visDialog = (title) =>
+        [...document.querySelectorAll('.el-dialog')].filter((x) => x.offsetParent !== null).find((x) => (x.textContent || '').includes(title))
+      window.__visDialogBtn = (title, t) => {
+        const d = window.__visDialog(title)
+        const b = d && [...d.querySelectorAll('button')].find((x) => x.textContent.replace(/\s/g, '').includes(t))
+        return b ? { exists: true, click: () => b.click() } : { exists: false }
+      }
+      window.__visDialogInput = (title, label) => {
+        const d = window.__visDialog(title)
+        if (!d) return null
+        const items = [...d.querySelectorAll('.el-form-item')]
+        const item = label ? items.find((i) => (i.querySelector('.el-form-item__label')?.textContent || '').includes(label)) : items[0]
+        return item && (item.querySelector('textarea') || item.querySelector('input'))
+      }
+      window.__setInput = (el, v) => {
+        const setter = Object.getOwnPropertyDescriptor(el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype, 'value').set
+        setter.call(el, v)
+        el.dispatchEvent(new Event('input', { bubbles: true }))
+      }
+    })
+    await login(page, 'customer01', '123456')
+    check('环节2：客户登录直达门户', page.url().includes('#/portal'))
+    await page.waitForSelector('.el-table__row')
+    const objRow = await page.evaluate(() => {
+      const rows = [...document.querySelectorAll('.el-table__row')]
+      const row = rows.find((r) => [...r.querySelectorAll('button')].some((b) => b.textContent.includes('确认对账')))
+      if (!row) return { exists: false, clicked: false }
+      const btn = [...row.querySelectorAll('button')].find((b) => b.textContent.includes('异议'))
+      if (!btn) return { exists: false, clicked: false }
+      btn.click()
+      return { exists: true, clicked: true }
+    })
+    check('环节2：对账中账单行有"异议"按钮（与"确认对账"并列）', objRow.exists)
+    if (objRow.clicked) {
+      await page.waitForFunction(() => window.__visDialog('提交对账异议'), { timeout: 10000 })
+      await page.evaluate(() => {
+        const input = window.__visDialogInput('提交对账异议', '异议原因')
+        window.__setInput(input, 'e2e 测试异议：损耗金额偏高')
+      })
+      await page.evaluate(() => window.__visDialogBtn('提交对账异议', '提交异议').click())
+      await page.waitForFunction(
+        () => [...document.querySelectorAll('.el-table__row')].some((r) => r.textContent.includes('已异议')),
+        { timeout: 10000 }
+      )
+      check('环节2：异议提交后账单回待对账（行显示"已异议 · 待重新对账"）', true)
+    }
+    await ctx.close()
+  }
+
+  /* ===== 场景 17：环节4-6 UI（质量扣减 / 预付款管理 / 消息免打扰） ===== */
+  console.log('== 17. 环节4-6：质量扣减 + 预付款管理 + 消息免打扰（UI 接线） ==')
+  {
+    const { ctx, page } = await newPage(browser)
+    await page.goto(BASE + '/#/login', { waitUntil: 'networkidle0' })
+    await page.evaluate(() => {
+      window.__visDialog = (title) =>
+        [...document.querySelectorAll('.el-dialog')].filter((x) => x.offsetParent !== null).find((x) => (x.textContent || '').includes(title))
+      window.__visDialogBtn = (title, t) => {
+        const d = window.__visDialog(title)
+        const b = d && [...d.querySelectorAll('button')].find((x) => x.textContent.replace(/\s/g, '').includes(t))
+        return b ? { exists: true, click: () => b.click() } : { exists: false }
+      }
+      window.__visDialogInput = (title, label) => {
+        const d = window.__visDialog(title)
+        if (!d) return null
+        const items = [...d.querySelectorAll('.el-form-item')]
+        const item = label ? items.find((i) => (i.querySelector('.el-form-item__label')?.textContent || '').includes(label)) : items[0]
+        return item && (item.querySelector('textarea') || item.querySelector('input'))
+      }
+      window.__setInput = (el, v) => {
+        const setter = Object.getOwnPropertyDescriptor(el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype, 'value').set
+        setter.call(el, v)
+        el.dispatchEvent(new Event('input', { bubbles: true }))
+      }
+    })
+    // 种子快照：质量扣减账单 + CUS001 已结算/逾期未付清账单（预付款抵扣演示）
+    const seedHandle = await page.waitForFunction(
+      () => {
+        const raw = localStorage.getItem('blms_db_snapshot')
+        if (!raw) return false
+        const snap = JSON.parse(raw)
+        const s1 = (snap.settlements || []).find((x) => x.qualityDeduction > 0 && x.reconciliation)
+        const s2 = (snap.settlements || []).find(
+          (x) => x.customerId === 'CUS001' && ['settled', 'overdue'].includes(x.status) && x.totalAmount - x.paidAmount > 0
+        )
+        return s1 && s2 ? { qualitySettleId: s1.id, prepaySettleId: s2.id } : false
+      },
+      { timeout: 15000 }
+    )
+    const seed = await seedHandle.jsonValue()
+    check('环节4：种子含质量扣减账单（结算演示前置）', !!seed)
+    if (seed) {
+      await login(page, 'admin', '123456')
+      // 环节4：结算详情"质量扣减"费用项 + 对账明细"质量扣重"列
+      await nav(page, '#/settlement/' + seed.qualitySettleId)
+      await page.waitForSelector('.settlement-detail__name')
+      const pageText = await page.evaluate(() => document.querySelector('.page')?.textContent || '')
+      check('环节4：结算详情费用明细含"质量扣减"项', pageText.includes('质量扣减'))
+      check('环节4：对账明细含"质量扣重"列', pageText.includes('质量扣重'))
+
+      // 环节5：结算详情"预付款抵扣"（CUS001 有种子预付 80 万）
+      await nav(page, '#/settlement/' + seed.prepaySettleId)
+      await page.waitForSelector('.settlement-detail__name')
+      const prepayBtn = await page.evaluate(() => [...document.querySelectorAll('button')].some((b) => b.textContent.replace(/\s/g, '').includes('预付款抵扣')))
+      check('环节5：CUS001 已结算/逾期账单有"预付款抵扣"按钮', prepayBtn)
+      if (prepayBtn) {
+        await page.evaluate(() => {
+          const btn = [...document.querySelectorAll('button')].find((b) => b.textContent.replace(/\s/g, '').includes('预付款抵扣'))
+          btn.click()
+        })
+        await page.waitForFunction(() => window.__visDialog('预付款抵扣'), { timeout: 10000 })
+        await page.evaluate(() => window.__visDialogBtn('预付款抵扣', '确认抵扣').click())
+        await page.waitForFunction(
+          () => [...document.querySelectorAll('.el-table__row')].some((r) => r.textContent.includes('预付款抵扣')),
+          { timeout: 10000 }
+        )
+        check('环节5：预付款抵扣后收款流水出现"预付款抵扣"记录', true)
+      }
+
+      // 环节5：客户详情"预付款台账" + 收取预付款
+      await nav(page, '#/customer/CUS001')
+      await page.waitForSelector('.customer-detail__name')
+      const ledgerText = await page.evaluate(() => document.querySelector('.page')?.textContent || '')
+      check('环节5：客户详情含"预付款台账"面板（种子 YF-0001）', ledgerText.includes('预付款台账') && ledgerText.includes('YF-0001'))
+      await page.evaluate(() => {
+        const btn = [...document.querySelectorAll('button')].find((b) => b.textContent.replace(/\s/g, '').includes('收取预付款'))
+        btn.click()
+      })
+      await page.waitForFunction(() => window.__visDialog('收取预付款'), { timeout: 10000 })
+      await page.evaluate(() => {
+        const input = window.__visDialogInput('收取预付款', '预付金额')
+        window.__setInput(input, '100000')
+      })
+      await page.evaluate(() => window.__visDialogBtn('收取预付款', '确认收取').click())
+      await page.waitForFunction(() => (document.querySelector('.page')?.textContent || '').includes('YF-0003'), { timeout: 10000 })
+      check('环节5：收取预付款后台账新增记录（YF-0003）', true)
+      await ctx.close()
+    }
+  }
+  {
+    // 环节6：消息中心"免打扰"设置（类型屏蔽 → 列表"免打扰"标记）
+    const { ctx, page } = await newPage(browser)
+    await login(page, 'admin', '123456')
+    await nav(page, '#/message')
+    await page.waitForSelector('.el-table__row')
+    await page.evaluate(() => {
+      window.__visDialog = (title) =>
+        [...document.querySelectorAll('.el-dialog')].filter((x) => x.offsetParent !== null).find((x) => (x.textContent || '').includes(title))
+      window.__visDialogBtn = (title, t) => {
+        const d = window.__visDialog(title)
+        const b = d && [...d.querySelectorAll('button')].find((x) => x.textContent.replace(/\s/g, '').includes(t))
+        return b ? { exists: true, click: () => b.click() } : { exists: false }
+      }
+    })
+    const dndBtn = await page.evaluate(() => [...document.querySelectorAll('button')].some((b) => b.textContent.replace(/\s/g, '').includes('免打扰')))
+    check('环节6：消息中心有"免打扰"入口', dndBtn)
+    if (dndBtn) {
+      await page.evaluate(() => {
+        const btn = [...document.querySelectorAll('button')].find((b) => b.textContent.replace(/\s/g, '').includes('免打扰'))
+        btn.click()
+      })
+      await page.waitForFunction(() => window.__visDialog('免打扰设置'), { timeout: 10000 })
+      // 启用开关 + 勾选"系统"类型
+      await page.evaluate(() => {
+        const d = window.__visDialog('免打扰设置')
+        d.querySelector('.el-switch').click()
+        const cb = [...d.querySelectorAll('.el-checkbox')].find((x) => (x.textContent || '').includes('系统'))
+        cb.click()
+      })
+      await page.evaluate(() => window.__visDialogBtn('免打扰设置', '保存设置').click())
+      await page.waitForFunction(() => !window.__visDialog('免打扰设置'), { timeout: 10000 })
+      await page.waitForFunction(
+        () => [...document.querySelectorAll('.el-table__row')].some((r) => r.textContent.includes('免打扰')),
+        { timeout: 10000 }
+      )
+      check('环节6：保存后系统类消息显示"免打扰"标记', true)
+      // 设置持久化（快照 dnd.admin）
+      const dndSaved = await page.waitForFunction(
+        () => {
+          const raw = localStorage.getItem('blms_db_snapshot')
+          if (!raw) return false
+          const snap = JSON.parse(raw)
+          return snap.dnd && snap.dnd.admin && snap.dnd.admin.enabled === true && (snap.dnd.admin.mutedTypes || []).includes('system')
+        },
+        { timeout: 10000 }
+      )
+      check('环节6：免打扰设置随快照持久化（dnd.admin）', !!(await dndSaved.jsonValue()))
+    }
+    await ctx.close()
+  }
+
+  /* ===== 场景 18：环节7-8 UI（安全库存预警 / 数据权限行级过滤） ===== */
+  console.log('== 18. 环节7-8：安全库存预警 + 数据权限（UI 接线） ==')
+  {
+    // 环节7：库存管理"低于安全库存"预警面板 + 安全库存设置（admin）
+    const { ctx, page } = await newPage(browser)
+    await page.goto(BASE + '/#/login', { waitUntil: 'networkidle0' })
+    await page.evaluate(() => {
+      window.__visDialog = (title) =>
+        [...document.querySelectorAll('.el-dialog')].filter((x) => x.offsetParent !== null).find((x) => (x.textContent || '').includes(title))
+      window.__visDialogBtn = (title, t) => {
+        const d = window.__visDialog(title)
+        const b = d && [...d.querySelectorAll('button')].find((x) => x.textContent.replace(/\s/g, '').includes(t))
+        return b ? { exists: true, click: () => b.click() } : { exists: false }
+      }
+      window.__visDialogInput = (title, label) => {
+        const d = window.__visDialog(title)
+        if (!d) return null
+        const items = [...d.querySelectorAll('.el-form-item')]
+        const item = label ? items.find((i) => (i.querySelector('.el-form-item__label')?.textContent || '').includes(label)) : items[0]
+        return item && (item.querySelector('textarea') || item.querySelector('input'))
+      }
+      window.__setInput = (el, v) => {
+        const setter = Object.getOwnPropertyDescriptor(el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype, 'value').set
+        setter.call(el, v)
+        el.dispatchEvent(new Event('input', { bubbles: true }))
+      }
+    })
+    await login(page, 'admin', '123456')
+    await nav(page, '#/warehouse/inventory')
+    await page.waitForSelector('.el-table__row')
+    const invText = await page.evaluate(() => document.querySelector('.page')?.textContent || '')
+    check('环节7：库存管理含"低于安全库存"统计卡与"安全库存预警"面板（种子有低于下限组合）', invText.includes('低于安全库存') && invText.includes('安全库存预警'))
+    const sqBtn = await page.evaluate(() => [...document.querySelectorAll('button')].some((b) => b.textContent.replace(/\s/g, '').includes('安全库存设置')))
+    check('环节7：库存管理有"安全库存设置"入口', sqBtn)
+    if (sqBtn) {
+      await page.evaluate(() => {
+        const btn = [...document.querySelectorAll('button')].find((b) => b.textContent.replace(/\s/g, '').includes('安全库存设置'))
+        btn.click()
+      })
+      await page.waitForFunction(() => window.__visDialog('安全库存设置'), { timeout: 10000 })
+      await pickDialogSelect(page, '仓库', '秦皇岛港 1 号煤仓')
+      await pickDialogSelect(page, '商品', '动力煤')
+      await page.evaluate(() => {
+        const input = window.__visDialogInput('安全库存设置', '安全库存')
+        window.__setInput(input, '1234')
+      })
+      await page.evaluate(() => window.__visDialogBtn('安全库存设置', '保存').click())
+      await page.waitForFunction(() => !window.__visDialog('安全库存设置'), { timeout: 10000 })
+      // 设置持久化（快照 safetyStocks WH001/CM001 = 1234）
+      const sqSaved = await page.waitForFunction(
+        () => {
+          const raw = localStorage.getItem('blms_db_snapshot')
+          if (!raw) return false
+          const snap = JSON.parse(raw)
+          const sq = (snap.safetyStocks || []).find((s) => s.warehouseId === 'WH001' && s.commodityId === 'CM001')
+          return sq && sq.minQty === 1234
+        },
+        { timeout: 10000 }
+      )
+      check('环节7：安全库存设置保存并随快照持久化（WH001/动力煤 = 1234）', !!(await sqSaved.jsonValue()))
+    }
+    await ctx.close()
+  }
+  {
+    // 环节8：数据权限行级过滤（user02 调度员，仅华北装货侧）
+    const { ctx, page } = await newPage(browser)
+    await login(page, 'user02', '123456')
+    // 种子快照：计算华北装货侧调度单数（行级过滤预期值）
+    const seedHandle = await page.waitForFunction(
+      () => {
+        const raw = localStorage.getItem('blms_db_snapshot')
+        if (!raw) return false
+        const snap = JSON.parse(raw)
+        if (!snap.dispatches || !snap.dataScopes) return false
+        const north = new Set(['T001', 'T002', 'T003', 'T004', 'T005', 'T011'])
+        const scoped = snap.dispatches.filter((d) => north.has(d.loadTerminalId)).length
+        return scoped > 0 && scoped < snap.dispatches.length
+          ? { scopedCount: scoped, totalCount: snap.dispatches.length, user02: snap.dataScopes.user02 }
+          : false
+      },
+      { timeout: 15000 }
+    )
+    const seed = await seedHandle.jsonValue()
+    check('环节8：种子数据范围（user02 = 华北，且为真子集）', !!seed && seed.user02.regions.join() === '华北')
+    if (seed) {
+      await nav(page, '#/dispatch')
+      await page.waitForSelector('.el-table__row')
+      const dText = await page.evaluate(() => document.querySelector('.page')?.textContent || '')
+      check('环节8：调度列表显示"数据范围：华北"标签', dText.includes('数据范围：华北（装货侧）'))
+      check('环节8：调度列表分页总数=华北装货侧调度单数（行级过滤生效）', dText.includes(`共 ${seed.scopedCount} 条`))
+      // 顶栏数据范围标签
+      const navTag = await page.evaluate(() => (document.querySelector('.navbar')?.textContent || '').includes('数据范围：华北'))
+      check('环节8：顶栏显示数据范围标签', navTag)
+      // 计划列表同样行级过滤
+      await nav(page, '#/plan')
+      await page.waitForSelector('.el-table__row')
+      const pText = await page.evaluate(() => document.querySelector('.page')?.textContent || '')
+      check('环节8：计划列表显示"数据范围：华北"标签', pText.includes('数据范围：华北（装货侧）'))
+    }
+    await ctx.close()
+  }
+
+  /* ===== 场景 19：环节9-10 UI（登录验证码 / 单证归档） ===== */
+  console.log('== 19. 环节9-10：登录验证码 + 单证归档（UI 接线） ==')
+  {
+    const { ctx, page } = await newPage(browser)
+    // 环节9：登录页验证码渲染 + 错误验证码拒绝 + 正确验证码登录
+    await page.goto(BASE + '/#/login', { waitUntil: 'networkidle0' })
+    await page.waitForSelector('input[placeholder="验证码"]')
+    const capInfo = await page.evaluate(() => {
+      const texts = [...document.querySelectorAll('.login__captcha-img svg text')]
+      return { hasSvg: !!document.querySelector('.login__captcha-img svg'), code: texts.map((t) => t.textContent).join('') }
+    })
+    check('环节9：登录页渲染图形验证码（4 位字符）', capInfo.hasSvg && capInfo.code.length === 4)
+    // 错误验证码 → 拒绝（未登录）
+    await page.evaluate(() => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+      const p = document.querySelector('input[placeholder="密码"]')
+      setter.call(p, '123456')
+      p.dispatchEvent(new Event('input', { bubbles: true }))
+      const c = document.querySelector('input[placeholder="验证码"]')
+      setter.call(c, '0000')
+      c.dispatchEvent(new Event('input', { bubbles: true }))
+      document.querySelector('.login__btn').click()
+    })
+    await page.waitForFunction(() => /验证码/.test(document.querySelector('.el-message')?.textContent || ''), { timeout: 5000 })
+    const wrongCap = await page.evaluate(() => ({
+      user: localStorage.getItem('blms_user'),
+      msg: document.querySelector('.el-message')?.textContent || ''
+    }))
+    check('环节9：错误验证码拒绝（提示验证码错误，未登录）', /验证码/.test(wrongCap.msg) && !wrongCap.user)
+    // 正确验证码 → 登录成功（login 工具自动读取并填写验证码）
+    await login(page, 'admin', '123456')
+    await page.waitForSelector('.page')
+    check('环节9：正确验证码登录成功进入工作台', page.url().includes('#/workbench'))
+
+    // 环节10：单证归档（admin）
+    await nav(page, '#/document')
+    await page.waitForSelector('.el-table__row')
+    const docText = await page.evaluate(() => document.querySelector('.page')?.textContent || '')
+    check('环节10：单证归档页渲染（统计卡 + 表格有数据）', docText.includes('单证归档') && docText.includes('磅单') && docText.includes('签收单') && docText.includes('发票'))
+    const hasMenu = await page.evaluate(() => (document.querySelector('.layout__sidebar')?.textContent || '').includes('单证归档'))
+    check('环节10：侧边栏含"单证归档"菜单', hasMenu)
+    // 类型筛选（磅单）
+    await page.evaluate(() => {
+      const sel = document.querySelector('.filter-bar .el-select')
+      const wrapper = sel.querySelector('.el-select__wrapper') || sel
+      wrapper.click()
+    })
+    await page.waitForFunction(() => [...document.querySelectorAll('.el-select-dropdown__item')].some((i) => i.offsetParent !== null && i.textContent.includes('磅单')))
+    await page.evaluate(() => {
+      const item = [...document.querySelectorAll('.el-select-dropdown__item')].find((i) => i.offsetParent !== null && i.textContent.includes('磅单'))
+      item.click()
+    })
+    await new Promise((r) => setTimeout(r, 400))
+    const filteredRows = await page.evaluate(() => {
+      const rows = [...document.querySelectorAll('.el-table__row')]
+      return { count: rows.length, allWeighing: rows.length > 0 && rows.every((r) => r.textContent.includes('磅单')) }
+    })
+    check('环节10：类型筛选（磅单）后全部为磅单', filteredRows.count > 0 && filteredRows.allWeighing)
+    // 预览（iframe 渲染电子单证）
+    await page.evaluate(() => {
+      const b = [...document.querySelectorAll('.el-table__row button')].find((x) => x.textContent.includes('预览'))
+      b.click()
+    })
+    await page.waitForSelector('.el-dialog iframe')
+    const previewOk = await page.evaluate(() => {
+      const f = document.querySelector('.el-dialog iframe')
+      return f && (f.getAttribute('srcdoc') || '').includes('电子单证')
+    })
+    check('环节10：单证预览（iframe 渲染电子单证内容）', previewOk)
+    await page.evaluate(() => {
+      const btns = [...document.querySelectorAll('.el-dialog__footer button')]
+      btns.find((b) => b.textContent.includes('关闭'))?.click()
+    })
+    await page.waitForFunction(() => !document.querySelector('.el-dialog iframe'), { timeout: 5000 }).catch(() => {})
+    // 下载（拦截 URL.createObjectURL 捕获 Blob，验证下载触发且内容为电子单证 HTML；
+    // 本版本 puppeteer 的 download 事件在 browser 层，page 层不可靠，故以 Blob 内容为准）
+    const dlResult = await page.evaluate(
+      () =>
+        new Promise((resolve) => {
+          const origCreate = URL.createObjectURL
+          let captured = null
+          URL.createObjectURL = (blob) => {
+            captured = blob
+            return origCreate(blob)
+          }
+          const b = [...document.querySelectorAll('.el-table__row button')].find((x) => x.textContent.includes('下载'))
+          b.click()
+          setTimeout(async () => {
+            URL.createObjectURL = origCreate
+            let text = ''
+            if (captured) text = await captured.text()
+            resolve({ captured: !!captured, type: captured ? captured.type : '', hasTable: text.includes('<table'), isDoc: text.includes('电子单证') })
+          }, 300)
+        })
+    )
+    check('环节10：单证下载触发 Blob（text/html 电子单证 HTML）', dlResult.captured && dlResult.type.includes('text/html') && dlResult.hasTable && dlResult.isDoc)
+    await ctx.close()
   }
 } finally {
   await browser.close()

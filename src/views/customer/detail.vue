@@ -59,6 +59,10 @@
               <span>未付余额</span>
               <b class="num text-warning">{{ formatMoney(outstanding) }}</b>
             </div>
+            <div class="biz-item">
+              <span>可用预付款</span>
+              <b class="num text-success">{{ formatMoney(prepayAvailable) }}</b>
+            </div>
             <div class="biz-item biz-item--block">
               <div class="biz-item__line">
                 <span>授信占用（额度 {{ formatMoney(customer?.creditLimit) }}）</span>
@@ -70,6 +74,42 @@
                 :stroke-width="6"
               />
             </div>
+          </div>
+        </div>
+
+        <!-- 环节5：预付款台账（收取 / 抵扣） -->
+        <div class="panel">
+          <div class="panel__header">
+            <span class="panel__title">预付款台账</span>
+            <el-button v-if="can('settlement')" type="primary" size="small" :icon="Money" @click="openCollect">
+              收取预付款
+            </el-button>
+          </div>
+          <div class="panel__body">
+            <el-table :data="prepayments" size="small" stripe max-height="240">
+              <el-table-column prop="id" label="编号" width="90" />
+              <el-table-column prop="time" label="收取时间" width="140" />
+              <el-table-column label="金额(元)" width="110" align="right">
+                <template #default="{ row }"><span class="num">{{ formatMoney(row.amount) }}</span></template>
+              </el-table-column>
+              <el-table-column label="已抵扣(元)" width="110" align="right">
+                <template #default="{ row }"><span class="num">{{ formatMoney(row.used) }}</span></template>
+              </el-table-column>
+              <el-table-column label="可用(元)" width="110" align="right">
+                <template #default="{ row }">
+                  <span class="num" :class="row.amount - row.used > 0 ? 'text-success' : ''">{{ formatMoney(row.amount - row.used) }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="状态" width="90" align="center">
+                <template #default="{ row }">
+                  <el-tag size="small" :type="row.used >= row.amount ? 'info' : row.used > 0 ? 'warning' : 'success'" effect="plain">
+                    {{ row.used >= row.amount ? '已抵扣' : row.used > 0 ? '部分抵扣' : '可用' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="method" label="方式" min-width="80" />
+            </el-table>
+            <el-empty v-if="!prepayments.length" description="暂无预付款记录，可点击右上角「收取预付款」" :image-size="60" />
           </div>
         </div>
       </el-col>
@@ -133,20 +173,47 @@
         </div>
       </el-col>
     </el-row>
+
+    <!-- 环节5：收取预付款 -->
+    <el-dialog v-model="collectDialog" title="收取预付款" width="440px">
+      <el-form label-width="90px">
+        <el-form-item label="客户">
+          <span>{{ customer?.name }}</span>
+        </el-form-item>
+        <el-form-item label="预付金额">
+          <el-input-number v-model="collectForm.amount" :min="1" :precision="0" style="width: 100%" />
+        </el-form-item>
+        <el-form-item label="收款方式">
+          <el-select v-model="collectForm.method" style="width: 100%">
+            <el-option v-for="m in payMethods" :key="m" :label="m" :value="m" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="collectForm.remark" maxlength="50" show-word-limit placeholder="如：季度预付款" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="collectDialog = false">取消</el-button>
+        <el-button type="primary" @click="submitCollect">确认收取</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 defineOptions({ name: 'CustomerDetail' })
-import { computed } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { ArrowLeft } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
+import { ArrowLeft, Money } from '@element-plus/icons-vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
-import { outstandingOf } from '@/mock/flow'
+import { outstandingOf, prepaymentOf, prepaymentAvailable, collectPrepayment } from '@/mock/flow'
+import { usePerm } from '@/permission'
 import { formatMoney, formatNum } from '@/utils'
 
 const route = useRoute()
+const { can } = usePerm()
 
 const customer = computed(() => find.customer(route.params.id))
 const contracts = computed(() =>
@@ -163,11 +230,37 @@ const pendingAmount = computed(() =>
   settlements.value.filter((s) => s.status !== 'settled').reduce((s, x) => s + (x.totalAmount - x.paidAmount), 0)
 )
 const outstanding = computed(() => outstandingOf(customer.value?.id))
+/** 环节5：预付款台账与可用余额（预付冲减信用占用，与 creditCheck 同口径） */
+const prepayments = computed(() => prepaymentOf(customer.value?.id))
+const prepayAvailable = computed(() => prepaymentAvailable(customer.value?.id))
 const creditPct = computed(() => {
   const limit = customer.value?.creditLimit
   if (!limit) return 0
-  return Math.round((outstanding.value / limit) * 100)
+  const occupied = Math.max(0, outstanding.value - prepayAvailable.value)
+  return Math.round((occupied / limit) * 100)
 })
+
+/* ===== 环节5：收取预付款 ===== */
+const collectDialog = ref(false)
+const collectForm = reactive({ amount: 100000, method: '银行转账', remark: '' })
+const payMethods = ['银行转账', '支票', '承兑汇票']
+
+function openCollect() {
+  collectForm.amount = 100000
+  collectForm.method = '银行转账'
+  collectForm.remark = ''
+  collectDialog.value = true
+}
+
+function submitCollect() {
+  const r = collectPrepayment(customer.value.id, collectForm.amount, collectForm.method, collectForm.remark)
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
+  collectDialog.value = false
+  ElMessage.success(`预付款已收取：${r.id}`)
+}
 
 const typeMap = { shipper: '发货方', consignee: '收货方', both: '双向客户' }
 const statusMap = {

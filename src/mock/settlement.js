@@ -19,7 +19,8 @@ for (const contract of settleContracts) {
   const fees = calcSettlementFees(contract, done)
   const tollFee = randInt(2000, 20000)
   const surcharge = randInt(0, 8000)
-  const totalAmount = fees.freight + fees.loadingFee + fees.unloadingFee + tollFee + surcharge - fees.lossDeduction - fees.exceptionLoss
+  const totalAmount =
+    fees.freight + fees.loadingFee + fees.unloadingFee + tollFee + surcharge - fees.lossDeduction - fees.qualityDeduction - fees.exceptionLoss
 
   // 状态按规则生成：待对账/对账中（流程态）→ 已结算；超账期未付清 → 逾期
   const r = rng()

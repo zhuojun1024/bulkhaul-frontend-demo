@@ -1,5 +1,6 @@
 import { db, rng, randInt, randomName, NOW } from './base'
 import dayjs from 'dayjs'
+import { hashPassword } from '@/utils'
 import { ROLE_MENUS, ROLE_ACTIONS } from '@/permission-table'
 
 /** 角色 */
@@ -28,8 +29,8 @@ db.users = Array.from({ length: 15 }, (_, i) => {
     username: i === 0 ? 'admin' : 'user' + String(i + 1).padStart(2, '0'),
     name: i === 0 ? '张建国' : randomName(),
     role,
-    // 演示环境统一密码
-    password: '123456',
+    // 演示环境统一密码（环节9：只存哈希不存明文）
+    passwordHash: hashPassword('123456'),
     phone: '138' + String(randInt(10000000, 99999999)),
     email: (i === 0 ? 'admin' : 'user' + String(i + 1).padStart(2, '0')) + '@blms.com',
     status: i === 12 ? 'disabled' : 'active',
@@ -46,7 +47,7 @@ db.users.push(
     name: '晋能煤业客户专员',
     role: '客户',
     customerId: 'CUS001',
-    password: '123456',
+    passwordHash: hashPassword('123456'),
     phone: '138' + String(randInt(10000000, 99999999)),
     email: 'customer01@blms.com',
     status: 'active',
@@ -59,7 +60,7 @@ db.users.push(
     name: '中煤华晋客户专员',
     role: '客户',
     customerId: 'CUS002',
-    password: '123456',
+    passwordHash: hashPassword('123456'),
     phone: '138' + String(randInt(10000000, 99999999)),
     email: 'customer02@blms.com',
     status: 'active',
@@ -71,7 +72,7 @@ db.users.push(
     username: 'user16',
     name: '审计观察员',
     role: '只读用户',
-    password: '123456',
+    passwordHash: hashPassword('123456'),
     phone: '138' + String(randInt(10000000, 99999999)),
     email: 'user16@blms.com',
     status: 'active',
@@ -89,7 +90,7 @@ db.drivers.forEach((d, i) => {
     name: d.name,
     role: '司机',
     driverId: d.id,
-    password: '123456',
+    passwordHash: hashPassword('123456'),
     phone: d.phone,
     email: '',
     status: d.status === 'disabled' ? 'disabled' : 'active',
@@ -98,6 +99,9 @@ db.drivers.forEach((d, i) => {
   })
 })
 db.roles.find((r) => r.name === '司机').userCount = db.drivers.length
+
+/** 环节8：数据范围种子——调度员 user02 仅可见华北装货侧线路（行级数据权限演示，登录页提示账号） */
+db.dataScopes = { user02: { regions: ['华北'] } }
 
 /** 平台公告（数据源化：由 mock 统一提供，后续可替换为真实接口） */
 db.announcements = [

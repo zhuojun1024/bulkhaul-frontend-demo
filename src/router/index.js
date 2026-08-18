@@ -143,6 +143,12 @@ export const menuRoutes = [
         name: 'Report',
         component: () => import('@/views/report/index.vue'),
         meta: { title: '报表中心', icon: 'DataAnalysis' }
+      },
+      {
+        path: '/document',
+        name: 'Document',
+        component: () => import('@/views/document/archive.vue'),
+        meta: { title: '单证归档', icon: 'Files' }
       }
     ]
   },

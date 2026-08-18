@@ -5,6 +5,7 @@
         <el-icon class="live-dot"><VideoPlay /></el-icon>
         实时监控中
       </el-tag>
+      <el-tag v-if="scopeRegions.length" type="warning" effect="plain">数据范围：{{ scopeRegions.join('、') }}（装货侧）</el-tag>
       <el-popover title="电子围栏参数" :width="300" trigger="click">
         <template #reference>
           <el-button size="small" :icon="Setting" :type="db.fenceConfig?.enabled ? 'primary' : 'info'" plain>
@@ -273,7 +274,7 @@ import { VideoPlay, VideoPause, Close, Warning, CircleCheck, AlarmClock, Aim, Se
 import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import { db, find, MAP_NODES, ROUTES } from '@/mock'
-import { trackPointsOf, maxDeviationOf, hashOffset } from '@/mock/flow'
+import { trackPointsOf, maxDeviationOf, hashOffset, visibleDispatches, dataScopeOf } from '@/mock/flow'
 import { onSchedulerEvent } from '@/mock/scheduler'
 import { round } from '@/utils'
 import dayjs from 'dayjs'
@@ -283,6 +284,10 @@ const tokens = useTokens()
 
 const selectedId = ref(null)
 const listFilter = ref('')
+
+// 环节8：数据权限（行级）——在途监控只展示当前操作人数据范围内的车次（装货侧区域）
+const scopedDispatches = computed(() => visibleDispatches())
+const scopeRegions = computed(() => dataScopeOf().regions)
 
 /* ===== 线路与场站 ===== */
 const terminals = computed(() =>
@@ -303,7 +308,7 @@ const routeLines = computed(() =>
 
 const activeRouteKeys = computed(() => {
   const set = new Set()
-  for (const d of db.dispatches) {
+  for (const d of scopedDispatches.value) {
     if (d.status === 'intransit') set.add(d.loadTerminalId + d.unloadTerminalId)
   }
   return set
@@ -315,7 +320,7 @@ const activeRouteLines = computed(() =>
 
 /* ===== 车辆点位 ===== */
 const vehicleDots = computed(() =>
-  db.dispatches
+  scopedDispatches.value
     .filter((d) => ['intransit', 'exception'].includes(d.status))
     .map((d) => {
       const from = MAP_NODES[d.loadTerminalId]
@@ -346,7 +351,7 @@ function isDelayed(d) {
 
 /* ===== 列表 ===== */
 const vehicleList = computed(() =>
-  db.dispatches
+  scopedDispatches.value
     .filter((d) => ['intransit', 'exception'].includes(d.status))
     .map((d) => {
       const delayed = isDelayed(d)
@@ -451,10 +456,10 @@ const avgSpeed = computed(() => {
   return Math.round(list.reduce((s, v) => s + v.speed, 0) / list.length)
 })
 const todayDone = computed(() =>
-  db.dispatches.filter((d) => d.status === 'completed' && d.unloadTime && dayjs(d.unloadTime).isSame(dayjs(), 'day')).length
+  scopedDispatches.value.filter((d) => d.status === 'completed' && d.unloadTime && dayjs(d.unloadTime).isSame(dayjs(), 'day')).length
 )
 const yesterdayDone = computed(() =>
-  db.dispatches.filter((d) => d.status === 'completed' && d.unloadTime && dayjs(d.unloadTime).isSame(dayjs().subtract(1, 'day'), 'day')).length
+  scopedDispatches.value.filter((d) => d.status === 'completed' && d.unloadTime && dayjs(d.unloadTime).isSame(dayjs().subtract(1, 'day'), 'day')).length
 )
 const doneTrend = computed(() =>
   yesterdayDone.value ? round(((todayDone.value - yesterdayDone.value) / yesterdayDone.value) * 100, 1) : null

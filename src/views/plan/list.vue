@@ -1,6 +1,7 @@
 <template>
   <div class="page">
     <PageHeader title="运输计划" desc="合同批次化拆解，计划是调度的依据">
+      <el-tag v-if="scopeRegions.length" type="warning" effect="plain">数据范围：{{ scopeRegions.join('、') }}（装货侧）</el-tag>
       <el-button :icon="Download" @click="exportCsv">导出</el-button>
       <el-button type="primary" :icon="Plus" @click="$router.push('/plan/create')">新建计划</el-button>
     </PageHeader>
@@ -157,7 +158,7 @@ import { Search, Plus, Download, Refresh } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
-import { cancelPlan, createDispatches, creditCheck, isRoadMode, vehicleInspectionExpired } from '@/mock/flow'
+import { BUSY_STATUSES, cancelPlan, createDispatches, creditCheck, isRoadMode, vehicleInspectionExpired, visiblePlans, dataScopeOf } from '@/mock/flow'
 import { formatNum } from '@/utils'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
@@ -180,10 +181,14 @@ const filter = reactive({ keyword: '', status: '', commodityId: '', dateRange: [
 const page = ref(1)
 const pageSize = ref(10)
 
+// 环节8：数据权限（行级）——列表只展示当前操作人数据范围内的计划（装货侧区域）
+const scoped = computed(() => visiblePlans())
+const scopeRegions = computed(() => dataScopeOf().regions)
+
 const statItems = computed(() => {
-  const count = (s) => db.plans.filter((p) => p.status === s).length
+  const count = (s) => scoped.value.filter((p) => p.status === s).length
   return [
-    { key: '', label: '全部计划', count: db.plans.length, color: tokens.primary },
+    { key: '', label: '全部计划', count: scoped.value.length, color: tokens.primary },
     { key: 'pending', label: '待执行', count: count('pending'), color: tokens.info },
     { key: 'dispatched', label: '已调度', count: count('dispatched'), color: tokens.primary },
     { key: 'intransit', label: '执行中', count: count('intransit'), color: tokens.warning },
@@ -192,7 +197,7 @@ const statItems = computed(() => {
 })
 
 const filtered = computed(() =>
-  db.plans.filter((p) => {
+  scoped.value.filter((p) => {
     if (filter.status && p.status !== filter.status) return false
     if (filter.commodityId && p.commodityId !== filter.commodityId) return false
     if (filter.keyword) {
@@ -245,10 +250,8 @@ const currentPlan = ref(null)
 const dispatchCount = ref(3)
 const vehicleSource = ref('auto')
 const selectedVehicles = ref([])
-/** 已有未完结车次（待装货/装货中/异常）的车辆不可再被指定，与 createDispatches 互斥口径一致 */
-const busyVehicleIds = computed(() =>
-  new Set(db.dispatches.filter((d) => ['pending', 'loading', 'exception'].includes(d.status)).map((d) => d.vehicleId))
-)
+/** 已有未完结车次（全部非终态）的车辆不可再被指定，与 createDispatches 互斥口径一致（N-2：含在途/卸货中） */
+const busyVehicleIds = computed(() => new Set(db.dispatches.filter((d) => BUSY_STATUSES.includes(d.status)).map((d) => d.vehicleId)))
 /** 可选车辆：空闲 + 非铁路/水运车型 + 无未完结车次 + 年检未过期（与 createDispatches 守卫同口径） */
 const idleVehicles = computed(() =>
   db.vehicles.filter(

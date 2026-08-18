@@ -78,6 +78,32 @@
             </el-steps>
           </div>
         </div>
+
+        <!-- 变更待审批（环节3：改价经部门审批 → 公司审批后生效） -->
+        <div class="panel" v-if="contract?.pendingChange">
+          <div class="panel__header">
+            <span class="panel__title">变更待审批</span>
+            <el-tag size="small" type="warning" effect="plain">提交于 {{ contract.pendingChange.createTime }}</el-tag>
+          </div>
+          <div class="panel__body">
+            <el-descriptions :column="2" border size="small">
+              <el-descriptions-item label="变更内容">{{ changeContentText }}</el-descriptions-item>
+              <el-descriptions-item label="变更原因">{{ contract.pendingChange.reason || '—' }}</el-descriptions-item>
+            </el-descriptions>
+            <el-steps :active="changeApprovalActive" align-center finish-status="success" style="margin: 16px 0 8px">
+              <el-step
+                v-for="s in contract.pendingChange.chain"
+                :key="s.level"
+                :title="s.name"
+                :status="stepStatus(s)"
+                :description="stepDesc(s)"
+              />
+            </el-steps>
+            <el-button v-if="can('contract-approve')" type="success" size="small" :icon="Check" @click="openChangeApprove">
+              审批变更
+            </el-button>
+          </div>
+        </div>
       </el-tab-pane>
 
       <!-- 执行进度 -->
@@ -243,6 +269,13 @@
     <el-dialog v-model="changeDialog" title="合同变更" width="480px">
       <div v-if="contract">
         <el-alert :title="'合同 ' + contract.id + '（' + contract.name + '）'" type="info" :closable="false" show-icon />
+        <el-alert
+          title="单价变更须经部门审批 → 公司审批通过后生效；数量/截止日期变更即时生效。已派车车次按派车时快照单价结算，改价仅影响未派车批次"
+          type="warning"
+          :closable="false"
+          show-icon
+          style="margin-top: 12px"
+        />
         <el-form label-width="90px" style="margin-top: 16px">
           <el-form-item label="合同数量">
             <el-input-number v-model="changeForm.quantity" :min="0" :step="100" style="width: 100%" />
@@ -261,6 +294,36 @@
       <template #footer>
         <el-button @click="changeDialog = false">取消</el-button>
         <el-button type="primary" @click="doChange">确认变更</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 变更审批（环节3：改价审批 通过 / 驳回） -->
+    <el-dialog v-model="changeApproveDialog" title="变更审批" width="480px">
+      <div v-if="contract?.pendingChange">
+        <el-descriptions :column="1" border size="small" style="margin-bottom: 16px">
+          <el-descriptions-item label="合同编号">{{ contract.id }}</el-descriptions-item>
+          <el-descriptions-item label="变更内容">{{ changeContentText }}</el-descriptions-item>
+          <el-descriptions-item label="当前层级">
+            {{ changeApproveStep ? changeApproveStep.name + '（第 ' + changeApproveStep.level + '/' + (contract.pendingChange.chain?.length || 2) + ' 级）' : '—' }}
+          </el-descriptions-item>
+        </el-descriptions>
+        <el-form label-width="80px">
+          <el-form-item label="审批意见">
+            <el-input
+              v-model="changeApproveComment"
+              type="textarea"
+              :rows="3"
+              placeholder="通过可留空（默认“同意”）；驳回必须填写原因"
+              maxlength="200"
+              show-word-limit
+            />
+          </el-form-item>
+        </el-form>
+      </div>
+      <template #footer>
+        <el-button @click="changeApproveDialog = false">取消</el-button>
+        <el-button type="danger" plain @click="doRejectChange">驳回</el-button>
+        <el-button type="success" @click="doApproveChange">通过</el-button>
       </template>
     </el-dialog>
 
@@ -321,6 +384,8 @@ import {
   approveContract,
   rejectContract,
   changeContract,
+  approveContractChange,
+  rejectContractChange,
   extendContract,
   completeContract,
   terminateContract,
@@ -475,17 +540,71 @@ function doChange() {
     ElMessage.warning('请填写变更原因')
     return
   }
-  const { changed } = changeContract(
+  const r = changeContract(
     contract.value,
     { quantity: changeForm.quantity, unitPrice: changeForm.unitPrice, endDate: changeForm.endDate },
     changeForm.reason.trim()
   )
   changeDialog.value = false
-  if (!changed) {
+  if (r.pending) {
+    ElMessage.success('改价已提交审批（部门审批 → 公司审批），全级通过后生效；仅影响未派车批次')
+    return
+  }
+  if (!r.changed) {
     ElMessage.info('合同要素未发生变化')
     return
   }
   ElMessage.success('合同变更成功，金额已重算')
+}
+
+/* ===== 变更审批（环节3：改价经部门审批 → 公司审批后生效；驳回即作废申请） ===== */
+const changeApproveDialog = ref(false)
+const changeApproveComment = ref('')
+const changeApproveStep = computed(() => contract.value?.pendingChange?.chain?.find((s) => s.status === 'pending'))
+const changeApprovalActive = computed(() => {
+  const chain = contract.value?.pendingChange?.chain || []
+  const idx = chain.findIndex((s) => s.status === 'pending' || s.status === 'rejected')
+  return idx === -1 ? chain.length : idx
+})
+/** 待批变更内容（与 changeContract 提交口径一致） */
+const changeContentText = computed(() => {
+  const c = contract.value
+  const f = c?.pendingChange?.fields
+  if (!c || !f) return '—'
+  const parts = []
+  if (f.quantity != null && f.quantity !== c.quantity) parts.push(`数量 ${c.quantity}→${f.quantity} 吨`)
+  if (f.unitPrice != null && f.unitPrice !== c.unitPrice) parts.push(`单价 ${c.unitPrice}→${f.unitPrice} 元/吨`)
+  if (f.endDate && f.endDate !== c.endDate) parts.push(`截止日期 ${c.endDate}→${f.endDate}`)
+  return parts.join('；') || '—'
+})
+
+function openChangeApprove() {
+  changeApproveComment.value = ''
+  changeApproveDialog.value = true
+}
+
+function doApproveChange() {
+  const r = approveContractChange(contract.value, changeApproveComment.value.trim())
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
+  changeApproveDialog.value = false
+  ElMessage.success(r.final ? `合同 ${contract.value.id} 变更全级审批通过，已生效` : `合同 ${contract.value.id} 变更${r.step}通过，进入下一级审批`)
+}
+
+function doRejectChange() {
+  if (!changeApproveComment.value.trim()) {
+    ElMessage.warning('驳回必须填写审批意见（原因）')
+    return
+  }
+  const r = rejectContractChange(contract.value, changeApproveComment.value.trim())
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
+  changeApproveDialog.value = false
+  ElMessage.success(`合同 ${contract.value.id} 变更${r.step}驳回，变更申请已作废（单价维持不变）`)
 }
 
 /* ===== 合同延期 ===== */

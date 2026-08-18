@@ -6,7 +6,7 @@
 
     <div class="stat-row">
       <StatCard title="发票总数" :value="db.invoices.length" unit="张" icon="Postcard" color="var(--color-primary)" />
-      <StatCard title="已开具" :value="issuedCount" unit="张" icon="CircleCheck" color="var(--color-success)" :sub="'金额 ' + formatMoney(issuedAmount)" />
+      <StatCard title="已开具" :value="issuedCount" unit="张" icon="CircleCheck" color="var(--color-success)" :sub="'金额 ' + formatMoney(issuedAmount) + (staleCount ? ' · 金额陈旧 ' + staleCount + ' 张' : '')" />
       <StatCard title="待开具" :value="pendingCount" unit="张" icon="Clock" color="var(--color-warning)" />
       <StatCard title="已红冲" :value="redFlushedCount" unit="张" icon="RefreshLeft" color="var(--color-danger)" />
     </div>
@@ -57,9 +57,12 @@
           <el-table-column prop="issueDate" label="开票日期" width="110">
             <template #default="{ row }">{{ row.issueDate || '—' }}</template>
           </el-table-column>
-          <el-table-column label="状态" width="100" align="center">
+          <el-table-column label="状态" width="130" align="center">
             <template #default="{ row }">
               <StatusTag :status="row.status" :map="statusMap" />
+              <el-tooltip v-if="row.stale && row.status === 'issued'" :content="'金额陈旧：' + (row.staleReason || '账单金额已变化')" placement="top">
+                <el-tag size="small" type="danger" effect="dark" style="margin-left: 4px">金额陈旧</el-tag>
+              </el-tooltip>
             </template>
           </el-table-column>
           <el-table-column label="操作" width="140" align="center" fixed="right">
@@ -110,6 +113,14 @@
             <span class="num amount">{{ formatMoney(current.amount) }}</span>
           </el-descriptions-item>
         </el-descriptions>
+        <el-alert
+          v-if="current.stale && current.status === 'issued'"
+          type="warning"
+          :closable="false"
+          show-icon
+          style="margin-top: 12px"
+          :title="`发票金额与当前账单金额不一致（${current.staleReason || '账单金额已变化'}），需红冲重开`"
+        />
       </div>
     </el-dialog>
   </div>
@@ -171,6 +182,8 @@ function resetFilter() {
 
 const issuedCount = computed(() => db.invoices.filter((i) => i.status === 'issued').length)
 const issuedAmount = computed(() => db.invoices.filter((i) => i.status === 'issued').reduce((s, i) => s + i.amount, 0))
+/** M5：金额陈旧发票数（已开具但账单额已变化，需红冲重开） */
+const staleCount = computed(() => db.invoices.filter((i) => i.status === 'issued' && i.stale).length)
 const pendingCount = computed(() => db.invoices.filter((i) => i.status === 'pending').length)
 const redFlushedCount = computed(() => db.invoices.filter((i) => i.status === 'red-flushed').length)
 

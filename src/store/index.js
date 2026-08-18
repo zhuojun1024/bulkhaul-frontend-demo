@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { reactive, ref } from 'vue'
 import { db } from '@/mock'
+import { clearOperator } from '@/mock/flow'
 
 /** 应用全局状态（侧边栏折叠等） */
 export const useAppStore = defineStore('app', () => {
@@ -86,6 +87,8 @@ export const useUserStore = defineStore('user', () => {
     userInfo.role = ''
     userInfo.phone = ''
     userInfo.driverId = ''
+    // M7 修复：清除服务层 operator，登出后服务调用不再记在旧用户名下（审计日志失真）
+    clearOperator()
   }
 
   return { token, userInfo, login, logout }

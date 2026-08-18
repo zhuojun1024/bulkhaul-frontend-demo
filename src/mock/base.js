@@ -41,6 +41,7 @@ export const db = reactive({
   inventories: [],
   settlements: [],
   payments: [],
+  prepayments: [], // 环节5：预付款台账（客户预付，收取/抵扣；available = amount - used）
   bankRecords: [], // 银行流水（对账核销：unmatched 待核销 / matched 已核销）
   invoices: [],
   messages: [], // 消息中心（flow 事件驱动 + 种子）
@@ -54,8 +55,19 @@ export const db = reactive({
   rolePerms: {},
   // 电子围栏参数（在途监控页可配置）：deviateLimit 轨迹偏离阈值（地图单位）/ delayMinutes 超 ETA 阈值（分钟）
   fenceConfig: { enabled: true, deviateLimit: 15, delayMinutes: 30 },
+  // 环节6：消息免打扰设置（按登录账号）：username → { enabled, quietStart, quietEnd, mutedTypes }
+  dnd: {},
+  // 环节7：安全库存台账（仓库×商品 可发库存下限）：{ id, warehouseId, commodityId, minQty }
+  safetyStocks: [],
+  // 环节8：数据权限（行级，按登录账号）：username → { regions: [...] }，空/缺省 = 全量数据
+  dataScopes: {},
   logs: []
 })
+
+/** 公路口径运输方式（派车+磅单）；铁路/水运/管道按运输单元执行，不占车辆司机、无公路磅单
+ *  置于 base（无依赖）：种子模块（dispatch 等）与 flow 服务层共用同一口径，避免循环导入 */
+export const ROAD_MODES = ['公路', '多式联运']
+export const isRoadMode = (mode) => ROAD_MODES.includes(mode || '公路')
 
 /** 车辆皮重（10-16t，按车辆 id 确定性派生）；种子磅单与运行时补录共用同一口径 */
 export function tareOf(vehicle) {

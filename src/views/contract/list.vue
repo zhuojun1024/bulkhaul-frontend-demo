@@ -236,6 +236,13 @@
     <el-dialog v-model="changeDialog" title="合同变更" width="480px">
       <div v-if="changeTarget">
         <el-alert :title="'合同 ' + changeTarget.id + '（' + changeTarget.name + '）'" type="info" :closable="false" show-icon />
+        <el-alert
+          title="单价变更须经部门审批 → 公司审批通过后生效（合同详情页可审批）；数量/截止日期变更即时生效。已派车车次按派车时快照单价结算，改价仅影响未派车批次"
+          type="warning"
+          :closable="false"
+          show-icon
+          style="margin-top: 12px"
+        />
         <el-form label-width="90px" style="margin-top: 16px">
           <el-form-item label="合同数量">
             <el-input-number v-model="changeForm.quantity" :min="0" :step="100" style="width: 100%" />
@@ -604,13 +611,17 @@ function doChange() {
     ElMessage.warning('请填写变更原因')
     return
   }
-  const { changed } = changeContract(
+  const r = changeContract(
     changeTarget.value,
     { quantity: changeForm.quantity, unitPrice: changeForm.unitPrice, endDate: changeForm.endDate },
     changeForm.reason.trim()
   )
   changeDialog.value = false
-  if (!changed) {
+  if (r.pending) {
+    ElMessage.success(`合同 ${changeTarget.value.id} 改价已提交审批（部门审批 → 公司审批），全级通过后生效`)
+    return
+  }
+  if (!r.changed) {
     ElMessage.info('合同要素未发生变化')
     return
   }

@@ -29,6 +29,16 @@ db.exceptions = Array.from({ length: 25 }, (_, i) => {
       ? exceptionDispatches[i]
       : normalDispatches[randInt(0, normalDispatches.length - 1)]
   const occurTime = dayjs(NOW).subtract(randInt(1, 14 * 24), 'hour').minute(randInt(0, 59))
+  // 损失上限：已完成车次的损失以车次价值为限（约 1-2 万），大额损失只发生在在途车次（事故等）；
+  // 否则已关闭异常在结算时按 exceptionLoss 扣减账单，会把账单总额扣成负数
+  const cost =
+    dispatch.status === 'completed'
+      ? randInt(0, 8000)
+      : level === 'high'
+        ? randInt(5, 20) * 10000
+        : level === 'medium'
+          ? randInt(1, 5) * 10000
+          : randInt(0, 8000)
 
   return {
     id: `YC-${String(i + 1).padStart(4, '0')}`,
@@ -40,6 +50,6 @@ db.exceptions = Array.from({ length: 25 }, (_, i) => {
     handler: status === 'pending' ? '' : randomName(),
     description: pick(descPool[type]),
     result: status === 'closed' ? pick(resultPool) : '',
-    cost: level === 'high' ? randInt(5, 20) * 10000 : level === 'medium' ? randInt(1, 5) * 10000 : randInt(0, 8000)
+    cost
   }
 })

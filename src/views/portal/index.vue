@@ -15,13 +15,14 @@
         <StatCard title="合同总数" :value="contracts.length" unit="份" icon="Document" color="var(--color-primary)" :sub="'执行中 ' + executingCount + ' 份'" />
         <StatCard title="累计运量" :value="formatNum(totalVolume)" unit="吨" icon="Van" color="var(--color-success)" sub="按实际完成车次" />
         <StatCard title="未付余额" :value="formatMoney(outstanding)" icon="Wallet" color="var(--color-warning)" sub="全部账单未付部分" />
+        <StatCard title="可用预付款" :value="formatMoney(prepayAvailable)" icon="CreditCard" color="var(--color-success)" sub="预付货款，可抵扣账单" />
         <StatCard
           title="授信占用"
           :value="creditPct"
           unit="%"
           icon="CreditCard"
           :color="creditPct >= 100 ? 'var(--color-danger)' : 'var(--color-info)'"
-          :sub="'额度 ' + formatMoney(customer.creditLimit)"
+          :sub="'额度 ' + formatMoney(customer.creditLimit) + '（已扣预付）'"
         />
       </div>
 
@@ -119,18 +120,14 @@
                     <StatusTag :status="row.status" :map="settleStatusMap" />
                   </template>
                 </el-table-column>
-                <el-table-column label="对账确认" width="150" align="center">
+                <el-table-column label="对账确认" width="190" align="center">
                   <template #default="{ row }">
                     <el-tag v-if="row.customerConfirmed" size="small" type="success" effect="light">已确认</el-tag>
-                    <el-button
-                      v-else-if="row.status === 'reconciling' && can('customer-confirm')"
-                      size="small"
-                      type="primary"
-                      plain
-                      @click="confirmReconcile(row)"
-                    >
-                      确认对账
-                    </el-button>
+                    <template v-else-if="row.status === 'reconciling' && can('customer-confirm')">
+                      <el-button size="small" type="primary" plain @click="confirmReconcile(row)">确认对账</el-button>
+                      <el-button size="small" type="danger" plain @click="openObjection(row)">异议</el-button>
+                    </template>
+                    <el-tag v-else-if="hasOpenObjection(row)" size="small" type="danger" effect="light">已异议 · 待重新对账</el-tag>
                     <span v-else class="text-muted">—</span>
                   </template>
                 </el-table-column>
@@ -281,6 +278,34 @@
           <el-button type="primary" @click="submitRequest">提交需求</el-button>
         </template>
       </el-dialog>
+
+      <!-- 客户异议（环节2：对对账结果有异议时提交，账单回待对账并触发重新对账） -->
+      <el-dialog v-model="objDialog" title="提交对账异议" width="480px">
+        <div v-if="objTarget">
+          <el-alert
+            :title="'账单 ' + objTarget.billNo + '：提交异议后账单回到“待对账”，平台重新对账后需再次确认新结果'"
+            type="warning"
+            :closable="false"
+            show-icon
+          />
+          <el-form label-width="90px" style="margin-top: 16px">
+            <el-form-item label="异议原因" required>
+              <el-input
+                v-model="objForm.reason"
+                type="textarea"
+                :rows="3"
+                maxlength="200"
+                show-word-limit
+                placeholder="请描述对对账结果的具体异议（差异/损耗/签收等）"
+              />
+            </el-form-item>
+          </el-form>
+        </div>
+        <template #footer>
+          <el-button @click="objDialog = false">取消</el-button>
+          <el-button type="danger" @click="submitObjection">提交异议</el-button>
+        </template>
+      </el-dialog>
     </template>
   </div>
 </template>
@@ -294,7 +319,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
-import { customerConfirm, outstandingOf, submitTransportRequest } from '@/mock/flow'
+import { customerConfirm, customerObjection, outstandingOf, prepaymentAvailable, submitTransportRequest } from '@/mock/flow'
 import { useUserStore } from '@/store'
 import { usePerm } from '@/permission'
 import { formatMoney, formatNum } from '@/utils'
@@ -382,10 +407,13 @@ const payments = computed(() =>
 )
 const invoices = computed(() => db.invoices.filter((i) => settlements.value.some((s) => s.id === i.settlementId)))
 const outstanding = computed(() => outstandingOf(customer.value?.id))
+/** 环节5：可用预付款（客户预付货款，冲减授信占用，与 creditCheck 同口径） */
+const prepayAvailable = computed(() => prepaymentAvailable(customer.value?.id))
 const creditPct = computed(() => {
   const limit = customer.value?.creditLimit
   if (!limit) return 0
-  return Math.round((outstanding.value / limit) * 100)
+  const occupied = Math.max(0, outstanding.value - prepayAvailable.value)
+  return Math.round((occupied / limit) * 100)
 })
 
 function billNoOf(id) {
@@ -407,6 +435,35 @@ function confirmReconcile(s) {
       ElMessage.success('已确认对账结果')
     })
     .catch(() => {})
+}
+
+/* ===== 客户异议（环节2：对对账结果有异议时提交，账单回待对账并触发重新对账） ===== */
+const objDialog = ref(false)
+const objTarget = ref(null)
+const objForm = reactive({ reason: '' })
+
+function hasOpenObjection(row) {
+  return (row.objections || []).some((o) => o.status === 'open')
+}
+
+function openObjection(s) {
+  objTarget.value = s
+  objForm.reason = ''
+  objDialog.value = true
+}
+
+function submitObjection() {
+  if (!objForm.reason.trim()) {
+    ElMessage.warning('请填写异议原因')
+    return
+  }
+  const r = customerObjection(objTarget.value, objForm.reason.trim())
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
+  objDialog.value = false
+  ElMessage.success('异议已提交，平台将重新对账，请等待新的对账结果')
 }
 
 const contractStatusMap = {
@@ -433,7 +490,7 @@ const invoiceStatusMap = {
 <style scoped>
 .stat-row {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 12px;
 }
 

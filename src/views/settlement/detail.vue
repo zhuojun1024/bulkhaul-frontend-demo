@@ -126,6 +126,14 @@
               <el-descriptions-item label="发票类型">{{ invoice?.type || '—' }}</el-descriptions-item>
               <el-descriptions-item label="开票日期">{{ invoice?.issueDate || '—' }}</el-descriptions-item>
             </el-descriptions>
+            <el-alert
+              v-if="invoice?.stale && invoice.status === 'issued'"
+              type="warning"
+              :closable="false"
+              show-icon
+              style="margin-top: 12px"
+              :title="`发票金额与账单金额不一致（${invoice.staleReason || '账单金额已变化'}），需红冲重开；红冲前不可登记收款`"
+            />
             <el-button
               v-if="settlement?.status === 'settled' && settlement?.invoiceStatus === 'not-issued' && can('invoice')"
               type="primary"
@@ -142,6 +150,14 @@
             <span class="panel__title">收款记录</span>
             <el-button v-if="canRecordPayment && can('settlement')" type="primary" size="small" :icon="Money" @click="openPayDialog">
               登记收款
+            </el-button>
+            <el-button
+              v-if="canRecordPayment && can('settlement') && prepayAvail > 0"
+              type="success"
+              size="small"
+              @click="openPrepayDialog"
+            >
+              预付款抵扣
             </el-button>
           </div>
           <div class="panel__body">
@@ -168,6 +184,9 @@
         <span v-if="settlement?.reconciliation" class="recon-summary">
           对账时间 {{ settlement.reconciliation.date }} · 共 {{ settlement.reconciliation.items.length }} 车次
           · 损耗合计 {{ settlement.reconciliation.lossQty }} 吨（约 {{ formatMoney(settlement.reconciliation.lossAmount) }}，已扣减）
+          <template v-if="settlement.reconciliation.qualityQty > 0">
+            · 质量扣重 {{ settlement.reconciliation.qualityQty }} 吨（约 {{ formatMoney(settlement.reconciliation.qualityAmount) }}，已扣减）
+          </template>
           <template v-if="settlement.reconciliation.diffCount">
             · <span class="text-warning">{{ settlement.reconciliation.diffCount }} 车次结算量与磅单不一致，需确认</span>
           </template>
@@ -175,6 +194,14 @@
         </span>
       </div>
       <div class="panel__body">
+        <el-alert
+          v-if="openObjections.length"
+          type="error"
+          :closable="false"
+          show-icon
+          style="margin-bottom: 12px"
+          :title="`客户提出异议（${openObjections[0].time}）：${openObjections[0].reason}——请处理差异后重新发起对账，客户再次确认后方可结算`"
+        />
         <el-table v-if="settlement?.reconciliation" :data="settlement.reconciliation.items" stripe size="small">
           <el-table-column prop="dispatchId" label="调度单号" width="110" />
           <el-table-column prop="plate" label="车牌" width="120" />
@@ -195,6 +222,11 @@
               <span class="num" :class="row.loss > 0.5 ? 'text-warning' : ''">{{ row.loss }}</span>
             </template>
           </el-table-column>
+          <el-table-column label="质量扣重(吨)" width="110" align="right">
+            <template #default="{ row }">
+              <span class="num" :class="row.qualityQty > 0 ? 'text-warning' : ''">{{ row.qualityQty || '—' }}</span>
+            </template>
+          </el-table-column>
           <el-table-column label="差异(吨)" width="100" align="right">
             <template #default="{ row }">
               <span class="num" :class="row.status === 'diff' ? 'text-danger' : ''">{{ row.diff > 0 ? '+' : '' }}{{ row.diff }}</span>
@@ -212,6 +244,20 @@
               <el-tag size="small" :type="row.status === 'diff' ? 'warning' : 'success'" effect="plain">
                 {{ row.status === 'diff' ? '需确认' : '一致' }}
               </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column v-if="can('dispatch')" label="操作" width="90" align="center">
+            <template #default="{ row }">
+              <el-button
+                v-if="row.hasReceipt === false"
+                link
+                type="warning"
+                size="small"
+                @click="openSupplement(row.dispatchId)"
+              >
+                补签
+              </el-button>
+              <span v-else class="text-muted">—</span>
             </template>
           </el-table-column>
         </el-table>
@@ -243,18 +289,61 @@
         <el-button type="primary" @click="confirmPay">确认收款</el-button>
       </template>
     </el-dialog>
+
+    <!-- 环节5：预付款抵扣（FIFO 抵扣客户可用预付款，记入收款流水） -->
+    <el-dialog v-model="prepayDialog" title="预付款抵扣" width="440px">
+      <el-form label-width="90px">
+        <el-form-item label="未付余额">
+          <span class="num amount">{{ formatMoney(unpaid) }}</span>
+        </el-form-item>
+        <el-form-item label="可用预付款">
+          <span class="num text-success">{{ formatMoney(prepayAvail) }}</span>
+        </el-form-item>
+        <el-form-item label="抵扣金额">
+          <el-input-number v-model="prepayAmount" :min="1" :max="Math.min(unpaid, prepayAvail)" :precision="0" style="width: 100%" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="prepayDialog = false">取消</el-button>
+        <el-button type="primary" @click="confirmPrepay">确认抵扣</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 补签（环节1：对账明细中未签收公路车次，与收货方核实后补开） -->
+    <el-dialog v-model="supDialog" title="补签电子签收单" width="480px">
+      <div v-if="supTarget">
+        <el-alert
+          :title="'调度单 ' + supTarget + ' 无电子签收单（收货凭证），补签前不可确认结算'"
+          type="warning"
+          :closable="false"
+          show-icon
+        />
+        <el-form label-width="90px" style="margin-top: 16px">
+          <el-form-item label="签收人" required>
+            <el-input v-model="supForm.signer" maxlength="20" placeholder="收货方签收人姓名" />
+          </el-form-item>
+          <el-form-item label="补签原因">
+            <el-input v-model="supForm.reason" type="textarea" :rows="2" maxlength="200" show-word-limit placeholder="如：签收单遗失，已与收货方核实" />
+          </el-form-item>
+        </el-form>
+      </div>
+      <template #footer>
+        <el-button @click="supDialog = false">取消</el-button>
+        <el-button type="primary" @click="submitSupplement">确认补签</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 defineOptions({ name: 'SettlementDetail' })
-import { ref, computed } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, DocumentChecked, CircleCheck, Printer, Money, Refresh } from '@element-plus/icons-vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
-import { startReconcile as flowStartReconcile, confirmSettle, recordPayment, issueInvoice as flowIssueInvoice, recalcSettlement } from '@/mock/flow'
+import { startReconcile as flowStartReconcile, confirmSettle, recordPayment, issueInvoice as flowIssueInvoice, recalcSettlement, supplementReceipt, prepaymentAvailable, applyPrepayment } from '@/mock/flow'
 import { usePerm } from '@/permission'
 import { formatMoney, formatNum } from '@/utils'
 
@@ -292,6 +381,13 @@ const feeRows = computed(() => {
   if (s.lossDeduction > 0) {
     rows.push({ name: '损耗扣减', rule: `损耗 ${s.lossQty} 吨 × ${price} 元/吨（磅单结算）`, amount: -s.lossDeduction })
   }
+  if (s.qualityDeduction > 0) {
+    rows.push({
+      name: '质量扣减',
+      rule: `水分/灰分超标扣重 ${s.qualityQty} 吨 × ${price} 元/吨（标准水分 10% / 灰分 15%）`,
+      amount: -s.qualityDeduction
+    })
+  }
   if (s.exceptionLoss > 0) {
     rows.push({ name: '异常损失', rule: '关联已关闭异常成本扣减', amount: -s.exceptionLoss })
   }
@@ -324,6 +420,26 @@ function confirmPay() {
   ElMessage.success(`已登记收款 ${formatMoney(real)}`)
 }
 
+/* ===== 环节5：预付款抵扣 ===== */
+const prepayDialog = ref(false)
+const prepayAmount = ref(0)
+const prepayAvail = computed(() => prepaymentAvailable(settlement.value?.customerId))
+
+function openPrepayDialog() {
+  prepayAmount.value = Math.min(settlement.value.totalAmount - settlement.value.paidAmount, prepayAvail.value)
+  prepayDialog.value = true
+}
+
+function confirmPrepay() {
+  const r = applyPrepayment(settlement.value, prepayAmount.value)
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
+  prepayDialog.value = false
+  ElMessage.success(`预付款抵扣 ${formatMoney(r.amount)}，剩余未付 ${formatMoney(unpaid.value)}`)
+}
+
 const stepActive = computed(() => {
   const s = settlement.value
   if (!s) return 0
@@ -332,12 +448,43 @@ const stepActive = computed(() => {
   return 4
 })
 
+/** 未关闭的客户异议单（环节2：异议后账单回待对账，重新对账 + 客户再确认后自动关闭） */
+const openObjections = computed(() => (settlement.value?.objections || []).filter((o) => o.status === 'open'))
+
 /** 客户确认状态：按客户门户实际确认记录（customerConfirmed），不再按账单状态推断 */
 const customerConfirmDesc = computed(() => {
   const s = settlement.value
   if (s?.customerConfirmed) return `已确认 · ${s.customerConfirmed.time}`
+  if (openObjections.value.length) return `客户异议 · 待重新对账（${openObjections.value[0].time}）`
   return '待客户确认（客户门户可确认）'
 })
+
+/* ===== 补签（环节1：对账明细未签收公路车次，与收货方核实后补开） ===== */
+const supDialog = ref(false)
+const supTarget = ref('')
+const supForm = reactive({ signer: '', reason: '' })
+
+function openSupplement(dispatchId) {
+  supTarget.value = dispatchId
+  supForm.signer = ''
+  supForm.reason = ''
+  supDialog.value = true
+}
+
+function submitSupplement() {
+  if (!supForm.signer.trim()) {
+    ElMessage.warning('请填写签收人')
+    return
+  }
+  const d = find.dispatch(supTarget.value)
+  const r = supplementReceipt(d, supForm.signer.trim(), supForm.reason.trim())
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
+  supDialog.value = false
+  ElMessage.success(`补签成功：${r.code}（签收人 ${r.signer}），对账结果已刷新`)
+}
 
 function invoiceType(status) {
   return { issued: 'success', pending: 'warning', 'not-issued': 'info' }[status] || 'info'
@@ -372,19 +519,23 @@ function settle() {
     r && r.lossQty > 0
       ? `<br/><span style="color:var(--color-warning)">本期损耗合计 ${r.lossQty} 吨（约 ${formatMoney(r.lossAmount)}），按出磅净重结算，损耗已扣减。</span>`
       : ''
+  const qualityWarn =
+    r && r.qualityQty > 0
+      ? `<br/><span style="color:var(--color-warning)">本期质量扣重合计 ${r.qualityQty} 吨（约 ${formatMoney(r.qualityAmount)}，水分/灰分超标扣减），已扣减。</span>`
+      : ''
   const diffWarn =
     r && r.diffCount
       ? `<br/><span style="color:var(--color-danger)">${r.diffCount} 车次结算量与磅单不一致，请确认后再结算。</span>`
       : ''
   const receiptWarn =
     r && r.missingReceiptCount
-      ? `<br/><span style="color:var(--color-danger)">${r.missingReceiptCount} 车次公路车次尚无电子签收单（收货凭证），建议补齐签收后再结算。</span>`
+      ? `<br/><span style="color:var(--color-danger)">${r.missingReceiptCount} 车次公路车次尚无电子签收单（收货凭证），签收是结算依据，未补齐前无法确认结算（对账明细可"补签"）。</span>`
       : ''
   const confirmWarn = s.customerConfirmed
     ? ''
     : `<br/><span style="color:var(--color-danger)">客户尚未确认对账结果，需客户在客户门户确认后方可结算。</span>`
   ElMessageBox.confirm(
-    `确认结算 ${s.billNo}？结算金额 ${formatMoney(s.totalAmount)}，账期 ${paymentDays.value || 30} 天，到期未付清将标记逾期。${lossWarn}${diffWarn}${receiptWarn}${confirmWarn}`,
+    `确认结算 ${s.billNo}？结算金额 ${formatMoney(s.totalAmount)}，账期 ${paymentDays.value || 30} 天，到期未付清将标记逾期。${lossWarn}${qualityWarn}${diffWarn}${receiptWarn}${confirmWarn}`,
     '确认结算',
     { dangerouslyUseHTMLString: true, type: 'success', confirmButtonText: '确认结算' }
   ).then(() => {
@@ -506,6 +657,10 @@ function printBill() {
 
 .text-danger {
   color: var(--color-danger) !important;
+}
+
+.text-muted {
+  color: var(--text-secondary);
 }
 
 .recon-summary {

@@ -43,6 +43,12 @@
               <el-tag size="small" effect="plain">{{ row.role }}</el-tag>
             </template>
           </el-table-column>
+          <el-table-column label="数据范围" width="130" align="center">
+            <template #default="{ row }">
+              <el-tag v-if="scopeOf(row).length" size="small" type="warning" effect="plain">{{ scopeOf(row).join('、') }}</el-tag>
+              <span v-else class="scope-all">全量数据</span>
+            </template>
+          </el-table-column>
           <el-table-column prop="phone" label="手机号" width="130" />
           <el-table-column prop="email" label="邮箱" min-width="180" show-overflow-tooltip />
           <el-table-column prop="lastLogin" label="最近登录" width="150" />
@@ -56,9 +62,14 @@
               />
             </template>
           </el-table-column>
-          <el-table-column v-if="can('user')" label="操作" width="130" align="center" fixed="right">
+          <el-table-column v-if="can('user')" label="操作" width="190" align="center" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" size="small" @click="openDialog(row)">编辑</el-button>
+              <el-button
+                v-if="row.username !== 'admin'"
+                link type="warning" size="small"
+                @click="openScope(row)"
+              >数据范围</el-button>
               <el-button
                 v-if="row.username !== 'admin'"
                 link type="danger" size="small"
@@ -110,6 +121,21 @@
         <el-button type="primary" @click="save">保存</el-button>
       </template>
     </el-dialog>
+
+    <!-- 环节8：数据范围设置（行级数据权限：按装货侧区域过滤，空 = 全量数据） -->
+    <el-dialog v-model="scopeVisible" title="数据范围设置" width="440px">
+      <div v-if="scopeTarget" class="scope-tip">
+        账号 <b>@{{ scopeTarget.username }}</b>（{{ scopeTarget.role }}）
+      </div>
+      <el-checkbox-group v-model="scopeForm.regions">
+        <el-checkbox v-for="r in DATA_REGIONS" :key="r" :value="r">{{ r }}</el-checkbox>
+      </el-checkbox-group>
+      <div class="scope-tip">不勾选 = 全量数据；勾选后该账号在调度/计划/在途监控等列表仅可见装货侧属于所选区域的数据（多租户行级权限的等价物）。</div>
+      <template #footer>
+        <el-button @click="scopeVisible = false">取消</el-button>
+        <el-button type="primary" @click="saveScope">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -120,10 +146,34 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Plus, Refresh } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { db } from '@/mock'
-import { removeUser as flowRemoveUser, saveUser, toggleUserStatus } from '@/mock/flow'
+import { removeUser as flowRemoveUser, saveUser, toggleUserStatus, DATA_REGIONS, setDataScope } from '@/mock/flow'
 import { usePerm } from '@/permission'
 
 const { can } = usePerm()
+
+/** 环节8：账号数据范围（空 = 全量数据） */
+const scopeOf = (row) => (db.dataScopes && db.dataScopes[row.username]?.regions) || []
+
+/* ===== 数据范围设置（RBAC user，服务层校验 + 审计） ===== */
+const scopeVisible = ref(false)
+const scopeTarget = ref(null)
+const scopeForm = reactive({ regions: [] })
+
+function openScope(row) {
+  scopeTarget.value = row
+  scopeForm.regions = [...scopeOf(row)]
+  scopeVisible.value = true
+}
+
+function saveScope() {
+  const r = setDataScope(scopeTarget.value.username, scopeForm.regions)
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
+  scopeVisible.value = false
+  ElMessage.success(scopeForm.regions.length ? `数据范围已设为：${scopeForm.regions.join('、')}` : '已恢复全量数据')
+}
 
 
 const filter = reactive({ keyword: '', role: '', status: '' })
@@ -229,5 +279,17 @@ function save() {
 .user-cell__username {
   font-size: 12px;
   color: var(--text-secondary);
+}
+
+.scope-all {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.scope-tip {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.8;
+  margin-bottom: 10px;
 }
 </style>

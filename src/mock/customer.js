@@ -46,3 +46,25 @@ db.customers = companies.map((c, i) => {
     remark: ''
   }
 })
+
+// 环节5：预付款台账种子（头部客户有预付记录，供"收取/抵扣"演示；available = amount - used）
+db.prepayments = [
+  {
+    id: 'YF-0001',
+    customerId: 'CUS001',
+    amount: 800000,
+    used: 0,
+    time: dayjs(NOW).subtract(20, 'day').format('YYYY-MM-DD HH:mm'),
+    method: '银行转账',
+    remark: '季度预付款'
+  },
+  {
+    id: 'YF-0002',
+    customerId: 'CUS003',
+    amount: 500000,
+    used: 0,
+    time: dayjs(NOW).subtract(8, 'day').format('YYYY-MM-DD HH:mm'),
+    method: '银行转账',
+    remark: '月度预付款'
+  }
+]

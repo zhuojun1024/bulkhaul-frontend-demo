@@ -33,10 +33,11 @@ export const ROLE_MENUS = {
     '/vehicle',
     '/driver',
     '/terminal',
-    '/terminal/weighing'
+    '/terminal/weighing',
+    '/document'
   ],
-  结算专员: ['/workbench', '/message', '/monitor', '/contract', '/customer', '/settlement', '/settlement/invoice', '/report'],
-  场站操作员: ['/workbench', '/message', '/dispatch', '/terminal', '/terminal/weighing', '/warehouse', '/warehouse/inventory'],
+  结算专员: ['/workbench', '/message', '/monitor', '/contract', '/customer', '/settlement', '/settlement/invoice', '/report', '/document'],
+  场站操作员: ['/workbench', '/message', '/dispatch', '/terminal', '/terminal/weighing', '/warehouse', '/warehouse/inventory', '/document'],
   安全管理员: ['/workbench', '/message', '/dispatch', '/exception', '/safety'],
   客户: ['/workbench', '/portal', '/message'],
   司机: ['/workbench']
@@ -75,6 +76,7 @@ export const MENU_OPTIONS = [
   { path: '/settlement', label: '结算管理' },
   { path: '/settlement/invoice', label: '发票管理' },
   { path: '/report', label: '报表中心' },
+  { path: '/document', label: '单证归档' },
   { path: '/safety', label: '安全管理' },
   { path: '/system/user', label: '用户管理' },
   { path: '/system/role', label: '角色管理' },

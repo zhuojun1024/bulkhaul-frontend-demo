@@ -31,6 +31,15 @@
           <el-button v-if="dispatch && ['pending', 'loading', 'intransit'].includes(dispatch.status) && can('exception')" type="danger" plain :icon="Warning" @click="openReport">
             上报异常
           </el-button>
+          <el-button
+            v-if="dispatch?.status === 'completed' && isRoad && !dispatch.receipt && can('dispatch')"
+            type="warning"
+            plain
+            :icon="EditPen"
+            @click="openSupplement"
+          >
+            补签
+          </el-button>
           <el-button v-if="dispatch?.driverId" type="primary" plain :icon="Cellphone" @click="openDriverApp">
             司机端视图
           </el-button>
@@ -91,7 +100,25 @@
               <el-descriptions-item label="电子签收">
                 <template v-if="dispatch?.receipt">
                   <el-tag size="small" type="success" effect="light">{{ dispatch.receipt.code }}</el-tag>
+                  <el-tooltip v-if="dispatch.receipt.supplement" :content="'补签：' + (dispatch.receipt.reason || '与收货方核实后补开')" placement="top">
+                    <el-tag size="small" type="warning" effect="plain" style="margin-left: 4px">补签</el-tag>
+                  </el-tooltip>
                   <span class="receipt-text">{{ dispatch.receipt.signer }} · {{ dispatch.receipt.time }}</span>
+                </template>
+                <span v-else-if="dispatch?.status === 'completed' && isRoad" class="text-danger">未签收（结算收货凭证缺失，需补签）</span>
+                <span v-else>—</span>
+              </el-descriptions-item>
+              <el-descriptions-item label="质检（水分/灰分）">
+                <template v-if="dispatch?.quality">
+                  <span class="num">{{ dispatch.quality.moisture }}% / {{ dispatch.quality.ash }}%</span>
+                  <el-tooltip
+                    v-if="qualityDeduct > 0"
+                    :content="'标准水分 10% / 灰分 15%，超标部分按出磅净重扣减（水分 1.5%/1%、灰分 1%/1%）'"
+                    placement="top"
+                  >
+                    <el-tag size="small" type="warning" effect="plain" style="margin-left: 4px">扣重 {{ qualityDeduct }} 吨</el-tag>
+                  </el-tooltip>
+                  <span class="receipt-text">{{ dispatch.quality.time }}</span>
                 </template>
                 <span v-else>—</span>
               </el-descriptions-item>
@@ -190,6 +217,30 @@
         <el-button type="danger" @click="submitException">上报</el-button>
       </template>
     </el-dialog>
+
+    <!-- 补签（环节1：已完成公路车次缺失签收凭证，与收货方核实后补开） -->
+    <el-dialog v-model="supDialog" title="补签电子签收单" width="480px">
+      <div v-if="dispatch">
+        <el-alert
+          :title="'调度单 ' + dispatch.id + ' 已完成但无电子签收单（收货凭证），补签后方可确认结算'"
+          type="warning"
+          :closable="false"
+          show-icon
+        />
+        <el-form label-width="90px" style="margin-top: 16px">
+          <el-form-item label="签收人" required>
+            <el-input v-model="supForm.signer" maxlength="20" placeholder="收货方签收人姓名" />
+          </el-form-item>
+          <el-form-item label="补签原因">
+            <el-input v-model="supForm.reason" type="textarea" :rows="2" maxlength="200" show-word-limit placeholder="如：签收单遗失，已与收货方核实" />
+          </el-form-item>
+        </el-form>
+      </div>
+      <template #footer>
+        <el-button @click="supDialog = false">取消</el-button>
+        <el-button type="primary" @click="submitSupplement">确认补签</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -198,7 +249,7 @@ defineOptions({ name: 'DispatchDetail' })
 import { ref, reactive, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft, Box, CircleCheck, Warning, Printer, Position, RefreshRight, Cellphone } from '@element-plus/icons-vue'
+import { ArrowLeft, Box, CircleCheck, Warning, Printer, Position, RefreshRight, Cellphone, EditPen } from '@element-plus/icons-vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
 import {
@@ -208,9 +259,11 @@ import {
   confirmUnload as flowConfirmUnload,
   reportException as flowReportException,
   resumeDispatch,
+  supplementReceipt,
   isRoadMode,
   loadCodeOf,
-  unloadCodeOf
+  unloadCodeOf,
+  qualityDeductionQty
 } from '@/mock/flow'
 import { formatMoney } from '@/utils'
 import dayjs from 'dayjs'
@@ -228,6 +281,8 @@ const weighings = computed(() => db.weighings.filter((w) => w.dispatchId === dis
 
 /** 公路口径（公路/多式联运）才有车辆司机与公路磅单 */
 const isRoad = computed(() => isRoadMode(dispatch.value?.mode))
+/** 环节4：质量扣重吨数（水分/灰分超标按出磅净重比例扣减） */
+const qualityDeduct = computed(() => qualityDeductionQty(dispatch.value))
 /** 执行主体：车牌优先，非公路口径取运输单元号 */
 const unitText = computed(() => vehicle.value?.plate || dispatch.value?.unitNo || '—')
 
@@ -349,6 +404,30 @@ function submitException() {
   ElMessage.warning('异常已上报，请前往异常处理模块跟进')
 }
 
+/* ===== 补签（环节1：已完成公路车次缺失签收凭证，与收货方核实后补开） ===== */
+const supDialog = ref(false)
+const supForm = reactive({ signer: '', reason: '' })
+
+function openSupplement() {
+  supForm.signer = ''
+  supForm.reason = ''
+  supDialog.value = true
+}
+
+function submitSupplement() {
+  if (!supForm.signer.trim()) {
+    ElMessage.warning('请填写签收人')
+    return
+  }
+  const r = supplementReceipt(dispatch.value, supForm.signer.trim(), supForm.reason.trim())
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
+  supDialog.value = false
+  ElMessage.success(`补签成功：${r.code}（签收人 ${r.signer}）`)
+}
+
 function printDispatch() {
   const d = dispatch.value
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>调度单 ${d.id}</title>
@@ -390,6 +469,10 @@ function printDispatch() {
 .exc-tip {
   font-size: 12px;
   color: var(--text-secondary);
+}
+
+.text-danger {
+  color: var(--color-danger);
 }
 
 .dispatch-detail__head {

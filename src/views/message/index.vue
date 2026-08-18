@@ -1,6 +1,7 @@
 <template>
   <div class="page">
-    <PageHeader title="消息中心" desc="平台业务通知（审批/调度/异常/结算/需求），支持已读管理与分类筛选">
+    <PageHeader title="消息中心" desc="平台业务通知（审批/调度/异常/结算/需求），支持已读管理、分类筛选与免打扰设置">
+      <el-button :icon="MuteNotification" @click="openDnd">免打扰</el-button>
       <el-button :icon="CircleCheck" :disabled="!unreadCount" @click="markAll">全部已读</el-button>
     </PageHeader>
 
@@ -32,10 +33,11 @@
         </el-form>
 
         <el-table :data="paged" stripe @row-click="openMessage">
-          <el-table-column label="状态" width="80" align="center">
+          <el-table-column label="状态" width="110" align="center">
             <template #default="{ row }">
               <el-tag v-if="!row.read" size="small" type="danger" effect="light">未读</el-tag>
               <span v-else class="text-muted">已读</span>
+              <el-tag v-if="isMuted(row)" size="small" type="info" effect="plain" style="margin-left: 4px">免打扰</el-tag>
             </template>
           </el-table-column>
           <el-table-column label="类型" width="100" align="center">
@@ -71,6 +73,30 @@
         </div>
       </div>
     </div>
+
+    <!-- 环节6：免打扰设置（免打扰消息不计入未读角标，列表内保留"免打扰"标记） -->
+    <el-dialog v-model="dndDialog" title="免打扰设置" width="460px">
+      <el-form label-width="110px">
+        <el-form-item label="启用免打扰">
+          <el-switch v-model="dndForm.enabled" />
+        </el-form-item>
+        <el-form-item label="免打扰时段">
+          <el-time-select v-model="dndForm.quietStart" start="00:00" end="23:00" step="01:00" style="width: 110px" />
+          <span style="margin: 0 8px">至</span>
+          <el-time-select v-model="dndForm.quietEnd" start="00:00" end="23:00" step="01:00" style="width: 110px" />
+          <div class="dnd-tip">该时段内到达的消息不打扰（支持跨零点，如 22:00 至 08:00）</div>
+        </el-form-item>
+        <el-form-item label="屏蔽消息类型">
+          <el-checkbox-group v-model="dndForm.mutedTypes">
+            <el-checkbox v-for="(v, k) in typeMap" :key="k" :value="k">{{ v.label }}</el-checkbox>
+          </el-checkbox-group>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="dndDialog = false">取消</el-button>
+        <el-button type="primary" @click="saveDnd">保存设置</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -79,14 +105,16 @@ defineOptions({ name: 'MessageCenter' })
 import { ref, reactive, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Search, CircleCheck } from '@element-plus/icons-vue'
+import { Search, CircleCheck, MuteNotification } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
-import { db } from '@/mock'
-import { markMessageRead, markAllMessagesRead } from '@/mock/flow'
+import { markMessageRead, markAllMessagesRead, visibleMessages, getDnd, setDnd, isMuted, unreadCount as flowUnreadCount } from '@/mock/flow'
 import { useTokens } from '@/utils/tokens'
 
 const tokens = useTokens()
 const router = useRouter()
+
+/** 当前登录人可见消息（M4：按角色定向过滤；平台管理员可见全部） */
+const myMessages = computed(() => visibleMessages())
 
 const typeMap = {
   approval: { label: '审批', tag: 'primary' },
@@ -101,16 +129,17 @@ const filter = reactive({ tab: '', type: '', keyword: '' })
 const page = ref(1)
 const pageSize = ref(10)
 
-const unreadCount = computed(() => db.messages.filter((m) => !m.read).length)
+/** 未读：未读且未被免打扰（环节6：DND 消息不打扰，与顶栏角标同口径） */
+const unreadCount = computed(() => flowUnreadCount())
 
 const statItems = computed(() => [
-  { key: '', label: '全部消息', count: db.messages.length, color: tokens.primary },
+  { key: '', label: '全部消息', count: myMessages.value.length, color: tokens.primary },
   { key: 'unread', label: '未读', count: unreadCount.value, color: tokens.danger },
-  { key: 'read', label: '已读', count: db.messages.length - unreadCount.value, color: tokens.info }
+  { key: 'read', label: '已读', count: myMessages.value.length - unreadCount.value, color: tokens.info }
 ])
 
 const filtered = computed(() =>
-  db.messages.filter((m) => {
+  myMessages.value.filter((m) => {
     if (filter.tab === 'unread' && m.read) return false
     if (filter.tab === 'read' && !m.read) return false
     if (filter.type && m.type !== filter.type) return false
@@ -131,6 +160,29 @@ function markRead(row) {
 function markAll() {
   const n = markAllMessagesRead()
   ElMessage.success(`已将 ${n} 条消息标为已读`)
+}
+
+/* ===== 环节6：免打扰设置（按登录账号保存，免打扰消息不计入未读角标） ===== */
+const dndDialog = ref(false)
+const dndForm = reactive({ enabled: false, quietStart: '22:00', quietEnd: '08:00', mutedTypes: [] })
+
+function openDnd() {
+  const d = getDnd()
+  dndForm.enabled = d.enabled
+  dndForm.quietStart = d.quietStart
+  dndForm.quietEnd = d.quietEnd
+  dndForm.mutedTypes = [...(d.mutedTypes || [])]
+  dndDialog.value = true
+}
+
+function saveDnd() {
+  const r = setDnd({ ...dndForm, mutedTypes: [...dndForm.mutedTypes] })
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
+  dndDialog.value = false
+  ElMessage.success('免打扰设置已保存')
 }
 
 /** 查看：标记已读并跳转对应模块 */
@@ -184,5 +236,12 @@ function openMessage(row) {
 .text-muted {
   color: var(--text-secondary);
   font-weight: 400;
+}
+
+.dnd-tip {
+  width: 100%;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.4;
 }
 </style>

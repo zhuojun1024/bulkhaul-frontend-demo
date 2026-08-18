@@ -33,7 +33,10 @@ import {
   genInvoiceNo,
   acceptDispatch,
   signReceipt,
+  supplementReceipt,
   changeContract,
+  approveContractChange,
+  rejectContractChange,
   extendContract,
   terminateContract,
   archiveContract,
@@ -51,6 +54,7 @@ import {
   maxDeviationOf,
   tripCostOf,
   customerConfirm,
+  customerObjection,
   registerAccident,
   closeAccident,
   addTraining,
@@ -91,11 +95,42 @@ import {
   toggleUserStatus,
   saveRole,
   removeRole,
-  updateRolePerms
+  updateRolePerms,
+  driverDepart,
+  driverArrive,
+  visibleMessages,
+  rolesWithAction,
+  toRoles,
+  clearOperator,
+  qualityDeductionQty,
+  collectPrepayment,
+  applyPrepayment,
+  prepaymentOf,
+  prepaymentAvailable,
+  getDnd,
+  setDnd,
+  isMuted,
+  unreadCount,
+  safetyStockOf,
+  availableStockOf,
+  inventoryAlerts,
+  setSafetyStock,
+  DATA_REGIONS,
+  dataScopeOf,
+  recordRegion,
+  inDataScope,
+  visibleDispatches,
+  visiblePlans,
+  setDataScope,
+  login,
+  generateCaptcha,
+  verifyCaptcha
 } from '../src/mock/flow.js'
 import { onSchedulerEvent, runSchedulerTick } from '../src/mock/scheduler.js'
 import { monthlyReport, customerReport, commodityReport, terminalReport, costReport } from '../src/mock/report.js'
 import { menuAllowed, actionAllowed } from '../src/permission.js'
+import { listDocuments, documentContent, documentOf, DOC_TYPES } from '../src/mock/document.js'
+import { hashPassword } from '../src/utils/index.js'
 
 let pass = 0
 let fail = 0
@@ -144,11 +179,11 @@ check(
   })
 )
 check(
-  '结算单金额恒等式（运费+杂费-损耗扣减-异常损失）',
+  '结算单金额恒等式（运费+杂费-损耗扣减-质量扣减-异常损失）',
   db.settlements.every(
     (s) =>
       s.totalAmount ===
-      s.freight + s.loadingFee + s.unloadingFee + s.tollFee + s.surcharge - s.lossDeduction - s.exceptionLoss
+      s.freight + s.loadingFee + s.unloadingFee + s.tollFee + s.surcharge - s.lossDeduction - (s.qualityDeduction || 0) - s.exceptionLoss
   )
 )
 check(
@@ -211,6 +246,8 @@ check(
     v.status === 'idle' &&
     dr.status === 'available'
 )
+signReceipt(d, '收货方')
+check('电子签收：卸货完成后生成签收单（收货凭证）', !!d.receipt?.code && d.receipt.code.startsWith('QS-') && !!d.receipt.time)
 check('计划进度回卷（33%）', plan.progress === 33)
 check('合同进度随执行上升', contract.progress > 0)
 
@@ -428,13 +465,21 @@ const rd = db.dispatches.find((d) => d.status === 'pending' && d.driverId)
 if (rd) {
   acceptDispatch(rd)
   check('司机接单标记 accepted', rd.accepted === true)
-  signReceipt(rd, '测试签收人')
-  check(
-    '电子签收单生成（QS- 码 + 签收人）',
-    !!rd.receipt && rd.receipt.code.startsWith('QS-') && rd.receipt.signer === '测试签收人' && !!rd.receipt.time
-  )
+  // 环节1 守卫：签收单是收货凭证，卸货完成前不可签收
+  check('守卫：卸货完成前不可签收（签收单为收货凭证）', !!signReceipt(rd, '测试签收人')?.error && !rd.receipt)
 } else {
   console.log('  - 跳过司机端（无待装货公路车次）')
+}
+// 电子签收：已完成且未签收的公路车次（种子约 10% 缺失，供"补签"演示）
+const rdone = db.dispatches.find((d) => d.status === 'completed' && isRoadMode(d.mode) && !d.receipt)
+if (rdone) {
+  signReceipt(rdone, '测试签收人')
+  check(
+    '电子签收单生成（QS- 码 + 签收人）',
+    !!rdone.receipt && rdone.receipt.code.startsWith('QS-') && rdone.receipt.signer === '测试签收人' && !!rdone.receipt.time
+  )
+} else {
+  console.log('  - 跳过电子签收（无未签收的已完成公路车次）')
 }
 
 // P3-7 合同生命周期：变更 / 延期 / 终止 / 归档
@@ -526,6 +571,9 @@ check('守卫：已完成车次不可再流转', (() => {
 const preS = db.settlements.find((s) => s.status === 'reconciling' && s.paidAmount > 0)
 if (preS) {
   const pre = preS.paidAmount
+  // 环节1：未签收公路车次先补签（硬拦截前置），再走客户确认 → 确认结算
+  const preMissing = db.dispatches.filter((x) => x.settlementId === preS.id && isRoadMode(x.mode) && !x.receipt)
+  for (const x of preMissing) supplementReceipt(x, '收货方仓管员', '冒烟测试补签')
   customerConfirm(preS) // N1 闸门：先由客户确认对账
   confirmSettle(preS)
   check('确认结算保留预付款（已付金额不清零）', preS.status === 'settled' && preS.paidAmount === pre)
@@ -854,7 +902,15 @@ check(
   custUsers.length >= 2 &&
     custUsers.every((u) => db.customers.some((c) => c.id === u.customerId && (c.type === 'shipper' || c.type === 'both')))
 )
-const custSettle = db.settlements.find((s) => s.customerId === custUsers[0]?.customerId && s.reconciliation && !s.customerConfirmed) || db.settlements.find((s) => s.reconciliation && !s.customerConfirmed)
+// 环节2 口径：客户确认仅"对账中"可执行（异议回到待对账后须先重新对账）
+let custSettle =
+  db.settlements.find((s) => s.customerId === custUsers[0]?.customerId && s.status === 'reconciling' && !s.customerConfirmed) ||
+  db.settlements.find((s) => s.status === 'reconciling' && !s.customerConfirmed)
+if (!custSettle) {
+  const ps = db.settlements.find((s) => s.status === 'pending')
+  if (ps) startReconcile(ps)
+  custSettle = ps
+}
 if (custSettle) {
   const rConf = customerConfirm(custSettle)
   check(
@@ -896,13 +952,21 @@ if (n3c) {
   if (n3trip) {
     check('车次写入派车时快照单价', n3trip.unitPrice === n3c.unitPrice)
     const oldPrice = n3c.unitPrice
-    changeContract(n3c, { unitPrice: oldPrice + 10 }, 'N3 测试改价')
+    // 环节3：改价不即时生效，走审批（部门 → 公司），全链通过后才应用
+    const n3chg = changeContract(n3c, { unitPrice: oldPrice + 10 }, 'N3 测试改价')
+    check('环节3：改价提交后不即时生效（转待审批）', n3chg.pending === true && n3c.unitPrice === oldPrice && !!n3c.pendingChange)
+    approveContractChange(n3c, '同意') // 部门审批
+    const n3final = approveContractChange(n3c, '同意') // 公司审批
+    check('环节3：改价全级审批通过后生效', n3final.final === true && n3c.unitPrice === oldPrice + 10 && !n3c.pendingChange)
     const n3fees = calcSettlementFees(n3c, [n3trip])
     check('结算用车次快照单价（改价不追溯已派车车次）', n3fees.freight === Math.round(n3trip.quantity * oldPrice))
-    // 清理测试数据并还原合同价
+    // 清理测试数据并还原合同价（还原同样走审批流）
     db.dispatches.splice(db.dispatches.indexOf(n3trip), 1)
     db.plans.splice(db.plans.indexOf(n3p), 1)
     changeContract(n3c, { unitPrice: oldPrice }, 'N3 测试还原')
+    approveContractChange(n3c, '同意')
+    approveContractChange(n3c, '同意')
+    check('N3：合同价还原（还原走审批后单价恢复）', n3c.unitPrice === oldPrice && !n3c.pendingChange)
   }
 } else {
   console.log('  - 跳过 N3（无执行中公路合同）')
@@ -1343,6 +1407,691 @@ check(
   'P2-F：cancelPlan（仅待执行）+ 守卫',
   cancelPlan(p15plan.plan).ok === true && p15plan.plan.status === 'cancelled' && /无法取消/.test(cancelPlan(p15plan.plan).error)
 )
+
+console.log('== 16. N-1 回归（司机端入口走内部核心，不受登录用户 RBAC 拦截） ==')
+// 找一张"待装货公路车次 + 该司机有启用账号"的组合（司机角色操作权限为空，原实现扫码/发车/到达均被 RBAC 拦截）
+const n1pair = db.dispatches
+  .filter((d) => d.status === 'pending' && isRoadMode(d.mode) && d.driverId)
+  .map((d) => ({ d, u: db.users.find((u) => u.role === '司机' && u.driverId === d.driverId && u.status === 'active') }))
+  .find((x) => x.u)
+check('N-1：存在待装货公路车次且司机有启用账号', !!n1pair)
+if (n1pair) {
+  const { d: n1d, u: n1u } = n1pair
+  setOperator(n1u)
+  check('N-1：司机角色无 PC 端操作权限（默认拒绝，前提成立）', operatorCan('dispatch') === false && operatorCan('settlement') === false)
+  n1d.accepted = true
+  check('N-1：司机账号扫码确认装货（内部核心，不被 RBAC 拦截）', scanConfirmLoad(n1d, loadCodeOf(n1d))?.ok === true && n1d.status === 'loading')
+  check('N-1：司机端发车', driverDepart(n1d)?.ok === true && n1d.status === 'intransit')
+  check('N-1：司机端确认到达', driverArrive(n1d)?.ok === true && n1d.status === 'unloading')
+  check('N-1：司机账号扫码确认卸货 + 电子签收', scanConfirmUnload(n1d, unloadCodeOf(n1d))?.ok === true && n1d.status === 'completed' && !!signReceipt(n1d, '收货方'))
+  // 状态机守卫在司机端入口同样生效（非装货中不可发车）
+  check('N-1：司机端入口状态机守卫仍生效（已完成车次不可发车）', /无法发车/.test(driverDepart(n1d).error))
+  // PC 端 RBAC 不受影响：只读用户 confirmLoad 仍被拦截
+  setOperator({ name: '审计观察员', username: 'user16', role: '只读用户' })
+  const n1pc = db.dispatches.find((d) => d.status === 'pending' && isRoadMode(d.mode))
+  check('N-1：只读用户 PC 端 confirmLoad 仍被服务层拦截', n1pc ? /无此操作权限/.test(confirmLoad(n1pc).error) : true)
+  setOperator({ name: '张建国', username: 'admin', role: '平台管理员' })
+}
+
+console.log('== 17. N-2 回归（在途/卸货中车辆不可被手动二次派车） ==')
+// 原缺陷：BUSY_STATUSES 缺 intransit/unloading，手动指定路径（乐观锁终检同口径）可给在途车辆二次派车
+{
+  const n2busyV = new Set(db.dispatches.filter((x) => BUSY_STATUSES.includes(x.status)).map((x) => x.vehicleId))
+  const n2v = db.vehicles.find((x) => x.status === 'idle' && x.type !== '铁路敞车' && x.type !== '散货船' && !vehicleInspectionExpired(x) && !n2busyV.has(x.id))
+  const n2p = db.plans.find((x) => x.status === 'pending' && isRoadMode(x.mode))
+  check('N-2：存在空闲车辆与待执行公路计划', !!n2v && !!n2p)
+  if (n2v && n2p) {
+    setOperator({ name: '张建国', username: 'admin', role: '平台管理员' })
+    const n2c = createDispatches(n2p, 1, [n2v.id])
+    const n2d = n2c.created?.[0]
+    check('N-2：手动派车成功（前置）', n2c.created?.length === 1)
+    if (n2d) {
+      n2d.accepted = true
+      confirmLoad(n2d)
+      depart(n2d)
+      check('N-2：车次进入在途（车辆 inuse）', n2d.status === 'intransit' && n2v.status === 'inuse')
+      const n2p2 = db.plans.find((x) => x.status === 'pending' && isRoadMode(x.mode) && x.id !== n2p.id) || n2p
+      const n2r1 = createDispatches(n2p2, 1, [n2v.id])
+      check('N-2：在途车辆手动二次派车被拦截（未完结车次）', n2r1.created?.length === 0 && /未完结车次/.test(n2r1.error || ''))
+      arrive(n2d)
+      check('N-2：车次进入卸货中', n2d.status === 'unloading')
+      const n2r2 = createDispatches(n2p2, 1, [n2v.id])
+      check('N-2：卸货中车辆手动二次派车被拦截（未完结车次）', n2r2.created?.length === 0 && /未完结车次/.test(n2r2.error || ''))
+      confirmUnload(n2d)
+      check('N-2：车次完成后车辆恢复空闲（可再派车）', n2d.status === 'completed' && n2v.status === 'idle')
+    }
+  }
+}
+
+console.log('== 18. M1-M4 回归（结算预览/对账快照价、出库守卫、消息定向） ==')
+setOperator({ name: '张建国', username: 'admin', role: '平台管理员' })
+{
+  // M1/M2：合同改价后，候选预览运费与对账损耗金额仍按车次快照单价
+  const m1c = db.contracts.find((c) => c.status === 'executing' && isRoadMode(c.mode))
+  const m1p = {
+    id: 'YH-M1',
+    contractId: m1c.id,
+    commodityId: m1c.commodityId,
+    quantity: 35,
+    loadTerminalId: m1c.loadTerminalId,
+    unloadTerminalId: m1c.unloadTerminalId,
+    mode: m1c.mode,
+    unitPrice: m1c.unitPrice,
+    status: 'pending',
+    progress: 0
+  }
+  db.plans.unshift(m1p)
+  const m1price0 = m1c.unitPrice
+  const m1d = createDispatches(m1p, 1).created[0]
+  check('M1/M2：派车成功（前置）', !!m1d)
+  if (m1d) {
+    m1d.accepted = true
+    confirmLoad(m1d)
+    depart(m1d)
+    arrive(m1d)
+    confirmUnload(m1d)
+    // 环节3：改价走审批，全链通过后才生效（M1 验证的是"改价生效后预览仍按快照价"）
+    changeContract(m1c, { unitPrice: m1price0 + 100 }, 'M1 测试改价')
+    approveContractChange(m1c, '同意')
+    approveContractChange(m1c, '同意')
+    const cand = settlementCandidates().find((g) => g.dispatches.some((x) => x.id === m1d.id))
+    check(
+      'M1：合同改价后候选预览运费按车次快照单价（≠ 合同当前单价 × 调度量）',
+      !!cand &&
+        cand.freight === calcSettlementFees(m1c, cand.dispatches).freight &&
+        cand.freight !== Math.round(cand.quantity * m1c.unitPrice)
+    )
+    const m1s = generateSettlements([cand.key]).find((x) => x.contractId === m1c.id)
+    check('M1：实际账单运费 = 预览运费（快照价 × 出磅净重）', !!m1s && m1s.freight === cand.freight)
+    const m1r = startReconcile(m1s)
+    check(
+      'M2：对账损耗金额逐车次按快照单价折算（≠ 合同当前单价口径）',
+      m1r.items.every((i) => i.price === m1price0) &&
+        m1r.lossAmount === Math.round(m1r.items.reduce((s, i) => s + i.loss * i.price, 0)) &&
+        m1r.lossAmount !== Math.round(m1r.lossQty * m1c.unitPrice)
+    )
+  }
+}
+{
+  // M3：出库守卫——可发库存不足拦截装货；充足跨批次 FIFO；仓库无该商品批次不联动
+  const m3c = db.contracts.find((c) => c.status === 'executing' && isRoadMode(c.mode))
+  const m3p = {
+    id: 'YH-M3',
+    contractId: m3c.id,
+    commodityId: 'CM001',
+    quantity: 35,
+    loadTerminalId: 'T006',
+    unloadTerminalId: 'T002',
+    mode: '公路',
+    unitPrice: m3c.unitPrice,
+    status: 'pending',
+    progress: 0
+  }
+  db.plans.unshift(m3p)
+  const m3d = createDispatches(m3p, 1).created[0]
+  check('M3：派车成功（前置：装货场站 T006 → WH007）', !!m3d)
+  if (m3d) {
+    const m3batches = db.inventories.filter((i) => i.warehouseId === 'WH007' && i.commodityId === 'CM001' && i.status === 'normal')
+    const m3origQty = m3batches.map((b) => b.quantity)
+    const m3origDate = m3batches.map((b) => b.inDate)
+    m3d.accepted = true
+    // a) 可发库存 10 吨 < 35 吨 → 拦截装货，状态不变
+    m3batches.forEach((b, i) => (b.quantity = i === 0 ? 10 : 0))
+    const m3r1 = confirmLoad(m3d)
+    check('M3：可发库存不足拦截装货（明确报错 + 状态不变）', /可发库存不足/.test(m3r1?.error || '') && m3d.status === 'pending')
+    // b) 充足（20 + 20 两批次）→ 跨批次 FIFO（早批次先扣）
+    m3batches[0].inDate = '2026-08-01'
+    m3batches[0].quantity = 20
+    const m3extra = { id: 'INV-M3T', warehouseId: 'WH007', commodityId: 'CM001', batch: 'BTEST-M3', quantity: 20, inDate: '2026-08-10', status: 'normal' }
+    db.inventories.push(m3extra)
+    const m3r2 = confirmLoad(m3d)
+    check(
+      'M3：库存充足 → 跨批次 FIFO 扣减（早批次 20→0，次批次 20→5）',
+      !m3r2?.error && m3d.status === 'loading' && m3batches[0].quantity === 0 && m3extra.quantity === 5
+    )
+    // c) 仓库无该商品批次记录（外采/过路）→ 不出库联动、不拦截
+    const m3p2 = { id: 'YH-M3B', contractId: m3c.id, commodityId: 'CM003', quantity: 35, loadTerminalId: 'T007', unloadTerminalId: 'T002', mode: '公路', unitPrice: m3c.unitPrice, status: 'pending', progress: 0 }
+    db.plans.unshift(m3p2)
+    const m3d2 = createDispatches(m3p2, 1).created[0]
+    if (m3d2) {
+      m3d2.accepted = true
+      const m3r3 = confirmLoad(m3d2)
+      check('M3：仓库无该商品批次（外采/过路）→ 不出库联动、不拦截', !m3r3?.error && m3d2.status === 'loading')
+    } else {
+      check('M3：仓库无该商品批次（外采/过路）→ 不出库联动、不拦截', false)
+    }
+    // 清理：恢复库存、移除测试批次
+    m3batches.forEach((b, i) => {
+      b.quantity = m3origQty[i]
+      b.inDate = m3origDate[i]
+    })
+    db.inventories.splice(db.inventories.indexOf(m3extra), 1)
+  }
+}
+{
+  // M4：消息定向——定向消息仅目标角色可见；广播全员可见；标读只影响可见消息
+  const m4Approval = notify('M4 测试：合同审批', 'approval', '/contract', '', toRoles('contract-approve', 'contract'))
+  const m4Broadcast = notify('M4 测试：系统广播', 'system', '/workbench', '')
+  setOperator({ name: '测试结算', username: 't-settle', role: '结算专员' })
+  check('M4：结算专员不可见审批定向消息（非目标角色）', !visibleMessages().some((m) => m.id === m4Approval.id))
+  check('M4：广播消息对全角色可见', visibleMessages().some((m) => m.id === m4Broadcast.id))
+  markAllMessagesRead()
+  check('M4：全部已读仅标记可见消息（定向消息保持未读）', m4Broadcast.read === true && m4Approval.read === false)
+  setOperator({ name: '测试调度', username: 't-dispatch', role: '调度员' })
+  check('M4：调度员可见审批定向消息（持有 contract 操作）', visibleMessages().some((m) => m.id === m4Approval.id))
+  setOperator({ name: '张建国', username: 'admin', role: '平台管理员' })
+  check('M4：平台管理员可见全部消息', visibleMessages().length === db.messages.length)
+  check(
+    'M4：rolesWithAction 与 RBAC 口径一致（exception → 调度员/安全管理员，不含结算专员）',
+    rolesWithAction('exception').includes('调度员') &&
+      rolesWithAction('exception').includes('安全管理员') &&
+      !rolesWithAction('exception').includes('结算专员')
+  )
+}
+
+console.log('== 19. M5-M8 回归（发票陈旧强制红冲、司机端身份守卫、登出清 operator） ==')
+setOperator({ name: '张建国', username: 'admin', role: '平台管理员' })
+{
+  // M5：已开票账单异常补扣 → 发票标记金额陈旧 → 收款拦截 → 红冲重开恢复票款一致
+  const m5c = db.contracts.find((c) => c.status === 'executing' && isRoadMode(c.mode))
+  const m5p = {
+    id: 'YH-M5',
+    contractId: m5c.id,
+    commodityId: 'CM003',
+    quantity: 35,
+    loadTerminalId: 'T007',
+    unloadTerminalId: 'T002',
+    mode: '公路',
+    unitPrice: m5c.unitPrice,
+    status: 'pending',
+    progress: 0
+  }
+  db.plans.unshift(m5p)
+  const m5d = createDispatches(m5p, 1).created[0]
+  check('M5：派车成功（前置：T007 无仓库联动）', !!m5d)
+  if (m5d) {
+    m5d.accepted = true
+    confirmLoad(m5d)
+    depart(m5d)
+    arrive(m5d)
+    confirmUnload(m5d)
+    signReceipt(m5d, '收货方') // 环节1：签收是结算收货依据，先签收再走结算
+    const m5cand = settlementCandidates().find((g) => g.dispatches.some((x) => x.id === m5d.id))
+    const m5s = generateSettlements([m5cand.key]).find((x) => x.contractId === m5c.id)
+    startReconcile(m5s)
+    customerConfirm(m5s)
+    confirmSettle(m5s)
+    const m5no = issueInvoice(m5s)
+    const m5inv = db.invoices.find((i) => i.invoiceNo === m5no)
+    const m5total0 = m5s.totalAmount
+    check('M5：开票成功（发票额 = 账单额）', !!m5inv && m5inv.amount === m5total0 && m5s.invoiceStatus === 'issued')
+    // 车次异常关闭补扣（损失 500）→ 账单额下降，发票变陈旧
+    const m5e = { id: 'EX-M5T', dispatchId: m5d.id, status: 'open', cost: 500 }
+    db.exceptions.push(m5e)
+    closeException(m5e)
+    check(
+      'M5：已开票账单补扣 → 发票标记金额陈旧（账单额 -500，stale + 原因）',
+      m5s.totalAmount === m5total0 - 500 && m5inv.stale === true && !!m5inv.staleReason
+    )
+    check(
+      'M5：陈旧发票未红冲前收款被拦截（票款一致强制流程）',
+      /红冲重开/.test(recordPayment(m5s, 100, '银行转账')?.error || '') && m5s.paidAmount === 0
+    )
+    redFlushInvoiceRow(m5inv, 'M5 测试：金额变化红冲重开')
+    const m5no2 = issueInvoice(m5s)
+    const m5inv2 = db.invoices.find((i) => i.invoiceNo === m5no2)
+    check(
+      'M5：红冲重开 → 新发票额 = 当前账单额，陈旧标记清除',
+      !!m5inv2 && m5inv2.amount === m5s.totalAmount && !m5inv2.stale && m5s.invoiceStatus === 'issued'
+    )
+    check('M5：重开后收款恢复', !recordPayment(m5s, 100, '银行转账')?.error && m5s.paidAmount === 100)
+  }
+}
+{
+  // M6：司机端身份守卫——非司机端角色拦截；司机只能操作本人车次；演示切换（dispatch 权限）放行
+  let m6d = db.dispatches
+    .filter((d) => d.status === 'pending' && isRoadMode(d.mode) && d.driverId)
+    .find((d) => db.users.some((u) => u.role === '司机' && u.driverId === d.driverId && u.status === 'active'))
+  if (!m6d) {
+    const m6c = db.contracts.find((c) => c.status === 'executing' && isRoadMode(c.mode))
+    const m6p = { id: 'YH-M6', contractId: m6c.id, commodityId: 'CM003', quantity: 35, loadTerminalId: 'T007', unloadTerminalId: 'T002', mode: '公路', unitPrice: m6c.unitPrice, status: 'pending', progress: 0 }
+    db.plans.unshift(m6p)
+    m6d = createDispatches(m6p, 1).created[0]
+  }
+  check('M6：存在待装货公路车次（前置）', !!m6d)
+  if (m6d) {
+    setOperator({ name: '测试结算', username: 't-settle', role: '结算专员' })
+    check('M6：结算专员不可调用 acceptDispatch（服务层拦截）', /非司机端身份/.test(acceptDispatch(m6d)?.error || ''))
+    check('M6：结算专员不可调用 signReceipt（不生成签收单）', /非司机端身份/.test(signReceipt(m6d, 'X')?.error || '') && !m6d.receipt)
+    setOperator({ name: '测试客户', username: 't-cust', role: '客户' })
+    check('M6：客户角色不可调用 driverDepart', /非司机端身份/.test(driverDepart(m6d)?.error || ''))
+    const m6u = db.users.find((u) => u.role === '司机' && u.driverId === m6d.driverId && u.status === 'active')
+    const m6other = db.users.find((u) => u.role === '司机' && u.driverId && u.driverId !== m6d.driverId && u.status === 'active')
+    if (m6other) {
+      setOperator(m6other)
+      check('M6：其他司机不可接非本人车次（司机仅可操作本人车次）', /未指派给当前司机/.test(acceptDispatch(m6d)?.error || ''))
+    }
+    if (m6u) {
+      setOperator(m6u)
+      const m6r = acceptDispatch(m6d)
+      check('M6：车次本人司机可接单（司机端身份放行）', !m6r?.error && m6d.accepted === true)
+    } else {
+      check('M6：车次司机有启用账号（前置）', false)
+    }
+  }
+}
+{
+  // M7：登出清除 operator——未登录态写操作默认拒绝，审计不再记在旧用户名下
+  setOperator({ name: '测试结算', username: 't-settle', role: '结算专员' })
+  clearOperator()
+  check('M7：登出后结算操作被默认拒绝（操作人"未登录"）', /未登录/.test(confirmSettle(db.settlements[0])?.error || ''))
+  check('M7：登出后司机端入口同样拦截（无会话）', /未登录/.test(acceptDispatch(db.dispatches[0])?.error || ''))
+  setOperator({ name: '张建国', username: 'admin', role: '平台管理员' })
+  check('M7：重新登录后权限恢复（setOperator）', operatorCan('settlement') === true)
+}
+
+console.log('== 20. 环节1-3 回归（签收硬拦截+补签、客户异议、改价审批） ==')
+setOperator({ name: '张建国', username: 'admin', role: '平台管理员' })
+{
+  // 环节1：签收硬拦截——无签收公路车次不可确认结算；补签后放行；非公路豁免
+  const s1c = db.contracts.find((c) => c.status === 'executing' && isRoadMode(c.mode))
+  const s1p = { id: 'YH-S1', contractId: s1c.id, commodityId: 'CM003', quantity: 35, loadTerminalId: 'T007', unloadTerminalId: 'T002', mode: '公路', unitPrice: s1c.unitPrice, status: 'pending', progress: 0 }
+  db.plans.unshift(s1p)
+  const s1d = createDispatches(s1p, 1).created[0]
+  check('环节1：派车成功（前置）', !!s1d)
+  if (s1d) {
+    s1d.accepted = true
+    confirmLoad(s1d)
+    depart(s1d)
+    arrive(s1d)
+    confirmUnload(s1d)
+    const s1s = generateSettlements([settlementCandidates().find((g) => g.dispatches.some((x) => x.id === s1d.id)).key]).find((x) => x.contractId === s1c.id)
+    startReconcile(s1s)
+    customerConfirm(s1s)
+    const s1blocked = confirmSettle(s1s)
+    check('环节1：无签收公路车次不可确认结算（硬拦截）', /尚无电子签收单/.test(s1blocked?.error || '') && s1s.status === 'reconciling')
+    const s1sup = supplementReceipt(s1d, '收货方仓管员', '签收单遗失，与收货方核实后补签')
+    check('环节1：补签生成签收单（补签标记 + 原因 + 对账重建）', s1sup.supplement === true && s1sup.code.startsWith('QS-B') && s1s.reconciliation.missingReceiptCount === 0)
+    check('环节1：补签后对账明细未签收标记清除', s1s.reconciliation.items.every((i) => i.hasReceipt !== false))
+    const s1ok = confirmSettle(s1s)
+    check('环节1：补签后确认结算放行', !s1ok?.error && s1s.status === 'settled')
+    check('环节1：守卫：已签收车次不可重复补签', /已存在/.test(supplementReceipt(s1d, 'X')?.error || ''))
+    const s1nonroad = db.dispatches.find((d) => d.status === 'completed' && !isRoadMode(d.mode))
+    if (s1nonroad) {
+      check('环节1：非公路豁免：非公路车次无需补签', /非公路豁免/.test(supplementReceipt(s1nonroad, 'X')?.error || ''))
+    } else {
+      console.log('  - 跳过非公路豁免（无已完成非公路车次）')
+    }
+  }
+}
+{
+  // 环节2：客户异议——异议单 → 回待对账 → 重新对账 → 再确认关闭异议单
+  const s2c = db.contracts.find((c) => c.status === 'executing' && isRoadMode(c.mode))
+  const s2p = { id: 'YH-S2', contractId: s2c.id, commodityId: 'CM003', quantity: 35, loadTerminalId: 'T007', unloadTerminalId: 'T002', mode: '公路', unitPrice: s2c.unitPrice, status: 'pending', progress: 0 }
+  db.plans.unshift(s2p)
+  const s2d = createDispatches(s2p, 1).created[0]
+  check('环节2：派车成功（前置）', !!s2d)
+  if (s2d) {
+    s2d.accepted = true
+    confirmLoad(s2d)
+    depart(s2d)
+    arrive(s2d)
+    confirmUnload(s2d)
+    signReceipt(s2d, '收货方')
+    const s2s = generateSettlements([settlementCandidates().find((g) => g.dispatches.some((x) => x.id === s2d.id)).key]).find((x) => x.contractId === s2c.id)
+    startReconcile(s2s)
+    const s2obj = customerObjection(s2s, '损耗金额偏高，与我方磅单记录不符')
+    check('环节2：异议单记录 + 账单回待对账（客户确认清除）', s2obj.ok === true && s2s.status === 'pending' && s2s.customerConfirmed === null && s2s.objections?.[0]?.status === 'open')
+    check('环节2：守卫：异议后未重新对账不可直接确认', /非"对账中"/.test(customerConfirm(s2s)?.error || ''))
+    check('环节2：守卫：待对账状态不可重复异议', /非"对账中"/.test(customerObjection(s2s, '重复异议')?.error || ''))
+    startReconcile(s2s)
+    const s2conf = customerConfirm(s2s)
+    check('环节2：重新对账后客户再确认成功 + 异议单自动关闭', s2conf.ok === true && s2s.objections[0].status === 'resolved' && !!s2s.objections[0].resolveTime)
+    const s2settle = confirmSettle(s2s)
+    check('环节2：异议闭环后正常结算', !s2settle?.error && s2s.status === 'settled')
+  }
+}
+{
+  // 环节3：改价审批——待批期间拦截并发变更；驳回作废申请；RBAC
+  const s3c = db.contracts.find((c) => c.status === 'executing' && isRoadMode(c.mode))
+  const s3price = s3c.unitPrice
+  changeContract(s3c, { unitPrice: s3price - 5 }, '环节3 测试改价')
+  check('环节3：守卫：变更待审批期间不可提交新变更', /待审批/.test(changeContract(s3c, { quantity: s3c.quantity + 100 }, '并发变更')?.error || ''))
+  const s3rej = rejectContractChange(s3c, '改价幅度过大，需重新询价')
+  check('环节3：驳回作废变更申请（单价不变 + 待批清除）', s3rej.ok === true && s3c.unitPrice === s3price && !s3c.pendingChange)
+  setOperator({ name: '张建国', username: 'admin', role: '平台管理员' })
+  changeContract(s3c, { unitPrice: s3price - 5 }, '环节3 RBAC 测试')
+  setOperator({ name: '测试结算', username: 't-settle', role: '结算专员' })
+  check('环节3：RBAC：结算专员不可审批改价', /无此操作权限/.test(approveContractChange(s3c)?.error || ''))
+  setOperator({ name: '张建国', username: 'admin', role: '平台管理员' })
+  approveContractChange(s3c, '同意')
+  approveContractChange(s3c, '同意')
+  check('环节3：改价审批通过后单价生效', s3c.unitPrice === s3price - 5)
+  // 还原（同样走审批）
+  changeContract(s3c, { unitPrice: s3price }, '环节3 测试还原')
+  approveContractChange(s3c, '同意')
+  approveContractChange(s3c, '同意')
+  check('环节3：合同价还原（清理）', s3c.unitPrice === s3price && !s3c.pendingChange)
+}
+
+console.log('== 21. 环节4-6 回归（质量扣重、预付款管理、消息免打扰） ==')
+setOperator({ name: '张建国', username: 'admin', role: '平台管理员' })
+{
+  // 环节4：质量扣重——卸货质检 → 结算扣减项 → 对账明细
+  const q4c = db.contracts.find((c) => c.status === 'executing' && isRoadMode(c.mode))
+  const q4p = { id: 'YH-Q4', contractId: q4c.id, commodityId: 'CM003', quantity: 35, loadTerminalId: 'T007', unloadTerminalId: 'T002', mode: '公路', unitPrice: q4c.unitPrice, status: 'pending', progress: 0 }
+  db.plans.unshift(q4p)
+  const q4d = createDispatches(q4p, 1).created[0]
+  check('环节4：派车成功（前置）', !!q4d)
+  if (q4d) {
+    q4d.accepted = true
+    confirmLoad(q4d)
+    depart(q4d)
+    arrive(q4d)
+    confirmUnload(q4d)
+    check('环节4：卸货生成质检记录（水分 8-14% / 灰分 12-20%）', !!q4d.quality && q4d.quality.moisture >= 8 && q4d.quality.moisture <= 14 && q4d.quality.ash >= 12 && q4d.quality.ash <= 20)
+    // 扣重公式确定性验证：不超标 = 0；超标 = 出磅净重 × 系数（水分 2% 超 ×1.5% + 灰分 3% 超 ×1% = 6%）
+    const outNet = db.weighings.find((w) => w.dispatchId === q4d.id && w.type === '出磅').net
+    const q4below = { ...q4d, quality: { moisture: 9, ash: 14 } }
+    check('环节4：标准内（水分 9% / 灰分 14%）不扣重', qualityDeductionQty(q4below) === 0)
+    const q4above = { ...q4d, quality: { moisture: 12, ash: 18 } }
+    check('环节4：超标扣重 = 出磅净重 × 6%（水分 1.5%/1% + 灰分 1%/1%）', qualityDeductionQty(q4above) === +(outNet * 0.06).toFixed(2))
+    const q4s = generateSettlements([settlementCandidates().find((g) => g.dispatches.some((x) => x.id === q4d.id)).key]).find((x) => x.contractId === q4c.id)
+    check(
+      '环节4：结算单含质量扣减项且总额公式一致',
+      q4s.qualityQty >= 0 &&
+        q4s.qualityDeduction >= 0 &&
+        q4s.totalAmount ===
+          q4s.freight + q4s.loadingFee + q4s.unloadingFee + q4s.tollFee + q4s.surcharge - q4s.lossDeduction - q4s.qualityDeduction - q4s.exceptionLoss
+    )
+    // 重算：质检结果变化 → 扣减项与总额同步刷新
+    const q4before = q4s.totalAmount
+    q4d.quality = { moisture: 13, ash: 19, time: q4d.unloadTime }
+    const q4recalc = recalcSettlement(q4s)
+    check(
+      '环节4：重算刷新质量扣减（扣减项与总额同步，公式一致）',
+      q4recalc.ok === true &&
+        q4s.qualityDeduction > 0 &&
+        q4s.totalAmount === q4before + q4recalc.delta &&
+        q4s.totalAmount ===
+          q4s.freight + q4s.loadingFee + q4s.unloadingFee + q4s.tollFee + q4s.surcharge - q4s.lossDeduction - q4s.qualityDeduction - q4s.exceptionLoss
+    )
+    startReconcile(q4s)
+    check(
+      '环节4：对账明细含逐车次质量扣重 + 汇总（吨数/金额）',
+      q4s.reconciliation.items.every((i) => typeof i.qualityQty === 'number') &&
+        q4s.reconciliation.qualityQty === +q4s.reconciliation.items.reduce((s, i) => s + i.qualityQty, 0).toFixed(2) &&
+        q4s.reconciliation.qualityAmount >= 0
+    )
+    const q4nonroad = db.dispatches.find((d) => d.status === 'completed' && !isRoadMode(d.mode))
+    check('环节4：非公路车次无质检不扣重', q4nonroad ? qualityDeductionQty(q4nonroad) === 0 : true)
+  }
+}
+{
+  // 环节5：预付款管理——台账 / 收取 / FIFO 抵扣 / 信用联动
+  check('环节5：种子预付款台账存在（CUS001 可用 ≥ 80 万）', prepaymentAvailable('CUS001') >= 800000)
+  const q5c = db.customers.find((x) => x.id === 'CUS003')
+  const q5before = prepaymentAvailable(q5c.id)
+  const q5col = collectPrepayment(q5c.id, 200000, '银行转账', '环节5 测试预付')
+  check('环节5：收取预付款入台账（可用余额增加）', q5col.ok === true && prepaymentAvailable(q5c.id) === q5before + 200000)
+  check('环节5：守卫：金额须大于 0', /须大于 0/.test(collectPrepayment(q5c.id, 0)?.error || ''))
+  check('环节5：守卫：冻结客户不可收取预付款', /已冻结/.test(collectPrepayment('CUS022', 1000)?.error || ''))
+  setOperator({ name: '测试客户', username: 't-cust', role: '客户' })
+  check('环节5：RBAC：客户角色不可收取预付款', /无此操作权限/.test(collectPrepayment(q5c.id, 1000)?.error || ''))
+  setOperator({ name: '张建国', username: 'admin', role: '平台管理员' })
+  // 信用联动：预付款冲减信用占用（须在抵扣消耗预付之前验证）
+  const q5credit = db.customers.find((x) => x.id === 'CUS001')
+  const q5out = outstandingOf(q5credit.id)
+  if (q5out > 0 && prepaymentAvailable(q5credit.id) > 0) {
+    const q5x = q5credit.creditLimit - q5out + 1
+    check('环节5：信用校验：无预付口径会超限的订单，预付冲减后通过', creditCheck(q5credit.id, q5x).ok === true)
+  } else {
+    console.log('  - 跳过预付冲减信用校验（CUS001 无未付余额/预付）')
+  }
+  check('环节5：信用校验：占用+订单仍超授信额度被拒', creditCheck(q5credit.id, q5credit.creditLimit + 1).ok === false)
+  const q5pending = db.settlements.find((s) => s.status === 'pending')
+  check('环节5：守卫：待对账账单不可抵扣预付款', !!q5pending && /非"已结算\/逾期"/.test(applyPrepayment(q5pending, 1000)?.error || ''))
+  // 抵扣：CUS001（种子预付 80 万）——新建已结算账单（未付 100 万），验证 流水/FIFO 跨记录/超额截断
+  const q5c1 = db.customers.find((x) => x.id === 'CUS001')
+  const q5col1 = collectPrepayment(q5c1.id, 200000, '银行转账', '环节5 FIFO 测试预付') // 晚于 YF-0001 收取
+  const q5s = {
+    id: genId('JS-', 4, db.settlements),
+    billNo: 'BL-Q5TEST',
+    contractId: db.contracts.find((c) => c.shipperId === q5c1.id)?.id || '',
+    customerId: q5c1.id,
+    period: dayjs(NOW).format('YYYY-MM'),
+    dispatchCount: 0,
+    dispatchQuantity: 0,
+    totalQuantity: 0,
+    lossQty: 0,
+    freight: 1000000,
+    loadingFee: 0,
+    unloadingFee: 0,
+    lossDeduction: 0,
+    qualityQty: 0,
+    qualityDeduction: 0,
+    exceptionLoss: 0,
+    tollFee: 0,
+    surcharge: 0,
+    totalAmount: 1000000,
+    paidAmount: 0,
+    status: 'settled',
+    settleDate: dayjs(NOW).format('YYYY-MM-DD'),
+    invoiceStatus: 'not-issued',
+    reconciliation: null,
+    remark: '环节5 测试账单'
+  }
+  db.settlements.unshift(q5s)
+  const q5apply = applyPrepayment(q5s, 10000)
+  check(
+    '环节5：预付款抵扣记入收款流水（已付增加，方式=预付款抵扣）',
+    q5apply.ok === true &&
+      q5s.paidAmount === 10000 &&
+      db.payments.some((p) => p.settlementId === q5s.id && p.method === '预付款抵扣')
+  )
+  const q5p1 = prepaymentOf(q5c1.id).find((p) => p.id === 'YF-0001')
+  const q5p2 = prepaymentOf(q5c1.id).find((p) => p.id === q5col1.id)
+  check('环节5：FIFO 抵扣（最早收取的 YF-0001 先扣）', q5p1?.used === 10000 && q5p2?.used === 0)
+  const q5f = applyPrepayment(q5s, 900000)
+  check(
+    '环节5：FIFO 跨记录（最早一笔扣完再扣次笔）',
+    q5f.amount === 900000 && q5p1.used === q5p1.amount && q5p2.used === 900000 - (q5p1.amount - 10000)
+  )
+  const q5availBeforeOver = prepaymentAvailable(q5c1.id)
+  const q5over = applyPrepayment(q5s, 999999999)
+  check(
+    '环节5：超额抵扣按 min(未付, 可用预付款) 截断',
+    q5over.amount === q5availBeforeOver && prepaymentAvailable(q5c1.id) === 0 && q5s.paidAmount <= q5s.totalAmount
+  )
+  // 独立合成账单（有未付余额）验证"无预付"守卫（q5s 已付清，会先命中"无未付余额"）
+  const q5s2 = { id: 'JS-Q5B', billNo: 'BL-Q5B', customerId: q5c1.id, status: 'settled', totalAmount: 50000, paidAmount: 0 }
+  check('环节5：守卫：无可用预付款不可抵扣', /无可用预付款/.test(applyPrepayment(q5s2, 1000)?.error || ''))
+}
+{
+  // 环节6：消息免打扰——设置 / 类型屏蔽 / 免打扰时段（跨零点）/ 未读口径 / 账号隔离
+  check('环节6：默认免打扰关闭', getDnd().enabled === false)
+  const q6set = setDnd({ enabled: true, quietStart: '22:00', quietEnd: '08:00', mutedTypes: ['system'] })
+  check('环节6：免打扰设置保存（db.dnd 按账号）', q6set.ok === true && db.dnd.admin.enabled === true && db.dnd.admin.mutedTypes.includes('system'))
+  const q6muted = { type: 'system', time: '2026-08-18 12:00', read: false }
+  const q6day = { type: 'settlement', time: '2026-08-18 12:00', read: false }
+  check('环节6：类型屏蔽（system 屏蔽，其他类型不受影响）', isMuted(q6muted) === true && isMuted(q6day) === false)
+  check(
+    '环节6：免打扰时段 22:00-08:00（跨零点，含 23:30 / 07:59，不含 08:00）',
+    isMuted({ type: 'settlement', time: '2026-08-18 23:30', read: false }) === true &&
+      isMuted({ type: 'settlement', time: '2026-08-18 07:59', read: false }) === true &&
+      isMuted({ type: 'settlement', time: '2026-08-18 08:00', read: false }) === false
+  )
+  const q6before = unreadCount()
+  const q6msg = notify('环节6 测试消息', 'system', '/message', '免打扰测试', null)
+  check('环节6：未读口径排除免打扰消息（system 已屏蔽，未读角标不增）', !q6msg.read && isMuted(q6msg) === true && unreadCount() === q6before)
+  setOperator({ name: '测试结算', username: 't-settle', role: '结算专员' })
+  check('环节6：免打扰设置按账号隔离（其他账号默认关闭）', getDnd().enabled === false && isMuted(q6muted) === false)
+  setOperator({ name: '张建国', username: 'admin', role: '平台管理员' })
+  setDnd({ enabled: false, quietStart: '22:00', quietEnd: '08:00', mutedTypes: [] })
+  check('环节6：关闭免打扰后消息不再被屏蔽', isMuted(q6muted) === false)
+  clearOperator()
+  check('环节6：守卫：未登录态不可保存免打扰设置', /未登录/.test(setDnd({ enabled: true })?.error || ''))
+  setOperator({ name: '张建国', username: 'admin', role: '平台管理员' })
+}
+{
+  // 环节7：安全库存预警——台账/预警列表/RBAC 与守卫/upsert/锁定穿越告警/出库穿越告警
+  check('环节7：种子安全库存台账（仓库×商品下限）', (db.safetyStocks || []).length >= 15)
+  check('环节7：种子含低于安全库存组合（预警展示口径）', inventoryAlerts().length >= 1)
+  setOperator({ name: '测试结算', username: 't-settle', role: '结算专员' })
+  check('环节7：RBAC：非仓储角色不可设置安全库存', /无此操作权限/.test(setSafetyStock('WH001', 'CM001', 100)?.error || ''))
+  setOperator({ name: '张建国', username: 'admin', role: '平台管理员' })
+  check('环节7：守卫：仓库不存在', /仓库不存在/.test(setSafetyStock('WH999', 'CM001', 100)?.error || ''))
+  check('环节7：守卫：商品不存在', /商品不存在/.test(setSafetyStock('WH001', 'CM999', 100)?.error || ''))
+  check('环节7：守卫：下限须为不小于 0 的数字', /不小于 0/.test(setSafetyStock('WH001', 'CM001', -5)?.error || ''))
+  const q7a = setSafetyStock('WH002', 'CM001', 2000)
+  const q7b = setSafetyStock('WH002', 'CM001', 3000)
+  check('环节7：upsert（同仓库×商品更新而非新增）', q7a.ok === true && q7b.ok === true && q7a.id === q7b.id && safetyStockOf('WH002', 'CM001').minQty === 3000)
+  // 锁定穿越：下限=当前可发 → 锁定任一正常批次即可发跌破下限 → 预警（审计 + 定向仓储角色）
+  // 优先选有安全库存台账的批次（前序节卸货入库可能生成无台账的仓库×商品组合）；setSafetyStock upsert 兜底
+  let q7inv = db.inventories.find((i) => i.status === 'normal' && i.quantity > 0 && safetyStockOf(i.warehouseId, i.commodityId))
+  if (!q7inv) q7inv = db.inventories.find((i) => i.status === 'normal' && i.quantity > 0)
+  setSafetyStock(q7inv.warehouseId, q7inv.commodityId, availableStockOf(q7inv.warehouseId, q7inv.commodityId))
+  const q7alertTitle = '安全库存预警'
+  const q7msgBefore = db.messages.filter((m) => (m.title || '').includes(q7alertTitle)).length
+  const q7lock = setInventoryStatus(q7inv, 'locked')
+  const q7msgs = db.messages.filter((m) => (m.title || '').includes(q7alertTitle))
+  check(
+    '环节7：锁定跌破安全库存 → 预警（定向仓储角色 + 不重复）',
+    q7lock.ok === true &&
+      q7msgs.length === q7msgBefore + 1 &&
+      (q7msgs[0].to || []).includes('场站操作员') &&
+      inventoryAlerts().some((a) => a.warehouseId === q7inv.warehouseId && a.commodityId === q7inv.commodityId)
+  )
+  // 已低于下限时再锁定不重复告警
+  const q7inv2 = db.inventories.find((i) => i.warehouseId === q7inv.warehouseId && i.commodityId === q7inv.commodityId && i.status === 'normal' && i.quantity > 0)
+  if (q7inv2) {
+    const q7msgMid = db.messages.filter((m) => (m.title || '').includes(q7alertTitle)).length
+    setInventoryStatus(q7inv2, 'locked')
+    check('环节7：已低于下限再锁定不重复告警', db.messages.filter((m) => (m.title || '').includes(q7alertTitle)).length === q7msgMid)
+  } else {
+    check('环节7：已低于下限再锁定不重复告警（无第二个正常批次，口径成立）', true)
+  }
+  setInventoryStatus(q7inv, 'normal')
+  if (q7inv2) setInventoryStatus(q7inv2, 'normal')
+  // 出库穿越：T006 → WH007，下限=可发-35+1 → 出库 35 吨后跌破
+  const q7oWh = 'WH007'
+  const q7oCm = 'CM001'
+  let q7pad = null
+  if (availableStockOf(q7oWh, q7oCm) < 35) {
+    q7pad = { id: 'INV-Q7P', warehouseId: q7oWh, commodityId: q7oCm, batch: 'BTEST-Q7', quantity: 500, inDate: '2026-08-15', status: 'normal' }
+    db.inventories.push(q7pad)
+  }
+  setSafetyStock(q7oWh, q7oCm, availableStockOf(q7oWh, q7oCm) - 35 + 1)
+  const q7c = db.contracts.find((c) => c.status === 'executing' && isRoadMode(c.mode))
+  const q7p = { id: 'YH-Q7', contractId: q7c.id, commodityId: q7oCm, quantity: 35, loadTerminalId: 'T006', unloadTerminalId: 'T002', mode: '公路', unitPrice: q7c.unitPrice, status: 'pending', progress: 0 }
+  db.plans.unshift(q7p)
+  const q7d = createDispatches(q7p, 1).created[0]
+  if (q7d) {
+    q7d.accepted = true
+    const q7outBefore = db.messages.filter((m) => (m.title || '').includes(q7alertTitle)).length
+    const q7out = confirmLoad(q7d)
+    check(
+      '环节7：出库跌破安全库存 → 装货成功且发出预警',
+      !q7out?.error && q7d.status === 'loading' && db.messages.filter((m) => (m.title || '').includes(q7alertTitle)).length === q7outBefore + 1
+    )
+  } else {
+    check('环节7：出库跌破安全库存 → 装货成功且发出预警（无空闲车辆可派车）', false)
+  }
+  if (q7pad) db.inventories.splice(db.inventories.indexOf(q7pad), 1)
+}
+{
+  // 环节8：数据权限（行级，装货侧区域）——种子范围/行级过滤/派生口径/RBAC 与守卫/动态变更/账号隔离
+  check('环节8：默认全量数据（无范围设置，调度单/计划全可见）', visibleDispatches().length === db.dispatches.length && visiblePlans().length === db.plans.length)
+  const q8u = db.users.find((x) => x.username === 'user02')
+  setOperator({ name: q8u.name, username: 'user02', role: q8u.role })
+  check('环节8：种子数据范围（调度员 user02 = 华北）', q8u.role === '调度员' && dataScopeOf().regions.join() === '华北')
+  const q8d = visibleDispatches()
+  check(
+    '环节8：调度单行级过滤（仅华北装货侧，且为真子集）',
+    q8d.length > 0 && q8d.length < db.dispatches.length && q8d.every((d) => recordRegion(d) === '华北')
+  )
+  const q8p = visiblePlans()
+  check('环节8：计划行级过滤（仅华北装货侧）', q8p.length > 0 && q8p.every((p) => recordRegion(p) === '华北'))
+  const q8cOther = db.contracts.filter((c) => recordRegion(c) === '西北')
+  check('环节8：合同经合同装货侧区域派生（西北合同对华北范围不可见）', q8cOther.length > 0 && q8cOther.every((c) => inDataScope(c) === false))
+  setOperator({ name: '张建国', username: 'admin', role: '平台管理员' })
+  check('环节8：平台管理员不受数据范围影响（全量数据）', visibleDispatches().length === db.dispatches.length)
+  setOperator({ name: '测试结算', username: 't-settle', role: '结算专员' })
+  check('环节8：RBAC：非用户管理角色不可设置数据范围', /无此操作权限/.test(setDataScope('user02', ['华北'])?.error || ''))
+  setOperator({ name: '张建国', username: 'admin', role: '平台管理员' })
+  check('环节8：守卫：账号不存在', /不存在/.test(setDataScope('nobody', ['华北'])?.error || ''))
+  check('环节8：守卫：包含无效区域被拒', /无效区域/.test(setDataScope('user02', ['华北', '火星'])?.error || ''))
+  check('环节8：守卫：平台管理员不可被限制', /全量数据/.test(setDataScope('admin', ['华北'])?.error || ''))
+  const q8u2 = db.users.find((x) => x.username === 'user03')
+  const q8set = setDataScope(q8u2.username, ['西北', '华东'])
+  setOperator({ name: q8u2.name, username: q8u2.username, role: q8u2.role })
+  check(
+    '环节8：多区域范围生效（仅西北/华东装货侧可见）',
+    q8set.ok === true && visibleDispatches().every((d) => ['西北', '华东'].includes(recordRegion(d)))
+  )
+  setOperator({ name: '张建国', username: 'admin', role: '平台管理员' })
+  const q8clear = setDataScope(q8u2.username, [])
+  check('环节8：清除范围恢复全量数据', q8clear.ok === true && dataScopeOf().regions.length === 0 && visibleDispatches().length === db.dispatches.length)
+  setOperator({ name: q8u.name, username: 'user02', role: q8u.role })
+  check('环节8：范围按账号隔离（user02 仍为华北）', dataScopeOf().regions.join() === '华北')
+  check('环节8：区域枚举与场站一致（单一来源）', DATA_REGIONS.includes('华北') && DATA_REGIONS.includes('西北') && DATA_REGIONS.includes('华东') && DATA_REGIONS.includes('东北'))
+  setOperator({ name: '张建国', username: 'admin', role: '平台管理员' })
+}
+{
+  // 环节9：登录安全——密码哈希（不落明文）+ 验证码（一次性/错误拒绝）+ 登录校验（凭据/停用/司机手机号）
+  check('环节9：用户表只存密码哈希（无明文 password）', db.users.length > 0 && db.users.every((u) => u.passwordHash && !('password' in u)))
+  check(
+    '环节9：hashPassword 确定性 + 与种子 admin 哈希一致',
+    hashPassword('123456') === hashPassword('123456') && hashPassword('123456') !== hashPassword('1234567') && hashPassword('123456') === db.users.find((u) => u.username === 'admin').passwordHash
+  )
+  const q9cap = generateCaptcha()
+  check('环节9：generateCaptcha 返回 id/4位码/SVG（含字符 <text>）', q9cap.id && q9cap.code.length === 4 && q9cap.svg.includes('<svg') && q9cap.code.split('').every((ch) => q9cap.svg.includes(`>${ch}<`)))
+  const q9cap2 = generateCaptcha()
+  check('环节9：verifyCaptcha 正确码通过', verifyCaptcha(q9cap2.id, q9cap2.code) === true)
+  const q9cap3 = generateCaptcha()
+  check('环节9：verifyCaptcha 一次性（消费后不可复用）', verifyCaptcha(q9cap3.id, q9cap3.code) === true && verifyCaptcha(q9cap3.id, q9cap3.code) === false)
+  const q9cap4 = generateCaptcha()
+  check('环节9：verifyCaptcha 错误码拒绝', verifyCaptcha(q9cap4.id, '0000') === false)
+  const q9c1 = generateCaptcha()
+  const q9ok = login('admin', '123456', q9c1.id, q9c1.code)
+  check('环节9：登录成功（验证码 + 密码哈希）', q9ok.ok === true && q9ok.user.username === 'admin')
+  const q9c2 = generateCaptcha()
+  const q9badCap = login('admin', '123456', q9c2.id, '0000')
+  check('环节9：验证码错误拒绝（code=captcha）', !q9badCap.ok && q9badCap.code === 'captcha')
+  const q9c3 = generateCaptcha()
+  const q9badPw = login('admin', 'wrong-pass', q9c3.id, q9c3.code)
+  check('环节9：密码错误拒绝（code=credential）', !q9badPw.ok && q9badPw.code === 'credential')
+  const q9c4 = generateCaptcha()
+  const q9noUser = login('nobody', '123456', q9c4.id, q9c4.code)
+  check('环节9：不存在账号拒绝（code=credential）', !q9noUser.ok && q9noUser.code === 'credential')
+  const q9dis = db.users.find((u) => u.status === 'disabled')
+  const q9c5 = generateCaptcha()
+  const q9disR = login(q9dis.username, '123456', q9c5.id, q9c5.code)
+  check('环节9：停用账号拒绝（code=disabled）', !q9disR.ok && q9disR.code === 'disabled')
+  const q9drv = db.users.find((u) => u.role === '司机' && u.status === 'active')
+  const q9c6 = generateCaptcha()
+  const q9drvR = login(q9drv.phone, '123456', q9c6.id, q9c6.code)
+  check('环节9：司机手机号登录成功', q9drvR.ok === true && !!q9drvR.user.driverId)
+}
+{
+  // 环节10：电子单证归档——聚合口径（磅单/签收单/发票）+ 单证结构 + 内容生成
+  check('环节10：DOC_TYPES 三类（磅单/签收单/发票）', DOC_TYPES.length === 3 && DOC_TYPES.map((t) => t.key).join() === 'weighing,receipt,invoice')
+  const q10docs = listDocuments()
+  check('环节10：磅单单证数 = 过磅记录数', q10docs.filter((d) => d.type === 'weighing').length === db.weighings.length)
+  check('环节10：签收单单证数 = 已签收车次', q10docs.filter((d) => d.type === 'receipt').length === db.dispatches.filter((d) => d.receipt).length)
+  check('环节10：发票单证数 = 发票数', q10docs.filter((d) => d.type === 'invoice').length === db.invoices.length)
+  check(
+    '环节10：单证结构完整（id/type/typeName/refId/title/date/fields）',
+    q10docs.length > 0 && q10docs.every((d) => d.id && d.type && d.typeName && d.refId && d.title && d.date && Array.isArray(d.fields) && d.fields.length > 0)
+  )
+  const q10w = q10docs.find((d) => d.type === 'weighing')
+  const q10html = documentContent(q10w)
+  check('环节10：单证内容生成 HTML（含表格 + 单证标题 + 电子单证声明）', q10html.includes('<table') && q10html.includes(q10w.title) && q10html.includes('电子单证'))
+  const q10found = documentOf('weighing', q10w.id)
+  check('环节10：documentOf 按类型+单证号定位', q10found && q10found.id === q10w.id && q10found.type === 'weighing')
+  const q10inv = q10docs.find((d) => d.type === 'invoice')
+  check('环节10：发票单证含金额与关联账单', q10inv && q10inv.fields.some(([k, v]) => k === '发票金额' && String(v).includes('¥')) && q10inv.fields.some(([k]) => k === '关联账单'))
+}
 
 console.log(`\n结果：${pass} 通过，${fail} 失败`)
 process.exit(fail ? 1 : 0)

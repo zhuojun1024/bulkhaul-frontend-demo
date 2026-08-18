@@ -404,7 +404,7 @@ function settle(row) {
       : ''
   const receiptWarn =
     r && r.missingReceiptCount
-      ? `<br/><span style="color:var(--color-danger)">${r.missingReceiptCount} 车次公路车次尚无电子签收单（收货凭证），建议补齐签收后再结算。</span>`
+      ? `<br/><span style="color:var(--color-danger)">${r.missingReceiptCount} 车次公路车次尚无电子签收单（收货凭证），签收是结算依据，未补齐前无法确认结算（结算详情对账明细可"补签"）。</span>`
       : ''
   const confirmWarn = row.customerConfirmed
     ? ''

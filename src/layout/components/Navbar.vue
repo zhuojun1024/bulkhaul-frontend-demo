@@ -58,6 +58,8 @@
         <div class="navbar__user">
           <div class="navbar__avatar">{{ userStore.userInfo.name?.charAt(0) || 'U' }}</div>
           <span class="navbar__username">{{ userStore.userInfo.name }}</span>
+          <!-- 环节8：行级数据范围提示（装货侧区域，平台管理员/无范围不显示） -->
+          <el-tag v-if="scopeRegions.length" size="small" type="warning" effect="plain" class="navbar__scope">数据范围：{{ scopeRegions.join('、') }}</el-tag>
           <el-icon :size="12"><ArrowDown /></el-icon>
         </div>
         <template #dropdown>
@@ -85,9 +87,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import screenfull from 'screenfull'
 import { useAppStore, useUserStore } from '@/store'
 import { storeToRefs } from 'pinia'
-import { db } from '@/mock'
 import { resetDb } from '@/mock/persist'
-import { markMessageRead } from '@/mock/flow'
+import { markMessageRead, visibleMessages, unreadCount as flowUnreadCount, dataScopeOf } from '@/mock/flow'
 import { useTokens } from '@/utils/tokens'
 
 const tokens = useTokens()
@@ -109,15 +110,18 @@ const typeColor = {
   system: tokens.neutral300
 }
 
-/** 通知：消息中心最新 6 条（未读优先，按时间倒序） */
+/** 通知：当前登录人可见消息最新 6 条（未读优先，按时间倒序；M4 按角色定向） */
 const noticeList = computed(() =>
-  [...db.messages]
+  visibleMessages()
     .sort((a, b) => (a.read === b.read ? (a.time < b.time ? 1 : -1) : a.read ? 1 : -1))
     .slice(0, 6)
     .map((m) => ({ ...m, icon: typeIcon[m.type] || 'Bell', color: typeColor[m.type] || tokens.primary }))
 )
 
-const unreadCount = computed(() => db.messages.filter((m) => !m.read).length)
+/** 未读角标：未读且未被免打扰（环节6：DND 消息不打扰） */
+const unreadCount = computed(() => flowUnreadCount())
+// 环节8：当前操作人数据范围（登录/刷新时 operator 已就位，挂载时读取）
+const scopeRegions = computed(() => dataScopeOf().regions)
 
 function toggleFull() {
   if (screenfull.isEnabled) screenfull.toggle()
@@ -272,6 +276,10 @@ function onCommand(cmd) {
 .navbar__username {
   font-size: 14px;
   color: var(--text-primary);
+}
+
+.navbar__scope {
+  margin-left: 2px;
 }
 
 .navbar__dropdown {

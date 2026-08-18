@@ -1,6 +1,7 @@
 <template>
   <div class="page">
     <PageHeader title="调度管理" desc="调度单是运输执行的指令，覆盖派车、装货、在途、卸货全流程">
+      <el-tag v-if="scopeRegions.length" type="warning" effect="plain">数据范围：{{ scopeRegions.join('、') }}（装货侧）</el-tag>
       <el-button :icon="Download" @click="exportCsv">导出</el-button>
     </PageHeader>
 
@@ -180,7 +181,9 @@ import {
   confirmUnload as flowConfirmUnload,
   reportException as flowReportException,
   resumeDispatch,
-  isRoadMode
+  isRoadMode,
+  visibleDispatches,
+  dataScopeOf
 } from '@/mock/flow'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
@@ -204,10 +207,14 @@ const filter = reactive({ keyword: '', status: '', commodityId: '', dateRange: [
 const page = ref(1)
 const pageSize = ref(10)
 
+// 环节8：数据权限（行级）——列表只展示当前操作人数据范围内的调度单（装货侧区域）
+const scoped = computed(() => visibleDispatches())
+const scopeRegions = computed(() => dataScopeOf().regions)
+
 const statItems = computed(() => {
-  const count = (s) => db.dispatches.filter((d) => d.status === s).length
+  const count = (s) => scoped.value.filter((d) => d.status === s).length
   return [
-    { key: '', label: '全部调度单', count: db.dispatches.length, color: tokens.primary },
+    { key: '', label: '全部调度单', count: scoped.value.length, color: tokens.primary },
     { key: 'pending', label: '待装货', count: count('pending'), color: tokens.info },
     { key: 'loading', label: '装货中', count: count('loading'), color: tokens.warning },
     { key: 'intransit', label: '在途', count: count('intransit'), color: tokens.primary },
@@ -217,7 +224,7 @@ const statItems = computed(() => {
 })
 
 const filtered = computed(() =>
-  db.dispatches.filter((d) => {
+  scoped.value.filter((d) => {
     if (filter.status && d.status !== filter.status) return false
     if (filter.commodityId && d.commodityId !== filter.commodityId) return false
     if (filter.keyword) {

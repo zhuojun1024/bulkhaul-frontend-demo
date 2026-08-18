@@ -9,6 +9,8 @@ import 'nprogress/nprogress.css'
 
 import App from './App.vue'
 import router from './router'
+import { useUserStore } from './store'
+import { setOperator } from './mock/flow'
 import { enableAutoSave } from './mock/persist'
 import { startScheduler } from './mock/scheduler'
 import './styles/tokens.css'
@@ -39,7 +41,11 @@ router.afterEach(() => {
   NProgress.done()
 })
 
-app.use(createPinia())
+const pinia = createPinia()
+app.use(pinia)
+// M7 修复：刷新后按持久化登录态恢复服务层 operator（审计日志操作人=实际登录用户，而非默认管理员）
+const userStore = useUserStore()
+if (userStore.userInfo.username) setOperator(userStore.userInfo)
 app.use(router)
 app.use(ElementPlus, { locale: zhCn })
 app.mount('#app')

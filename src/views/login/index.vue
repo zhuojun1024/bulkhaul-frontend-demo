@@ -64,13 +64,29 @@
     <div class="login__form-area">
       <div class="login__form-card">
         <h2 class="login__title">欢迎登录</h2>
-        <p class="login__tip">请使用平台账号或司机手机号登录，演示环境统一密码 123456</p>
+        <p class="login__tip">请使用平台账号或司机手机号登录，演示环境统一密码 123456，需输入图形验证码</p>
+        <el-alert
+          v-if="lockInfo"
+          type="error"
+          :closable="false"
+          show-icon
+          style="margin-bottom: 16px"
+          :title="`登录失败次数过多，账号已临时锁定，${lockLeft} 秒后可重试`"
+        />
         <el-form ref="formRef" :model="form" :rules="rules" size="large" @keyup.enter="onLogin">
           <el-form-item prop="username">
             <el-input v-model="form.username" placeholder="用户名 / 司机手机号" :prefix-icon="User" clearable />
           </el-form-item>
           <el-form-item prop="password">
             <el-input v-model="form.password" type="password" placeholder="密码" :prefix-icon="Lock" show-password clearable />
+          </el-form-item>
+          <el-form-item prop="captcha">
+            <div class="login__captcha">
+              <el-input v-model="form.captcha" placeholder="验证码" :prefix-icon="Key" clearable class="login__captcha-input" />
+              <div class="login__captcha-img" title="点击刷新" @click="refreshCaptcha">
+                <div v-html="captchaSvg"></div>
+              </div>
+            </div>
           </el-form-item>
           <el-form-item>
             <div class="login__options">
@@ -79,13 +95,13 @@
             </div>
           </el-form-item>
           <el-form-item>
-            <el-button type="primary" class="login__btn" @click="onLogin">
-              登 录
+            <el-button type="primary" class="login__btn" :disabled="!!lockInfo" @click="onLogin">
+              {{ lockInfo ? `${lockLeft} 秒后重试` : '登 录' }}
             </el-button>
           </el-form-item>
         </el-form>
         <div class="login__footer">
-          <el-tag size="small" effect="plain" type="info">演示账号：admin / 123456（调度员 user02、结算专员 user04、客户 customer01、只读 user16 等）</el-tag>
+          <el-tag size="small" effect="plain" type="info">演示账号：admin / 123456（调度员 user02·仅华北数据范围、结算专员 user04、客户 customer01、只读 user16 等）</el-tag>
           <el-tag size="small" effect="plain" type="info" style="margin-top: 6px">司机端：司机手机号 + 123456 登录（手机号见司机管理列表）</el-tag>
         </div>
       </div>
@@ -94,13 +110,12 @@
 </template>
 
 <script setup>
-import { reactive, ref } from 'vue'
+import { reactive, ref, watch, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { User, Lock } from '@element-plus/icons-vue'
+import { User, Lock, Key } from '@element-plus/icons-vue'
 import { useUserStore } from '@/store'
-import { db } from '@/mock'
-import { setOperator, logAction } from '@/mock/flow'
+import { setOperator, login as serviceLogin, generateCaptcha } from '@/mock/flow'
 import dayjs from 'dayjs'
 
 const router = useRouter()
@@ -111,12 +126,23 @@ const formRef = ref()
 const form = reactive({
   username: 'admin',
   password: '123456',
+  captcha: '',
   remember: true
 })
 
 const rules = {
   username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }]
+  // 验证码不设必填校验：空验证码交由服务层判定（与 M8 失败锁定口径一致，服务层为唯一校验点）
+}
+
+/* ===== 环节9：登录验证码（一次性、60 秒有效，点击图片刷新） ===== */
+const captchaId = ref('')
+const captchaSvg = ref('')
+function refreshCaptcha() {
+  const cap = generateCaptcha()
+  captchaId.value = cap.id
+  captchaSvg.value = cap.svg
 }
 
 const features = [
@@ -126,30 +152,133 @@ const features = [
   { icon: 'Wallet', title: '智能结算对账', desc: '运费自动核算，发票线上管理' }
 ]
 
+/* ===== M8：登录失败锁定（连续 5 次失败 → 锁定 5 分钟；localStorage 持久化，刷新后仍生效）
+ *  按账号独立计数（锁一个账号不影响其他账号）；登录成功清零。
+ *  注：密码明文存储属演示可接受范围（审计 M8），对接后端时须换 JWT/短信鉴权 */
+const MAX_FAILS = 5
+const LOCK_MS = 5 * 60 * 1000
+const FAIL_KEY = 'blms_login_fail'
+
+function readFailMap() {
+  try {
+    const m = JSON.parse(localStorage.getItem(FAIL_KEY) || '{}')
+    return m && typeof m === 'object' ? m : {}
+  } catch (e) {
+    return {}
+  }
+}
+function writeFailMap(m) {
+  localStorage.setItem(FAIL_KEY, JSON.stringify(m))
+}
+
+const lockInfo = ref(null) // { until: 时间戳 } 当前账号处于锁定期
+const lockLeft = ref(0) // 剩余秒数
+let lockTimer = null
+
+function stopLockTick() {
+  if (lockTimer) {
+    clearInterval(lockTimer)
+    lockTimer = null
+  }
+}
+
+/** 检查账号是否处于锁定期（更新倒计时展示）；锁定中返回 true */
+function checkLock(key) {
+  const rec = readFailMap()[key]
+  if (rec && rec.until && rec.until > Date.now()) {
+    lockInfo.value = { until: rec.until }
+    lockLeft.value = Math.ceil((rec.until - Date.now()) / 1000)
+    if (!lockTimer) {
+      lockTimer = setInterval(() => {
+        if (!lockInfo.value) return stopLockTick()
+        const left = lockInfo.value.until - Date.now()
+        if (left <= 0) {
+          lockInfo.value = null
+          lockLeft.value = 0
+          stopLockTick()
+        } else {
+          lockLeft.value = Math.ceil(left / 1000)
+        }
+      }, 1000)
+    }
+    return true
+  }
+  lockInfo.value = null
+  lockLeft.value = 0
+  stopLockTick()
+  return false
+}
+
+/** 记一次失败；达到上限进入 5 分钟锁定（返回更新后的记录） */
+function recordFail(key) {
+  const m = readFailMap()
+  const rec = m[key] || { count: 0, until: 0 }
+  rec.count += 1
+  if (rec.count >= MAX_FAILS) {
+    rec.until = Date.now() + LOCK_MS
+    rec.count = 0
+  }
+  m[key] = rec
+  writeFailMap(m)
+  return rec
+}
+
+/** 登录成功：清零该账号失败记录 */
+function clearFail(key) {
+  const m = readFailMap()
+  if (m[key]) {
+    delete m[key]
+    writeFailMap(m)
+  }
+}
+
+// M8：切换账号时刷新锁定展示；页面加载检查默认账号
+watch(
+  () => form.username,
+  (v) => {
+    if (v && v.trim()) checkLock(v.trim())
+  }
+)
+onMounted(() => {
+  refreshCaptcha()
+  if (form.username.trim()) checkLock(form.username.trim())
+})
+
 function onLogin() {
   formRef.value.validate((valid) => {
     if (!valid) return
-    // 真实校验：用户名/司机手机号 + 密码 + 账号状态（司机账号以手机号为登录名）
     const id = form.username.trim()
-    const user = db.users.find((u) => u.username === id || u.phone === id)
-    if (!user || user.password !== form.password) {
-      logAction('系统', '登录系统', `账号 ${id} 登录失败（用户名或密码错误）`, 'fail')
-      ElMessage.error('用户名或密码错误')
+    // M8：锁定期内直接拦截（不触达账号校验）
+    if (checkLock(id)) {
+      ElMessage.error(`登录失败次数过多，账号已锁定，请 ${lockLeft.value} 秒后再试`)
       return
     }
-    if (user.status !== 'active') {
-      logAction('系统', '登录系统', `账号 ${user.username} 登录失败（账号已停用）`, 'fail')
-      ElMessage.error('账号已停用，请联系管理员')
+    // 环节9：服务层校验（验证码一次性 + 密码哈希比对 + 账号状态），审计日志由服务层记录
+    const result = serviceLogin(id, form.password, captchaId.value, form.captcha)
+    if (result.ok) {
+      clearFail(id)
+      setOperator(result.user)
+      userStore.login(result.user)
+      result.user.lastLogin = dayjs().format('YYYY-MM-DD HH:mm')
+      ElMessage.success(`登录成功，欢迎回来，${result.user.name}`)
+      // 司机角色进司机端，客户角色进门户，其余角色进工作台
+      const home = result.user.role === '司机' ? '/driver-app' : result.user.role === '客户' ? '/portal' : '/workbench'
+      router.push(route.query.redirect || home)
       return
     }
-    setOperator(user)
-    userStore.login(user)
-    logAction('系统', '登录系统', `账号 ${user.username}（${user.role}）登录成功`)
-    user.lastLogin = dayjs().format('YYYY-MM-DD HH:mm')
-    ElMessage.success(`登录成功，欢迎回来，${user.name}`)
-    // 司机角色进司机端，客户角色进门户，其余角色进工作台
-    const home = user.role === '司机' ? '/driver-app' : user.role === '客户' ? '/portal' : '/workbench'
-    router.push(route.query.redirect || home)
+    // M8：验证码/凭据失败计入锁定（停用账号不计）；失败后刷新验证码供重试
+    if (result.code === 'credential' || result.code === 'captcha') {
+      const rec = recordFail(id)
+      if (rec.until) {
+        checkLock(id)
+        ElMessage.error(`登录失败次数过多，连续 ${MAX_FAILS} 次失败，账号已锁定 5 分钟`)
+      } else {
+        ElMessage.error(`${result.error}，还剩 ${MAX_FAILS - rec.count} 次机会将锁定账号`)
+      }
+    } else {
+      ElMessage.error(result.error)
+    }
+    refreshCaptcha()
   })
 }
 </script>
@@ -296,6 +425,32 @@ function onLogin() {
   font-size: 13px;
   color: var(--color-primary);
   cursor: pointer;
+}
+
+/* 环节9：验证码（输入框 + 可点击刷新的 SVG 图片） */
+.login__captcha {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+}
+.login__captcha-input {
+  flex: 1;
+}
+.login__captcha-img {
+  width: 120px;
+  height: 40px;
+  flex: none;
+  cursor: pointer;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--color-neutral-200);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f1f5f9;
+}
+.login__captcha-img :deep(svg) {
+  display: block;
 }
 
 .login__btn {

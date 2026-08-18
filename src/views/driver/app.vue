@@ -162,8 +162,8 @@ import { db, find } from '@/mock'
 import {
   acceptDispatch,
   signReceipt,
-  depart as flowDepart,
-  arrive as flowArrive,
+  driverDepart,
+  driverArrive,
   loadCodeOf,
   unloadCodeOf,
   scanConfirmLoad,
@@ -273,11 +273,11 @@ function submitScanLoad() {
   ElMessage.success('装货确认成功，进磅单已登记')
 }
 function onDepart(d) {
-  if (guardError(flowDepart(d))) return
+  if (guardError(driverDepart(d))) return
   ElMessage.success('已发车，进入在途状态')
 }
 function onArrive(d) {
-  if (guardError(flowArrive(d))) return
+  if (guardError(driverArrive(d))) return
   ElMessage.success('已到达卸货场站')
 }
 

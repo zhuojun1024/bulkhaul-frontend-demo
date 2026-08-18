@@ -1,4 +1,4 @@
-import { db, rng, randInt, NOW, ROUTES } from './base'
+import { db, rng, randInt, pick, NOW, ROUTES, isRoadMode } from './base'
 import dayjs from 'dayjs'
 import { round } from '@/utils'
 
@@ -73,6 +73,7 @@ for (const plan of executablePlans) {
 
   for (let i = 0; i < n; i++) {
     dSeq += 1
+    const id = `PD-${String(dSeq).padStart(5, '0')}`
     const status = statusOf(plan)
     const quantity = Math.max(30, base + randInt(-2, 2))
 
@@ -116,8 +117,29 @@ for (const plan of executablePlans) {
     const vehicle = takeVehicle(v)
     const driver = takeDriver(d)
 
+    // 电子签收：已完成公路车次以签收单为收货凭证（绝大多数卸货现场已签；
+    // 少量缺失用于演示"补签"入口——环节1：无签收公路车次不可确认结算）
+    let receipt = null
+    if (status === 'completed' && isRoadMode(plan.mode) && rng() < 0.9) {
+      receipt = {
+        code: 'QS-' + id.slice(-5),
+        signer: pick(['收货方', '收货方仓管员', '收货方值班员']),
+        time: unloadTime ? unloadTime.format('YYYY-MM-DD HH:mm') : null
+      }
+    }
+
+    // 环节4：卸货质检（水分/灰分）——已完成公路车次均有质检记录，结算按质扣重
+    let quality = null
+    if (status === 'completed' && isRoadMode(plan.mode)) {
+      quality = {
+        moisture: +(randInt(80, 140) / 10).toFixed(1),
+        ash: +(randInt(120, 200) / 10).toFixed(1),
+        time: unloadTime ? unloadTime.format('YYYY-MM-DD HH:mm') : null
+      }
+    }
+
     db.dispatches.push({
-      id: `PD-${String(dSeq).padStart(5, '0')}`,
+      id,
       planId: plan.id,
       contractId: plan.contractId,
       commodityId: plan.commodityId,
@@ -137,7 +159,9 @@ for (const plan of executablePlans) {
       speed: status === 'intransit' ? speed : 0,
       eta: eta ? eta.format('YYYY-MM-DD HH:mm') : null,
       fee: Math.round(quantity * plan.unitPrice),
-      unitPrice: plan.unitPrice
+      unitPrice: plan.unitPrice,
+      receipt,
+      quality
     })
   }
 }

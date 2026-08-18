@@ -51,3 +51,25 @@ for (const wh of warehouses) {
     })
   }
 }
+
+/** 环节7：安全库存下限（仓库×商品，可发库存跌破即预警）
+ *  确定性派生（不消耗全局 rng，避免扰动下游种子数据的随机序列，与 contract.js 口径一致） */
+let sqSeq = 0
+db.safetyStocks = []
+for (const wh of warehouses) {
+  for (const commodityId of whCommodityMap[wh.id]) {
+    sqSeq += 1
+    db.safetyStocks.push({
+      id: `SQ-${String(sqSeq).padStart(4, '0')}`,
+      warehouseId: wh.id,
+      commodityId,
+      minQty: 1500 + ((sqSeq * 917) % 3501)
+    })
+  }
+}
+// 演示口径：强制 1 号煤仓 动力煤 低于安全库存（保证库存预警有展示数据）
+const forcedSq = db.safetyStocks.find((s) => s.warehouseId === 'WH001' && s.commodityId === 'CM001')
+forcedSq.minQty =
+  db.inventories
+    .filter((i) => i.warehouseId === 'WH001' && i.commodityId === 'CM001' && i.status === 'normal')
+    .reduce((s, i) => s + i.quantity, 0) + 1000

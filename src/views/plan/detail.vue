@@ -124,7 +124,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, Position } from '@element-plus/icons-vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
-import { createDispatches, creditCheck, isRoadMode, vehicleInspectionExpired } from '@/mock/flow'
+import { BUSY_STATUSES, createDispatches, creditCheck, isRoadMode, vehicleInspectionExpired } from '@/mock/flow'
 import { formatNum } from '@/utils'
 import { usePerm } from '@/permission'
 
@@ -169,10 +169,8 @@ const dispatchVisible = ref(false)
 const dispatchCount = ref(3)
 const vehicleSource = ref('auto')
 const selectedVehicles = ref([])
-/** 已有未完结车次（待装货/装货中/异常）的车辆不可再被指定，与 createDispatches 互斥口径一致 */
-const busyVehicleIds = computed(() =>
-  new Set(db.dispatches.filter((d) => ['pending', 'loading', 'exception'].includes(d.status)).map((d) => d.vehicleId))
-)
+/** 已有未完结车次（全部非终态）的车辆不可再被指定，与 createDispatches 互斥口径一致（N-2：含在途/卸货中） */
+const busyVehicleIds = computed(() => new Set(db.dispatches.filter((d) => BUSY_STATUSES.includes(d.status)).map((d) => d.vehicleId)))
 /** 可选车辆：空闲 + 非铁路/水运车型 + 无未完结车次 + 年检未过期（与 createDispatches 守卫同口径） */
 const idleVehicles = computed(() =>
   db.vehicles.filter(
