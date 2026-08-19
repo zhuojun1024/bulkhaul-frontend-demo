@@ -128,6 +128,12 @@ body {
   width: 180px;
 }
 
+/* 日期范围需完整展示「YYYY-MM-DD 至 YYYY-MM-DD」，单独加宽 */
+.filter-bar .el-date-editor--daterange,
+.filter-bar .el-date-editor--datetimerange {
+  width: 240px;
+}
+
 /* 表格工具栏 */
 .table-toolbar {
   display: flex;

@@ -31,7 +31,7 @@
 
         <el-table :data="paged" stripe size="small">
           <el-table-column prop="time" label="操作时间" width="160" fixed />
-          <el-table-column label="操作人" width="120">
+          <el-table-column label="操作人" width="160">
             <template #default="{ row }">
               <span>{{ row.user }}</span>
               <span class="log-username">@{{ row.username }}</span>

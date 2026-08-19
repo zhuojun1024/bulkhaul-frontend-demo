@@ -339,8 +339,9 @@ const dispatchStatusMap = {
   color: rgba(255, 255, 255, 0.65);
 }
 
+/* 深蓝渐变底上 danger-200 过浅发闷，提到 300 保证醒目且对比度达标（AA ≥ 3:1） */
 .welcome__stat .text-danger {
-  color: var(--color-danger-200);
+  color: var(--color-danger-300);
 }
 
 .welcome__divider {

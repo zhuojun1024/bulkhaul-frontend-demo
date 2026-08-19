@@ -15,7 +15,7 @@
           <el-icon
             v-if="tag.path !== '/workbench'"
             class="tags-view__close"
-            @click.stop="closeTag(tag)"
+            @click.prevent.stop="closeTag(tag)"
           >
             <Close />
           </el-icon>
@@ -72,6 +72,7 @@ function onCommand(cmd) {
   height: var(--tagsview-height);
   background: var(--bg-card);
   border-bottom: 1px solid var(--border-color);
+  box-sizing: content-box;
   display: flex;
   align-items: center;
   padding: 0 8px 0 16px;

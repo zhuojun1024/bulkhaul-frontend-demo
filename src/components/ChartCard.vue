@@ -26,21 +26,31 @@ let resizeObserver = null
 
 const bodyStyle = computed(() => (props.fluid ? {} : { height: props.height + 'px' }))
 
-function render() {
-  if (!chartRef.value) return
-  if (!chart) chart = echarts.init(chartRef.value)
+function applyOption() {
+  const el = chartRef.value
+  if (!el) return
+  // 容器尚不可见（如非激活页签）时延迟初始化，避免 0×0 画布；可见后由 ResizeObserver 触发
+  if (!chart && !el.clientWidth) return
+  if (!chart) {
+    chart = echarts.init(el)
+    el.style.visibility = 'visible'
+  }
   chart.setOption(props.option, true)
 }
 
 function resize() {
-  chart && chart.resize()
+  const el = chartRef.value
+  if (!el || !el.clientWidth) return
+  if (!chart) return applyOption()
+  chart.resize()
 }
 
 onMounted(() => {
-  render()
+  applyOption()
   window.addEventListener('resize', resize)
-  // fluid 模式：容器高度由行布局决定，监听尺寸变化同步图表
-  if (props.fluid && chartRef.value) {
+  // 监听容器尺寸变化同步图表：fluid 模式高度由行布局决定；
+  // 固定高度模式下，页签切换（display:none → 可见）时容器从 0 变为实际尺寸，也依赖它触发初始化/resize
+  if (chartRef.value) {
     resizeObserver = new ResizeObserver(resize)
     resizeObserver.observe(chartRef.value)
   }
@@ -48,7 +58,7 @@ onMounted(() => {
 
 watch(
   () => props.option,
-  () => nextTick(render),
+  () => nextTick(applyOption),
   { deep: true }
 )
 
@@ -69,6 +79,8 @@ onBeforeUnmount(() => {
 }
 
 .chart-card__body {
+  /* 图表初始化完成前隐藏，避免页签切换首帧出现空白画布闪烁 */
+  visibility: hidden;
   padding: 8px 12px 12px;
 }
 

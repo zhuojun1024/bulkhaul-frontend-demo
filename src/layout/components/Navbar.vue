@@ -54,7 +54,7 @@
           </el-dropdown-menu>
         </template>
       </el-dropdown>
-      <el-dropdown trigger="click" @command="onUserCommand">
+      <el-dropdown trigger="click" @command="onCommand">
         <div class="navbar__user">
           <div class="navbar__avatar">{{ userStore.userInfo.name?.charAt(0) || 'U' }}</div>
           <span class="navbar__username">{{ userStore.userInfo.name }}</span>

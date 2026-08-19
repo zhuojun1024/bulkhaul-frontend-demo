@@ -774,6 +774,8 @@ function exportCsv() {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  /* EP 的 .el-tabs__content 带 overflow:hidden，统计卡 hover 上移 2px 会被裁掉上边框，留 4px 顶部空间 */
+  padding-top: 4px;
 }
 
 .text-muted {

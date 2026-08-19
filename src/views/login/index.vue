@@ -101,8 +101,14 @@
           </el-form-item>
         </el-form>
         <div class="login__footer">
-          <el-tag size="small" effect="plain" type="info">演示账号：admin / 123456（调度员 user02·仅华北数据范围、结算专员 user04、客户 customer01、只读 user16 等）</el-tag>
-          <el-tag size="small" effect="plain" type="info" style="margin-top: 6px">司机端：司机手机号 + 123456 登录（手机号见司机管理列表）</el-tag>
+          <div class="login__footer-line">
+            <el-icon :size="13"><InfoFilled /></el-icon>
+            <span>演示密码统一 123456：admin 平台管理员、user02 调度员（仅华北）、user04 结算专员、customer01 客户、user16 只读</span>
+          </div>
+          <div class="login__footer-line">
+            <el-icon :size="13"><Cellphone /></el-icon>
+            <span>司机端：司机手机号 + 123456 登录，手机号见司机管理列表</span>
+          </div>
         </div>
       </div>
     </div>
@@ -460,8 +466,25 @@ function onLogin() {
 }
 
 .login__footer {
-  margin-top: 8px;
-  text-align: center;
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.login__footer-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.login__footer-line .el-icon {
+  flex-shrink: 0;
+  margin-top: 3px;
+  color: var(--color-neutral-400);
 }
 
 @media (max-width: 900px) {
