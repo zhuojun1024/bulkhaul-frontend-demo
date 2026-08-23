@@ -10,12 +10,13 @@
  *  plan       新建/取消计划                  dispatch   派车与调度执行（装货/发车/到达/卸货/恢复）
  *  exception  异常受理/处置/关闭             safety     安全管理操作
  *  settlement 结算（生成/对账/结算/收款/重算） invoice   开票/红冲
- *  weighing   磅单补录                       warehouse  库存锁定/解锁/临期
+ *  weighing   磅单补录/复磅更正               warehouse  库存锁定/解锁/临期
  *  vehicle    车辆报修/恢复                  driver     司机停用/启用
  *  customer   客户冻结/解冻                  customer-confirm 客户确认对账（门户）
  *  customer-request 客户发起运输需求（门户）
  *  commodity  商品管理（新建/编辑/启停/导入） user       用户管理（新增/编辑/删除/启停）
  *  role       角色管理（新增/删除/授权）
+ *  rate       运价管理（新建/调价/启停运价卡） insurance  保险理赔（报险/责任认定/理赔结案）
  */
 /** 注意：路径必须与 router 实际注册路径一致（如 /contract，而非 /transport/contract） */
 export const ROLE_MENUS = {
@@ -47,9 +48,9 @@ export const ROLE_ACTIONS = {
   平台管理员: null,
   只读用户: [],
   调度员: ['contract', 'plan', 'dispatch', 'exception', 'vehicle', 'driver'],
-  结算专员: ['settlement', 'invoice', 'customer'],
+  结算专员: ['settlement', 'invoice', 'customer', 'rate'],
   场站操作员: ['dispatch', 'weighing', 'warehouse'],
-  安全管理员: ['dispatch', 'exception', 'safety'],
+  安全管理员: ['dispatch', 'exception', 'safety', 'insurance'],
   客户: ['customer-confirm', 'customer-request'],
   司机: []
 }
@@ -93,7 +94,7 @@ export const ACTION_OPTIONS = [
   { code: 'safety', label: '安全管理操作' },
   { code: 'settlement', label: '结算（生成/对账/结算/收款/重算）' },
   { code: 'invoice', label: '开票/红冲' },
-  { code: 'weighing', label: '磅单补录' },
+  { code: 'weighing', label: '磅单补录/复磅更正' },
   { code: 'warehouse', label: '库存锁定/解锁/临期' },
   { code: 'vehicle', label: '车辆报修/恢复' },
   { code: 'driver', label: '司机停用/启用' },
@@ -102,5 +103,7 @@ export const ACTION_OPTIONS = [
   { code: 'customer-request', label: '客户发起运输需求（门户）' },
   { code: 'commodity', label: '商品管理（新建/编辑/启停/导入）' },
   { code: 'user', label: '用户管理（新增/编辑/删除/启停）' },
-  { code: 'role', label: '角色管理（新增/删除/授权）' }
+  { code: 'role', label: '角色管理（新增/删除/授权）' },
+  { code: 'rate', label: '运价管理（新建/调价/启停运价卡）' },
+  { code: 'insurance', label: '保险理赔（报险/责任认定/理赔结案）' }
 ]

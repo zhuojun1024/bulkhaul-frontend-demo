@@ -6,6 +6,7 @@ import { db } from './base'
 import './commodity'
 import './customer'
 import './terminal'
+import './rate' // 线路运价表（依赖 commodities/terminals，确定性派生不消耗 RNG）
 import './vehicle'
 import './driver'
 import './contract'

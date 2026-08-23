@@ -180,8 +180,11 @@
               <el-table-column label="毛重" width="80" align="right">
                 <template #default="{ row }">{{ row.gross }}t</template>
               </el-table-column>
-              <el-table-column label="净重" width="80" align="right">
-                <template #default="{ row }"><span class="num net">{{ row.net }}t</span></template>
+              <el-table-column label="净重" width="110" align="right">
+                <template #default="{ row }">
+                  <span class="num net">{{ row.net }}t</span>
+                  <el-tag v-if="row.corrected" size="small" type="warning" effect="light" style="margin-left: 4px">已复磅</el-tag>
+                </template>
               </el-table-column>
               <el-table-column prop="time" label="时间" min-width="130" />
             </el-table>
@@ -297,7 +300,8 @@ const statusMap = {
   intransit: { label: '在途', type: 'primary' },
   unloading: { label: '卸货中', type: 'warning' },
   completed: { label: '已完成', type: 'success' },
-  exception: { label: '异常', type: 'danger' }
+  exception: { label: '异常', type: 'danger' },
+  cancelled: { label: '已取消', type: 'info' }
 }
 
 const timeline = computed(() => {

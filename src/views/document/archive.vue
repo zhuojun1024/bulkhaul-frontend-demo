@@ -1,12 +1,15 @@
 <template>
   <div class="page">
-    <PageHeader title="单证归档" desc="磅单 / 签收单 / 发票电子单证统一归档，支持预览、下载，单据级审计追溯">
+    <PageHeader title="单证归档" desc="调度单 / 磅单 / 质检报告 / 签收单 / 对账单 / 发票电子单证统一归档，支持预览、下载，单据级审计追溯">
       <el-button :icon="Download" @click="exportAll">批量导出</el-button>
     </PageHeader>
 
     <div class="stat-row">
+      <StatCard title="调度单" :value="countOf('dispatch')" unit="张" icon="Tickets" color="var(--color-primary)" />
       <StatCard title="磅单" :value="countOf('weighing')" unit="张" icon="ScaleToOriginal" color="var(--color-primary)" />
+      <StatCard title="质检报告" :value="countOf('quality')" unit="份" icon="DataAnalysis" color="var(--color-warning)" />
       <StatCard title="签收单" :value="countOf('receipt')" unit="份" icon="DocumentChecked" color="var(--color-success)" />
+      <StatCard title="对账单" :value="countOf('reconciliation')" unit="份" icon="Document" color="var(--color-success)" />
       <StatCard title="发票" :value="countOf('invoice')" unit="张" icon="Postcard" color="var(--color-warning)" />
       <StatCard title="单证合计" :value="docs.length" unit="项" icon="Files" color="var(--color-danger)" :sub="'当前筛选 ' + filtered.length + ' 项'" />
     </div>
@@ -110,7 +113,7 @@ function resetFilter() {
 }
 
 function typeTag(type) {
-  return { weighing: 'primary', receipt: 'success', invoice: 'warning' }[type] || 'info'
+  return { dispatch: 'primary', weighing: 'primary', quality: 'warning', receipt: 'success', reconciliation: 'success', invoice: 'warning' }[type] || 'info'
 }
 
 /* ===== 预览 / 下载（服务层生成 HTML，视图负责浏览器 Blob 下载） ===== */
@@ -154,7 +157,7 @@ function triggerDownload(blob, filename) {
 <style scoped>
 .stat-row {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 12px;
 }
 

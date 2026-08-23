@@ -1,5 +1,5 @@
 import { db, NOW } from './base'
-import { outstandingOf, tripCostOf } from './flow'
+import { outstandingOf, tripCostOf, prepaymentAvailable, dispatchRevenueOf } from './flow'
 import dayjs from 'dayjs'
 import { round } from '@/utils'
 
@@ -20,7 +20,7 @@ export function monthlyReport() {
   return months.map((m) => {
     const done = db.dispatches.filter((d) => d.status === 'completed' && d.unloadTime && d.unloadTime.slice(0, 7) === m)
     const settlements = db.settlements.filter((s) => s.period === m)
-    const payments = db.payments.filter((p) => p.payTime.slice(0, 7) === m)
+    const payments = db.payments.filter((p) => !p.reversed && p.payTime.slice(0, 7) === m)
     return {
       month: m,
       trips: done.length,
@@ -42,6 +42,8 @@ export function customerReport() {
       const volume = done.reduce((s, d) => s + d.quantity, 0)
       const settleAmount = db.settlements.filter((s) => s.customerId === c.id).reduce((s, x) => s + x.totalAmount, 0)
       const outstanding = outstandingOf(c.id)
+      // P2 报表口径对齐：授信占用 = 未付 - 可用预付款（与 creditCheck 同口径，预付款冲减信用占用）
+      const occupied = Math.max(0, outstanding - prepaymentAvailable(c.id))
       return {
         id: c.id,
         name: c.name,
@@ -50,8 +52,9 @@ export function customerReport() {
         volume,
         settleAmount,
         outstanding,
+        prepay: prepaymentAvailable(c.id),
         creditLimit: c.creditLimit || 0,
-        creditPct: c.creditLimit ? Math.round((outstanding / c.creditLimit) * 100) : 0
+        creditPct: c.creditLimit ? Math.round((occupied / c.creditLimit) * 100) : 0
       }
     })
     .filter((r) => r.contracts > 0)
@@ -117,7 +120,8 @@ export function terminalReport() {
  *  月度按卸货完成时间归月（与月度运营同口径），近 6 个月 */
 export function costReport() {
   const done = db.dispatches.filter((d) => d.status === 'completed')
-  const rows = done.map((d) => ({ d, cost: tripCostOf(d), revenue: d.fee || 0 }))
+  // P2 报表口径对齐：收入按出磅净重结算（dispatchRevenueOf），与结算一致（原 d.fee 为调度量×单价）
+  const rows = done.map((d) => ({ d, cost: tripCostOf(d), revenue: dispatchRevenueOf(d) }))
 
   const sumCost = (list) => list.reduce((s, x) => s + x.cost.total, 0)
   const sumRevenue = (list) => list.reduce((s, x) => s + x.revenue, 0)

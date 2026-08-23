@@ -66,9 +66,16 @@
           <el-table-column label="损失(元)" width="100" align="right">
             <template #default="{ row }">{{ row.cost ? formatNum(row.cost) : '—' }}</template>
           </el-table-column>
-          <el-table-column label="状态" width="100" align="center">
+          <el-table-column label="状态" width="130" align="center">
             <template #default="{ row }">
               <StatusTag :status="row.status" :map="statusMap" />
+              <el-tag
+                v-if="row.escalated > 0 && row.status === 'pending'"
+                size="small"
+                :type="row.escalated >= 2 ? 'danger' : 'warning'"
+                effect="dark"
+                style="margin-top: 4px"
+              >{{ row.escalated >= 2 ? '升级督办' : '已升级' }}</el-tag>
             </template>
           </el-table-column>
           <el-table-column label="操作" width="130" align="center" fixed="right">
@@ -110,6 +117,15 @@
           </el-descriptions-item>
           <el-descriptions-item label="异常描述" :span="2">{{ current.description }}</el-descriptions-item>
         </el-descriptions>
+
+        <el-alert
+          v-if="current.escalated > 0 && current.status === 'pending'"
+          :title="'该异常单待受理超时，已升级至 ' + current.escalatedTo + '（' + current.escalateTime + '）'"
+          :type="current.escalated >= 2 ? 'error' : 'warning'"
+          :closable="false"
+          show-icon
+          style="margin-top: 12px"
+        />
 
         <div class="desc-title">处理流程</div>
         <el-steps direction="vertical" :active="stepActive">

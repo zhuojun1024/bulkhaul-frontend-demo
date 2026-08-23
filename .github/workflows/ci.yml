@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    name: 冒烟测试 + 构建
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      # 服务层冒烟测试（verify-flow：mock 数据一致性 + 状态机闭环 + RBAC + 各环节校验，纯 Node 无需浏览器）
+      - name: 运行冒烟测试
+        run: npm test
+
+      - name: 构建
+        run: npm run build
+
+      # 说明：E2E（verify-ui）依赖浏览器（Chrome/Edge），本地以 `npm run test:ui` 运行；
+      # 如需在 CI 跑 E2E，可加装 headless Chromium 并配置 PUPPETEER_EXECUTABLE_PATH。

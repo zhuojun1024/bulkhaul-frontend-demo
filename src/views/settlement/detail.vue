@@ -135,7 +135,7 @@
               :title="`发票金额与账单金额不一致（${invoice.staleReason || '账单金额已变化'}），需红冲重开；红冲前不可登记收款`"
             />
             <el-button
-              v-if="settlement?.status === 'settled' && settlement?.invoiceStatus === 'not-issued' && can('invoice')"
+              v-if="settlement?.status === 'settled' && ['not-issued', 'pending'].includes(settlement?.invoiceStatus) && can('invoice')"
               type="primary"
               size="small"
               style="margin-top: 12px"
@@ -162,16 +162,54 @@
           </div>
           <div class="panel__body">
             <el-table v-if="payments.length" :data="payments" stripe size="small">
-              <el-table-column prop="payTime" label="收款时间" width="140" />
-              <el-table-column label="金额(元)" width="110" align="right">
+              <el-table-column prop="payTime" label="收款时间" width="130" />
+              <el-table-column label="金额(元)" width="100" align="right">
                 <template #default="{ row }">
-                  <span class="num">{{ formatMoney(row.amount) }}</span>
+                  <span class="num" :class="{ 'text-muted': row.reversed }">{{ formatMoney(row.amount) }}</span>
                 </template>
               </el-table-column>
-              <el-table-column prop="method" label="方式" width="90" />
-              <el-table-column prop="remark" label="备注" min-width="80" />
+              <el-table-column prop="method" label="方式" width="80" />
+              <el-table-column label="状态" width="80" align="center">
+                <template #default="{ row }">
+                  <el-tag v-if="row.reversed" size="small" type="info" effect="plain">已冲正</el-tag>
+                  <span v-else class="text-muted">正常</span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="remark" label="备注" min-width="70" />
+              <el-table-column v-if="can('settlement')" label="操作" width="70" align="center">
+                <template #default="{ row }">
+                  <el-button v-if="!row.reversed && canRevert" link type="danger" size="small" @click="openRevert(row)">
+                    冲正
+                  </el-button>
+                  <span v-else class="text-muted">—</span>
+                </template>
+              </el-table-column>
             </el-table>
             <el-empty v-else description="暂无收款记录，结算确认后可登记收款" :image-size="60" />
+          </div>
+        </div>
+
+        <!-- 催收记录（P1 逾期催收：提醒 → 正式催收 → 法务函） -->
+        <div class="panel">
+          <div class="panel__header">
+            <span class="panel__title">催收记录</span>
+            <el-button v-if="canDunning && can('settlement')" type="warning" size="small" @click="openDunning">发起催收</el-button>
+          </div>
+          <div class="panel__body">
+            <el-table v-if="dunnings.length" :data="dunnings" stripe size="small">
+              <el-table-column label="轮次" width="70" align="center">
+                <template #default="{ row }">第 {{ row.round }} 轮</template>
+              </el-table-column>
+              <el-table-column label="级别" width="90" align="center">
+                <template #default="{ row }">
+                  <el-tag size="small" :type="dunningLevelType(row.level)" effect="light">{{ row.levelName }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="content" label="内容" min-width="180" show-overflow-tooltip />
+              <el-table-column prop="time" label="时间" width="130" />
+              <el-table-column prop="by" label="发起人" width="90" align="center" />
+            </el-table>
+            <el-empty v-else :description="canDunning ? '暂无催收记录，可发起催收' : '暂无催收记录'" :image-size="60" />
           </div>
         </div>
       </el-col>
@@ -188,7 +226,7 @@
             · 质量扣重 {{ settlement.reconciliation.qualityQty }} 吨（约 {{ formatMoney(settlement.reconciliation.qualityAmount) }}，已扣减）
           </template>
           <template v-if="settlement.reconciliation.diffCount">
-            · <span class="text-warning">{{ settlement.reconciliation.diffCount }} 车次结算量与磅单不一致，需确认</span>
+            · <span class="text-warning">{{ settlement.reconciliation.diffCount }} 车次进磅与调度量存在差异，需确认</span>
           </template>
           <template v-else>· <span class="text-success">结算量与磅单一致</span></template>
         </span>
@@ -309,6 +347,58 @@
       </template>
     </el-dialog>
 
+    <!-- 收款冲正/退款：撤销误登记收款，回退已付金额（预付款抵扣流水同步释放占用） -->
+    <el-dialog v-model="revertDialog" title="收款冲正" width="460px">
+      <div v-if="revertTarget">
+        <el-alert
+          :title="`冲正流水 ${revertTarget.id}（${formatMoney(revertTarget.amount)} · ${revertTarget.method}）后，已付金额将回退，剩余未付 ${formatMoney(unpaid + revertTarget.amount)}。${revertTarget.method === '预付款抵扣' ? '对应预付款占用将同步释放。' : ''}该操作不可撤销。`"
+          type="warning"
+          :closable="false"
+          show-icon
+        />
+        <el-form label-width="90px" style="margin-top: 16px">
+          <el-form-item label="冲正原因" required>
+            <el-input
+              v-model="revertReason"
+              type="textarea"
+              :rows="2"
+              maxlength="200"
+              show-word-limit
+              placeholder="如：客户重复付款、金额登记错误、退款等"
+            />
+          </el-form-item>
+        </el-form>
+      </div>
+      <template #footer>
+        <el-button @click="revertDialog = false">取消</el-button>
+        <el-button type="danger" @click="confirmRevert">确认冲正</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 发起催收（P1 逾期催收） -->
+    <el-dialog v-model="dunningDialog" title="发起催收" width="440px">
+      <el-alert
+        type="warning"
+        :closable="false"
+        show-icon
+        :title="`账单 ${settlement?.billNo} 未付余额 ${formatMoney(unpaid)}，催收将提醒客户尽快付款并留痕。`"
+        style="margin-bottom: 16px"
+      />
+      <el-form label-width="90px">
+        <el-form-item label="催收级别">
+          <el-radio-group v-model="dunningLevel">
+            <el-radio-button value="reminder">付款提醒</el-radio-button>
+            <el-radio-button v-if="settlement?.status === 'overdue'" value="formal">正式催收</el-radio-button>
+            <el-radio-button v-if="settlement?.status === 'overdue'" value="legal">法务函</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="dunningDialog = false">取消</el-button>
+        <el-button type="warning" @click="confirmDunning">确认催收</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 补签（环节1：对账明细中未签收公路车次，与收货方核实后补开） -->
     <el-dialog v-model="supDialog" title="补签电子签收单" width="480px">
       <div v-if="supTarget">
@@ -343,7 +433,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, DocumentChecked, CircleCheck, Printer, Money, Refresh } from '@element-plus/icons-vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
-import { startReconcile as flowStartReconcile, confirmSettle, recordPayment, issueInvoice as flowIssueInvoice, recalcSettlement, supplementReceipt, prepaymentAvailable, applyPrepayment } from '@/mock/flow'
+import { startReconcile as flowStartReconcile, confirmSettle, recordPayment, revertPayment, issueInvoice as flowIssueInvoice, recalcSettlement, supplementReceipt, prepaymentAvailable, applyPrepayment, dunning as flowDunning } from '@/mock/flow'
 import { usePerm } from '@/permission'
 import { formatMoney, formatNum } from '@/utils'
 
@@ -401,6 +491,11 @@ const canRecordPayment = computed(() => {
   const s = settlement.value
   return s && (s.status === 'settled' || s.status === 'overdue') && s.totalAmount - s.paidAmount > 0
 })
+/** 冲正可用：账单处于已结算/逾期（收款阶段） */
+const canRevert = computed(() => {
+  const s = settlement.value
+  return s && (s.status === 'settled' || s.status === 'overdue')
+})
 
 /* ===== 登记收款 ===== */
 const payDialog = ref(false)
@@ -438,6 +533,60 @@ function confirmPrepay() {
   }
   prepayDialog.value = false
   ElMessage.success(`预付款抵扣 ${formatMoney(r.amount)}，剩余未付 ${formatMoney(unpaid.value)}`)
+}
+
+/* ===== 收款冲正/退款 ===== */
+const revertDialog = ref(false)
+const revertTarget = ref(null)
+const revertReason = ref('')
+
+function openRevert(row) {
+  revertTarget.value = row
+  revertReason.value = ''
+  revertDialog.value = true
+}
+
+function confirmRevert() {
+  if (!revertReason.value.trim()) {
+    ElMessage.warning('请填写冲正原因')
+    return
+  }
+  const r = revertPayment(settlement.value, revertTarget.value.id, revertReason.value)
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
+  revertDialog.value = false
+  ElMessage.success(`已冲正 ${formatMoney(r.amount)}，剩余未付 ${formatMoney(unpaid.value)}`)
+}
+
+/* ===== 催收（P1 逾期催收） ===== */
+const dunnings = computed(() => db.dunnings.filter((x) => x.settlementId === settlement.value?.id))
+/** 可催收：账单处于已结算/逾期且有未付余额 */
+const canDunning = computed(() => {
+  const s = settlement.value
+  return !!s && ['settled', 'overdue'].includes(s.status) && s.totalAmount - s.paidAmount > 0
+})
+const dunningDialog = ref(false)
+const dunningLevel = ref('reminder')
+
+function dunningLevelType(level) {
+  return { reminder: 'info', formal: 'warning', legal: 'danger' }[level] || 'info'
+}
+
+function openDunning() {
+  dunningLevel.value = settlement.value?.status === 'overdue' ? 'formal' : 'reminder'
+  dunningDialog.value = true
+}
+
+function confirmDunning() {
+  const r = flowDunning(settlement.value, dunningLevel.value)
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
+  dunningDialog.value = false
+  ElMessage.success(`已发起第 ${r.round} 轮催收，已提醒客户`)
 }
 
 const stepActive = computed(() => {
@@ -525,7 +674,7 @@ function settle() {
       : ''
   const diffWarn =
     r && r.diffCount
-      ? `<br/><span style="color:var(--color-danger)">${r.diffCount} 车次结算量与磅单不一致，请确认后再结算。</span>`
+      ? `<br/><span style="color:var(--color-danger)">${r.diffCount} 车次进磅与调度量存在差异，请确认后再结算。</span>`
       : ''
   const receiptWarn =
     r && r.missingReceiptCount
@@ -554,7 +703,7 @@ function issueInvoice() {
     ElMessage.error(r.error)
     return
   }
-  ElMessage.success(`发票已开具：${r}`)
+  ElMessage.success(`发票已开具：${r.invoiceNo}`)
 }
 
 function printBill() {

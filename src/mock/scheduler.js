@@ -1,4 +1,4 @@
-import { advanceTelemetry, checkFenceEvents, recalcOverdueAll } from './flow'
+import { advanceTelemetry, checkFenceEvents, recalcOverdueAll, escalatePendingExceptions, escalateContractApprovals } from './flow'
 
 /**
  * 后端定时任务模拟层（P2 架构下沉）：
@@ -26,12 +26,15 @@ function emit(e) {
   }
 }
 
-/** 单轮定时任务（导出供冒烟测试同步调用）：遥测推进 → 围栏事件 → 逾期校准 */
+/** 单轮定时任务（导出供冒烟测试同步调用）：遥测推进 → 围栏事件 → 逾期校准 → 异常/审批升级 */
 export function runSchedulerTick() {
   advanceTelemetry()
   const created = checkFenceEvents()
   if (created.length) emit({ type: 'fence', created })
   recalcOverdueAll()
+  const escalated = escalatePendingExceptions()
+  if (escalated.length) emit({ type: 'escalate', created: escalated })
+  escalateContractApprovals()
   emit({ type: 'tick' })
 }
 

@@ -177,6 +177,54 @@
           </div>
         </div>
       </el-tab-pane>
+
+      <el-tab-pane :label="'趟次应付（待付 ' + payableStats.pendingCount + '）'" name="payable">
+        <div class="panel">
+          <div class="panel__header">
+            <span class="panel__title">趟次应付台账（司机趟次费 + 外协车运费）</span>
+            <el-button v-if="can('settlement')" type="primary" size="small" :icon="Plus" @click="genPayables">生成应付</el-button>
+          </div>
+          <div class="panel__body">
+            <el-alert type="info" :closable="false" style="margin-bottom: 12px">
+              公路车次完成即自动生成趟次应付（司机趟次费 + 外协车运费），结算侧付款后核销，闭合成本侧。当前待付 {{ payableStats.pendingCount }} 笔 / 已付 {{ payableStats.paidCount }} 笔。
+            </el-alert>
+            <el-table :data="payables" stripe size="small">
+              <el-table-column prop="id" label="应付单号" width="100" />
+              <el-table-column prop="dispatchId" label="调度单号" width="110" />
+              <el-table-column prop="plate" label="车牌" width="120" />
+              <el-table-column label="司机" width="100">
+                <template #default="{ row }">{{ find.driver(row.driverId)?.name || '—' }}</template>
+              </el-table-column>
+              <el-table-column label="车辆归属" width="90" align="center">
+                <template #default="{ row }">
+                  <el-tag size="small" :type="row.owner === '外协' ? 'warning' : 'info'" effect="light">{{ row.owner }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="司机趟次费" width="110" align="right">
+                <template #default="{ row }"><span class="num">{{ formatMoney(row.driverFee) }}</span></template>
+              </el-table-column>
+              <el-table-column label="外协运费" width="110" align="right">
+                <template #default="{ row }"><span class="num">{{ formatMoney(row.outsourceFee) }}</span></template>
+              </el-table-column>
+              <el-table-column label="应付金额" width="120" align="right">
+                <template #default="{ row }"><span class="num amount">{{ formatMoney(row.amount) }}</span></template>
+              </el-table-column>
+              <el-table-column label="状态" width="80" align="center">
+                <template #default="{ row }">
+                  <el-tag size="small" :type="row.status === 'paid' ? 'success' : 'warning'" effect="light">{{ row.status === 'paid' ? '已付' : '待付' }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="100" align="center" fixed="right">
+                <template #default="{ row }">
+                  <el-button v-if="row.status === 'pending' && can('settlement')" link type="primary" size="small" @click="openPay(row)">付款</el-button>
+                  <span v-else-if="row.status === 'paid'" class="text-muted">{{ row.payMethod }}</span>
+                </template>
+              </el-table-column>
+            </el-table>
+            <el-empty v-if="!payables.length" description="暂无趟次应付（公路车次完成或点击“生成应付”后生成）" :image-size="60" />
+          </div>
+        </div>
+      </el-tab-pane>
     </el-tabs>
 
     <!-- 生成结算单 -->
@@ -241,6 +289,33 @@
         <el-button type="primary" :disabled="!matchSettlementId" @click="doMatch">确认核销</el-button>
       </template>
     </el-dialog>
+
+    <!-- 趟次应付付款 -->
+    <el-dialog v-model="payDialog" title="趟次应付付款" width="460px">
+      <div v-if="payTarget">
+        <el-descriptions :column="1" border size="small">
+          <el-descriptions-item label="应付单号">{{ payTarget.id }}</el-descriptions-item>
+          <el-descriptions-item label="调度单号">{{ payTarget.dispatchId }}</el-descriptions-item>
+          <el-descriptions-item label="司机">{{ find.driver(payTarget.driverId)?.name || '—' }}</el-descriptions-item>
+          <el-descriptions-item label="司机趟次费"><span class="num">{{ formatMoney(payTarget.driverFee) }}</span></el-descriptions-item>
+          <el-descriptions-item label="外协运费"><span class="num">{{ formatMoney(payTarget.outsourceFee) }}</span></el-descriptions-item>
+          <el-descriptions-item label="应付金额"><span class="num amount">{{ formatMoney(payTarget.amount) }}</span></el-descriptions-item>
+        </el-descriptions>
+        <el-form label-width="90px" style="margin-top: 16px">
+          <el-form-item label="付款方式">
+            <el-select v-model="payMethod" style="width: 100%">
+              <el-option label="银行转账" value="银行转账" />
+              <el-option label="现金" value="现金" />
+              <el-option label="微信/支付宝" value="微信/支付宝" />
+            </el-select>
+          </el-form-item>
+        </el-form>
+      </div>
+      <template #footer>
+        <el-button @click="payDialog = false">取消</el-button>
+        <el-button type="primary" @click="doPay">确认付款</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -249,11 +324,11 @@ defineOptions({ name: 'Settlement' })
 import { ref, reactive, computed, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Download, Refresh, Postcard, DocumentAdd, MagicStick } from '@element-plus/icons-vue'
+import { Search, Download, Refresh, Postcard, DocumentAdd, MagicStick, Plus } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
-import { settlementCandidates, generateSettlements, startReconcile as flowStartReconcile, confirmSettle, recalcSettlement, autoMatchBank, matchBankRecord } from '@/mock/flow'
+import { settlementCandidates, generateSettlements, startReconcile as flowStartReconcile, confirmSettle, recalcSettlement, autoMatchBank, matchBankRecord, generatePayables, payPayable, payableStats as flowPayableStats } from '@/mock/flow'
 import { usePerm } from '@/permission'
 import { formatMoney, formatNum } from '@/utils'
 import dayjs from 'dayjs'
@@ -320,6 +395,41 @@ function autoMatch() {
   ).then(() => {
     const matched = autoMatchBank()
     ElMessage.success(matched.length ? `自动核销完成：${matched.length} 笔银行流水已核销` : '暂无满足自动核销条件的流水')
+  }).catch(() => {})
+}
+
+/* ===== 趟次应付（P1 成本侧闭环） ===== */
+const payables = computed(() => db.payables)
+const payableStats = computed(() => flowPayableStats())
+
+const payDialog = ref(false)
+const payTarget = ref(null)
+const payMethod = ref('银行转账')
+
+function openPay(row) {
+  payTarget.value = row
+  payMethod.value = '银行转账'
+  payDialog.value = true
+}
+
+function doPay() {
+  const r = payPayable(payTarget.value, payMethod.value)
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
+  payDialog.value = false
+  ElMessage.success(`付款完成：${formatMoney(r.amount)} 已核销`)
+}
+
+function genPayables() {
+  ElMessageBox.confirm('为所有已完成且尚无应付的公路车次批量生成趟次应付？', '生成趟次应付', { type: 'info', confirmButtonText: '生成' }).then(() => {
+    const r = generatePayables()
+    if (r && r.error) {
+      ElMessage.error(r.error)
+      return
+    }
+    ElMessage.success(r.created ? `已生成 ${r.created} 笔趟次应付` : '暂无需生成的趟次应付')
   }).catch(() => {})
 }
 
@@ -400,7 +510,7 @@ function settle(row) {
       : ''
   const diffWarn =
     r && r.diffCount
-      ? `<br/><span style="color:var(--color-danger)">${r.diffCount} 车次结算量与磅单不一致，请确认后再结算。</span>`
+      ? `<br/><span style="color:var(--color-danger)">${r.diffCount} 车次进磅与调度量存在差异，请确认后再结算。</span>`
       : ''
   const receiptWarn =
     r && r.missingReceiptCount
@@ -520,6 +630,10 @@ function exportCsv() {
 
 .amount {
   font-weight: 600;
+}
+
+.text-muted {
+  color: var(--text-secondary);
 }
 
 .settlement-tabs :deep(.el-tab-pane) {

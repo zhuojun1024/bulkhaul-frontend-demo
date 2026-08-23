@@ -26,6 +26,12 @@ startScheduler()
 
 const app = createApp(App)
 
+// P3 工程加固：全局错误处理（组件/生命周期/事件回调未捕获异常统一兜底，避免白屏无提示）
+app.config.errorHandler = (err, instance, info) => {
+  console.error('[全局错误]', info, err)
+  window.__lastError = { message: String((err && err.message) || err), info, time: Date.now() }
+}
+
 for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
   app.component(key, component)
 }

@@ -61,13 +61,25 @@
           <el-table-column label="皮重(t)" width="95" align="right">
             <template #default="{ row }">{{ row.tare }}</template>
           </el-table-column>
-          <el-table-column label="净重(t)" width="95" align="right">
+          <el-table-column label="净重(t)" width="120" align="right">
             <template #default="{ row }">
               <span class="num net-weight">{{ row.net }}</span>
+              <span v-if="row.corrected" class="text-muted orig-net">（原 {{ row.originalNet }}）</span>
             </template>
           </el-table-column>
           <el-table-column prop="time" label="过磅时间" width="150" />
           <el-table-column prop="operator" label="操作员" width="90" align="center" />
+          <el-table-column label="状态" width="90" align="center">
+            <template #default="{ row }">
+              <el-tag v-if="row.corrected" size="small" type="warning" effect="light">已复磅</el-tag>
+              <span v-else class="text-muted">正常</span>
+            </template>
+          </el-table-column>
+          <el-table-column v-if="can('weighing')" label="操作" width="90" align="center" fixed="right">
+            <template #default="{ row }">
+              <el-button size="small" text type="primary" @click="openCorrect(row)">复磅更正</el-button>
+            </template>
+          </el-table-column>
         </el-table>
 
         <div class="pagination-wrap">
@@ -109,6 +121,37 @@
         <el-button type="primary" @click="submitManual">确认补录</el-button>
       </template>
     </el-dialog>
+
+    <!-- 磅单更正/复磅 -->
+    <el-dialog v-model="correctDialog" title="磅单更正/复磅" width="480px">
+      <el-alert
+        v-if="correct.settled"
+        type="warning"
+        :closable="false"
+        show-icon
+        title="该车次已入结算账单"
+        description="更正净重将重算账单金额；若已对账/已结算，客户确认将失效，须重新对账并由客户再确认。"
+        style="margin-bottom: 16px"
+      />
+      <el-descriptions :column="2" border size="small" style="margin-bottom: 16px">
+        <el-descriptions-item label="磅单号">{{ correct.id }}</el-descriptions-item>
+        <el-descriptions-item label="调度单号">{{ correct.dispatchId }}</el-descriptions-item>
+        <el-descriptions-item label="类型">{{ correct.type }}</el-descriptions-item>
+        <el-descriptions-item label="原净重(t)"><span class="num">{{ correct.net }}</span></el-descriptions-item>
+      </el-descriptions>
+      <el-form label-width="90px">
+        <el-form-item label="复磅净重(t)">
+          <el-input-number v-model="correct.newNet" :min="0.1" :max="100" :precision="2" :step="0.5" style="width: 100%" />
+        </el-form-item>
+        <el-form-item label="复磅原因">
+          <el-input v-model="correct.reason" type="textarea" :rows="2" placeholder="如：过磅读数错误 / 争议复磅 / 皮重变化" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="correctDialog = false">取消</el-button>
+        <el-button type="primary" @click="submitCorrect">确认更正</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -121,7 +164,7 @@ import { Search, Download, Refresh, Plus } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import { db, find } from '@/mock'
-import { manualWeighing, tareOf, isRoadMode } from '@/mock/flow'
+import { manualWeighing, correctWeighing, tareOf, isRoadMode } from '@/mock/flow'
 import { formatNum } from '@/utils'
 import dayjs from 'dayjs'
 import { usePerm } from '@/permission'
@@ -170,6 +213,36 @@ function submitManual() {
   }
   manualDialog.value = false
   ElMessage.success('磅单已补录')
+}
+
+/* ===== 磅单更正/复磅 ===== */
+const correctDialog = ref(false)
+const correct = reactive({ id: '', dispatchId: '', type: '', net: 0, newNet: 0, reason: '', settled: false })
+
+function openCorrect(row) {
+  const d = db.dispatches.find((x) => x.id === row.dispatchId)
+  correct.id = row.id
+  correct.dispatchId = row.dispatchId
+  correct.type = row.type
+  correct.net = row.net
+  correct.newNet = row.net
+  correct.reason = ''
+  correct.settled = !!(d && d.settlementId)
+  correctDialog.value = true
+}
+
+function submitCorrect() {
+  if (!correct.reason.trim()) {
+    ElMessage.warning('请填写复磅原因')
+    return
+  }
+  const { error } = correctWeighing(correct.id, correct.newNet, correct.reason)
+  if (error) {
+    ElMessage.warning(error)
+    return
+  }
+  correctDialog.value = false
+  ElMessage.success('磅单已复磅更正')
 }
 
 const filter = reactive({ keyword: '', type: '', terminalId: '', dateRange: [] })
@@ -296,5 +369,14 @@ function exportCsv() {
 .net-weight {
   font-weight: 700;
   color: var(--color-primary);
+}
+
+.text-muted {
+  color: var(--text-secondary);
+}
+
+.orig-net {
+  font-size: 12px;
+  margin-left: 4px;
 }
 </style>

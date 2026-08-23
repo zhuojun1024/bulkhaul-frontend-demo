@@ -42,6 +42,8 @@ export const db = reactive({
   settlements: [],
   payments: [],
   prepayments: [], // 环节5：预付款台账（客户预付，收取/抵扣；available = amount - used）
+  payables: [], // P1 成本侧闭环：趟次应付台账（司机趟次费 + 外协车运费；pending 待付 / paid 已付）
+  dunnings: [], // P1 逾期催收：催款台账（reminder 提醒 / formal 正式催收 / legal 法务函，按账单轮次递增）
   bankRecords: [], // 银行流水（对账核销：unmatched 待核销 / matched 已核销）
   invoices: [],
   messages: [], // 消息中心（flow 事件驱动 + 种子）
@@ -61,6 +63,12 @@ export const db = reactive({
   safetyStocks: [],
   // 环节8：数据权限（行级，按登录账号）：username → { regions: [...] }，空/缺省 = 全量数据
   dataScopes: {},
+  // P2 运价管理：线路运价表（商品×装/卸场站×方式 → 单价，合同可查表取价/调价）
+  rateCards: [],
+  // P2 保险环节：事故保险理赔台账（报险→责任认定→理赔结案，理赔冲减事故损失）
+  insurance: [],
+  // P2 异常/审批升级：超时阈值（小时）。异常单待受理超 exceptionHours 逐级升级；合同审批待批超 contractHours 催办
+  escalateConfig: { exceptionHours: 2, contractHours: 24 },
   logs: []
 })
 
@@ -74,6 +82,13 @@ export function tareOf(vehicle) {
   if (!vehicle) return 13
   const n = vehicle.id.split('').reduce((s, ch) => s + ch.charCodeAt(0), 0)
   return +(10 + (n % 61) / 10).toFixed(2)
+}
+
+/** 进磅装货差异系数（确定性，按调度单 id 派生，±0.5%）：实际过磅净重非恒等于调度量
+ *  P2 进磅实际过磅：种子磅单（weighing.js）与运行时过磅（flow.js）共用同一口径，避免循环导入 */
+export function loadVarianceOf(dispatchId) {
+  const n = String(dispatchId || '').split('').reduce((s, ch) => s + ch.charCodeAt(0), 0)
+  return ((n % 1000) / 1000 - 0.5) * 0.01
 }
 
 /* ========== 基础词库 ========== */

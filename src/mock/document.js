@@ -10,8 +10,11 @@ import { formatMoney, formatWeight } from '@/utils'
  */
 
 export const DOC_TYPES = [
+  { key: 'dispatch', label: '调度单' },
   { key: 'weighing', label: '磅单' },
+  { key: 'quality', label: '质检报告' },
   { key: 'receipt', label: '签收单' },
+  { key: 'reconciliation', label: '对账单' },
   { key: 'invoice', label: '发票' }
 ]
 
@@ -22,6 +25,8 @@ const vehicleOf = (id) => db.vehicles.find((v) => v.id === id)
 const dispatchOf = (id) => db.dispatches.find((d) => d.id === id)
 const contractOf = (id) => db.contracts.find((c) => c.id === id)
 const settlementOf = (id) => db.settlements.find((s) => s.id === id)
+const planOf = (id) => db.plans.find((p) => p.id === id)
+const driverOf = (id) => db.drivers.find((d) => d.id === id)
 
 /** 磅单单证（每条过磅记录一张） */
 function weighingDocs() {
@@ -114,9 +119,107 @@ function invoiceDocs() {
   })
 }
 
-/** 全部电子单证（磅单 + 签收单 + 发票），按日期倒序 */
+/** 调度单单证（每张调度单一份） */
+function dispatchDocs() {
+  const statusText = { pending: '待装货', loading: '装货中', intransit: '在途', unloading: '卸货中', completed: '已完成', exception: '异常', cancelled: '已取消' }
+  return db.dispatches.map((d) => {
+    const v = vehicleOf(d.vehicleId)
+    const c = contractOf(d.contractId)
+    const mode = d.mode || planOf(d.planId)?.mode || '-'
+    return {
+      id: d.id,
+      type: 'dispatch',
+      typeName: '调度单',
+      refId: d.id,
+      title: `调度单 ${d.id}`,
+      date: d.dispatchTime || d.loadTime || '-',
+      summary: `${v?.plate || '-'} ${commodityName(d.commodityId)} ${formatWeight(d.quantity)}`,
+      fields: [
+        ['调度单号', d.id],
+        ['合同号', d.contractId],
+        ['客户', c ? customerName(c.shipperId) : '-'],
+        ['商品', commodityName(d.commodityId)],
+        ['运输方式', mode],
+        ['车牌号', v?.plate || '-'],
+        ['司机', driverOf(d.driverId)?.name || '-'],
+        ['装货场站', terminalName(d.loadTerminalId)],
+        ['卸货场站', terminalName(d.unloadTerminalId)],
+        ['调度量', formatWeight(d.quantity)],
+        ['单价', d.unitPrice != null ? `${d.unitPrice} 元/吨` : '-'],
+        ['状态', statusText[d.status] || d.status]
+      ]
+    }
+  })
+}
+
+/** 质检报告单证（已完成公路车次一份，卸货质检：水分/灰分） */
+function qualityDocs() {
+  return db.dispatches
+    .filter((d) => d.quality)
+    .map((d) => {
+      const v = vehicleOf(d.vehicleId)
+      const c = contractOf(d.contractId)
+      return {
+        id: `QC-${d.id}`,
+        type: 'quality',
+        typeName: '质检报告',
+        refId: d.id,
+        title: `质检报告 QC-${d.id}`,
+        date: d.quality.time || d.unloadTime || '-',
+        summary: `${v?.plate || '-'} 水分 ${d.quality.moisture}% 灰分 ${d.quality.ash}%`,
+        fields: [
+          ['报告编号', `QC-${d.id}`],
+          ['调度单号', d.id],
+          ['合同号', d.contractId],
+          ['客户', c ? customerName(c.shipperId) : '-'],
+          ['商品', commodityName(d.commodityId)],
+          ['车牌号', v?.plate || '-'],
+          ['卸货场站', terminalName(d.unloadTerminalId)],
+          ['水分(%)', d.quality.moisture],
+          ['灰分(%)', d.quality.ash],
+          ['质检时间', d.quality.time || '-']
+        ]
+      }
+    })
+}
+
+/** 对账单单证（已对账账单一份） */
+function reconciliationDocs() {
+  const statusText = { pending: '待对账', reconciling: '对账中', settled: '已结算', overdue: '逾期' }
+  return db.settlements
+    .filter((s) => s.reconciliation)
+    .map((s) => {
+      return {
+        id: s.billNo,
+        type: 'reconciliation',
+        typeName: '对账单',
+        refId: s.id,
+        title: `对账单 ${s.billNo}`,
+        date: s.reconciliation.date || s.settleDate || '-',
+        summary: `${customerName(s.customerId)} ${formatMoney(s.totalAmount)}`,
+        fields: [
+          ['账单号', s.billNo],
+          ['客户', customerName(s.customerId)],
+          ['合同号', s.contractId],
+          ['结算周期', s.period],
+          ['车次', s.dispatchCount],
+          ['调度量', formatWeight(s.dispatchQuantity)],
+          ['结算量', formatWeight(s.totalQuantity)],
+          ['损耗', formatWeight(s.lossQty)],
+          ['质量扣重', formatWeight(s.qualityQty || 0)],
+          ['差异车次', s.reconciliation.diffCount],
+          ['账单金额', formatMoney(s.totalAmount)],
+          ['已付金额', formatMoney(s.paidAmount)],
+          ['状态', statusText[s.status] || s.status],
+          ['对账时间', s.reconciliation.date]
+        ]
+      }
+    })
+}
+
+/** 全部电子单证（调度单 + 磅单 + 质检报告 + 签收单 + 对账单 + 发票），按日期倒序 */
 export function listDocuments() {
-  const all = [...weighingDocs(), ...receiptDocs(), ...invoiceDocs()]
+  const all = [...dispatchDocs(), ...weighingDocs(), ...qualityDocs(), ...receiptDocs(), ...reconciliationDocs(), ...invoiceDocs()]
   all.sort((a, b) => (a.date < b.date ? 1 : -1))
   return all
 }

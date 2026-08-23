@@ -36,6 +36,9 @@ export function hasPersisted() {
   }
 }
 
+/** P3 并发保护：本标签页上次写入快照的时间戳（跨标签页冲突判定基准） */
+let lastSavedTs = 0
+
 /** 启动时恢复快照（需在全部种子模块加载完成后调用）；无快照/版本不符返回 false */
 export function hydrateDb() {
   if (!canUse) return false
@@ -46,19 +49,32 @@ export function hydrateDb() {
     if (!saved || saved.__v !== VERSION) return false
     const data = { ...saved }
     delete data.__v
+    delete data.__ts
     Object.assign(db, data)
+    lastSavedTs = saved.__ts || 0
     return true
   } catch (e) {
     return false
   }
 }
 
-/** 写快照（深拷贝，避免 reactive 代理引用） */
+/** 写快照（深拷贝，避免 reactive 代理引用）
+ *  P3 并发保护：快照带写入时间戳 __ts；若其他标签页在本页上次保存后写入了更新快照（__ts 更新），
+ *  跳过本次写入以避免 last-write-wins 静默覆盖（演示环境轻量保护，提示刷新同步） */
 export function saveDb() {
   if (!canUse) return
   try {
+    const raw = localStorage.getItem(KEY)
+    if (raw) {
+      const saved = JSON.parse(raw)
+      if (saved && saved.__v === VERSION && (saved.__ts || 0) > lastSavedTs) {
+        console.warn('[持久化] 检测到其他标签页的更新快照，本次写入已跳过以避免覆盖；请刷新页面同步最新数据')
+        return
+      }
+    }
     const plain = JSON.parse(JSON.stringify(db))
-    localStorage.setItem(KEY, JSON.stringify({ __v: VERSION, ...plain }))
+    lastSavedTs = Date.now()
+    localStorage.setItem(KEY, JSON.stringify({ __v: VERSION, __ts: lastSavedTs, ...plain }))
   } catch (e) {
     // 存储配额不足等异常：静默忽略，不影响业务
   }

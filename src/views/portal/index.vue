@@ -152,6 +152,12 @@
                   <template #default="{ row }"><span class="num amount">{{ formatMoney(row.amount) }}</span></template>
                 </el-table-column>
                 <el-table-column prop="method" label="方式" width="100" align="center" />
+                <el-table-column label="状态" width="80" align="center">
+                  <template #default="{ row }">
+                    <el-tag v-if="row.reversed" size="small" type="info" effect="plain">已冲正</el-tag>
+                    <span v-else class="text-muted">正常</span>
+                  </template>
+                </el-table-column>
                 <el-table-column prop="payTime" label="时间" min-width="140" />
               </el-table>
               <el-empty v-if="!payments.length" description="暂无回款" :image-size="60" />

@@ -134,7 +134,10 @@
             </el-col>
             <el-col :span="8">
               <el-form-item label="合同单价(元/吨)" prop="unitPrice" label-width="120">
-                <el-input-number v-model="form.unitPrice" :min="1" :max="1000" :step="0.5" :precision="1" style="width: 100%" />
+                <div style="display: flex; gap: 8px; width: 100%">
+                  <el-input-number v-model="form.unitPrice" :min="1" :max="1000" :step="0.5" :precision="1" style="flex: 1" />
+                  <el-button plain type="primary" @click="fillFromRate">按运价表取价</el-button>
+                </div>
               </el-form-item>
             </el-col>
             <el-col :span="8">
@@ -175,7 +178,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { db } from '@/mock'
-import { createContract } from '@/mock/flow'
+import { createContract, rateOf } from '@/mock/flow'
 import { formatMoney } from '@/utils'
 import dayjs from 'dayjs'
 
@@ -224,6 +227,21 @@ const amount = computed(() => Math.round(form.quantity * form.unitPrice))
 
 function levelType(level) {
   return { A: 'danger', B: 'warning', C: 'info' }[level] || 'info'
+}
+
+/** 按运价表取价：按 商品+装/卸场站+方式 查启用中的运价卡，命中则回填单价 */
+function fillFromRate() {
+  if (!form.commodityId || !form.loadTerminalId || !form.unloadTerminalId) {
+    ElMessage.warning('请先选择商品与装/卸货场站')
+    return
+  }
+  const rc = rateOf(form.commodityId, form.loadTerminalId, form.unloadTerminalId, form.mode)
+  if (!rc) {
+    ElMessage.warning('运价表无该线路启用中的运价，请手工填写单价')
+    return
+  }
+  form.unitPrice = rc.unitPrice
+  ElMessage.success(`已按运价卡 ${rc.id} 取价：${rc.unitPrice} 元/吨`)
 }
 
 function submit(status) {

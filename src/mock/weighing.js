@@ -1,4 +1,4 @@
-import { db, rng, randomName, tareOf } from './base'
+import { db, rng, randomName, tareOf, loadVarianceOf } from './base'
 import { round } from '@/utils'
 
 /**
@@ -16,6 +16,8 @@ db.weighings = []
 for (const d of db.dispatches) {
   const vehicle = db.vehicles.find((v) => v.id === d.vehicleId)
   const tare = tareOf(vehicle) // 皮重按车辆确定性派生，与运行时补录口径一致
+  // P2 进磅实际过磅：装货过磅净重 = 调度量 × (1 ± 0.5%)（实际过磅值，非恒等于调度量）
+  const inNet = round(d.quantity * (1 + loadVarianceOf(d.id)), 2)
 
   if (d.loadTime) {
     db.weighings.push({
@@ -24,24 +26,25 @@ for (const d of db.dispatches) {
       plate: vehicle ? vehicle.plate : '-',
       terminalId: d.loadTerminalId,
       type: '进磅',
-      gross: round(tare + d.quantity, 2),
+      gross: round(tare + inNet, 2),
       tare,
-      net: d.quantity,
+      net: inNet,
       time: d.loadTime,
       operator: randomName()
     })
   }
   if (d.unloadTime) {
-    const loss = round(d.quantity * (0.01 + rng() * 0.02), 2) // 运输损耗 1-3%
+    const loss = round(inNet * (0.01 + rng() * 0.02), 2) // 运输损耗 1-3%（按进磅净重）
+    const outNet = round(inNet - loss, 2)
     db.weighings.push({
       id: nextBz(),
       dispatchId: d.id,
       plate: vehicle ? vehicle.plate : '-',
       terminalId: d.unloadTerminalId,
       type: '出磅',
-      gross: round(tare + d.quantity - loss, 2),
+      gross: round(tare + outNet, 2),
       tare,
-      net: round(d.quantity - loss, 2),
+      net: outNet,
       time: d.unloadTime,
       operator: randomName()
     })

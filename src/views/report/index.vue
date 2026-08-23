@@ -115,7 +115,7 @@
         <div class="cost-tab">
           <div class="stat-row">
             <StatCard title="总成本" :value="formatMoney(cost.summary.cost)" icon="Money" color="var(--color-danger)" :sub="cost.summary.trips + ' 个完成车次'" />
-            <StatCard title="总收入" :value="formatMoney(cost.summary.revenue)" icon="Coin" color="var(--color-success)" sub="调度单约定运费" />
+            <StatCard title="总收入" :value="formatMoney(cost.summary.revenue)" icon="Coin" color="var(--color-success)" sub="按出磅净重结算" />
             <StatCard
               title="毛利"
               :value="formatMoney(cost.summary.profit)"

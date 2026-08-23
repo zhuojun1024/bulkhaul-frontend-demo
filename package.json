@@ -5,7 +5,9 @@
   "scripts": {
     "serve": "vue-cli-service serve",
     "build": "vue-cli-service build",
-    "lint": "vue-cli-service lint"
+    "lint": "vue-cli-service lint",
+    "test": "node --import ./scripts/register.mjs scripts/verify-flow.mjs",
+    "test:ui": "npm run build && node scripts/verify-ui.mjs"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",

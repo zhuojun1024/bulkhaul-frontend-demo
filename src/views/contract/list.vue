@@ -199,7 +199,124 @@
           </div>
         </div>
       </el-tab-pane>
+
+      <!-- 运价表（线路运价：合同查表取价 / 调价 / 启停） -->
+      <el-tab-pane label="运价表" name="rate">
+        <div class="panel">
+          <div class="panel__header">
+            <span class="panel__title">线路运价表</span>
+            <div class="rate-header-right">
+              <el-tag size="small" type="info" effect="plain">共 {{ rateRows.length }} 条 · 启用 {{ rateActiveCount }} 条</el-tag>
+              <el-button v-if="can('rate')" size="small" type="primary" :icon="Plus" @click="openRateCreate">新建运价卡</el-button>
+            </div>
+          </div>
+          <div class="panel__body">
+            <el-table :data="rateRows" stripe>
+              <el-table-column prop="id" label="运价卡号" width="100" fixed />
+              <el-table-column label="商品" width="110" align="center">
+                <template #default="{ row }">{{ find.commodity(row.commodityId)?.name || '-' }}</template>
+              </el-table-column>
+              <el-table-column label="线路" min-width="220" show-overflow-tooltip>
+                <template #default="{ row }">
+                  {{ find.terminal(row.loadTerminalId)?.name }} → {{ find.terminal(row.unloadTerminalId)?.name }}
+                </template>
+              </el-table-column>
+              <el-table-column prop="mode" label="方式" width="90" align="center" />
+              <el-table-column label="运价(元/吨)" width="110" align="right">
+                <template #default="{ row }">
+                  <span class="num">{{ row.unitPrice }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="effectiveDate" label="生效日期" width="110" />
+              <el-table-column label="状态" width="90" align="center">
+                <template #default="{ row }">
+                  <el-tag size="small" :type="row.status === 'active' ? 'success' : 'info'" effect="light">
+                    {{ row.status === 'active' ? '启用' : '停用' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column v-if="can('rate')" label="操作" width="130" align="center" fixed="right">
+                <template #default="{ row }">
+                  <el-button link type="primary" size="small" @click="openRateEdit(row)">调价</el-button>
+                  <el-button
+                    link
+                    :type="row.status === 'active' ? 'danger' : 'success'"
+                    size="small"
+                    @click="toggleRate(row)"
+                  >{{ row.status === 'active' ? '停用' : '启用' }}</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <el-empty v-if="!rateRows.length" description="暂无运价卡" :image-size="60" />
+          </div>
+        </div>
+      </el-tab-pane>
     </el-tabs>
+
+    <!-- 新建运价卡 -->
+    <el-dialog v-model="rateCreateDialog" title="新建运价卡" width="520px">
+      <el-form label-width="100px">
+        <el-form-item label="商品" required>
+          <el-select v-model="rateForm.commodityId" filterable placeholder="请选择商品" style="width: 100%">
+            <el-option v-for="c in db.commodities.filter((x) => x.status === 'active')" :key="c.id" :label="c.name" :value="c.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="装货场站" required>
+          <el-select v-model="rateForm.loadTerminalId" filterable placeholder="请选择" style="width: 100%">
+            <el-option v-for="t in db.terminals" :key="t.id" :label="t.name" :value="t.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="卸货场站" required>
+          <el-select v-model="rateForm.unloadTerminalId" filterable placeholder="请选择" style="width: 100%">
+            <el-option v-for="t in db.terminals" :key="t.id" :label="t.name" :value="t.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="运输方式">
+          <el-radio-group v-model="rateForm.mode">
+            <el-radio-button v-for="m in modes" :key="m" :value="m">{{ m }}</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="运价(元/吨)" required>
+          <el-input-number v-model="rateForm.unitPrice" :min="1" :max="1000" :step="0.5" :precision="1" style="width: 100%" />
+        </el-form-item>
+        <el-form-item label="生效日期">
+          <el-date-picker v-model="rateForm.effectiveDate" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="rateForm.remark" type="textarea" :rows="2" maxlength="100" show-word-limit />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="rateCreateDialog = false">取消</el-button>
+        <el-button type="primary" @click="submitRateCreate">确认创建</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 运价卡调价 -->
+    <el-dialog v-model="rateEditDialog" title="运价卡调价" width="440px">
+      <div v-if="rateEditTarget">
+        <el-alert
+          :title="find.terminal(rateEditTarget.loadTerminalId)?.name + ' → ' + find.terminal(rateEditTarget.unloadTerminalId)?.name + '（' + (find.commodity(rateEditTarget.commodityId)?.name || '-') + '）'"
+          type="info" :closable="false" show-icon
+        />
+        <el-form label-width="110px" style="margin-top: 16px">
+          <el-form-item label="当前运价(元/吨)">
+            <span class="num" style="font-size: 16px; font-weight: 600; color: var(--color-primary)">{{ rateEditTarget.unitPrice }}</span>
+          </el-form-item>
+          <el-form-item label="调整后运价" required>
+            <el-input-number v-model="rateEditPrice" :min="1" :max="1000" :step="0.5" :precision="1" style="width: 100%" />
+          </el-form-item>
+          <el-form-item label="调价原因">
+            <el-input v-model="rateEditReason" type="textarea" :rows="2" maxlength="100" show-word-limit placeholder="如：油价上涨 / 客户议定" />
+          </el-form-item>
+        </el-form>
+        <div class="form-tip">调价仅影响后续新签合同，已派车批次按派车时快照单价结算，不追溯。</div>
+      </div>
+      <template #footer>
+        <el-button @click="rateEditDialog = false">取消</el-button>
+        <el-button type="primary" @click="submitRateEdit">确认调价</el-button>
+      </template>
+    </el-dialog>
 
     <!-- 合同审批（通过 / 驳回） -->
     <el-dialog v-model="approveDialog" title="合同审批" width="480px">
@@ -380,7 +497,11 @@ import {
   terminateContract,
   archiveContract,
   convertRequestToContract,
-  rejectTransportRequest
+  rejectTransportRequest,
+  listRateCards,
+  createRateCard,
+  updateRateCard,
+  toggleRateCard
 } from '@/mock/flow'
 import { formatMoney, formatNum } from '@/utils'
 import dayjs from 'dayjs'
@@ -403,6 +524,71 @@ const statusMap = {
   archived: { label: '已归档', type: 'info' }
 }
 const modes = ['公路', '铁路', '水运', '多式联运', '管道']
+
+/* ===== P2 运价表（线路运价：查表取价 / 调价 / 启停） ===== */
+const rateRows = computed(() => listRateCards())
+const rateActiveCount = computed(() => rateRows.value.filter((r) => r.status === 'active').length)
+
+const rateCreateDialog = ref(false)
+const rateForm = reactive({
+  commodityId: '',
+  loadTerminalId: '',
+  unloadTerminalId: '',
+  mode: '公路',
+  unitPrice: 40,
+  effectiveDate: dayjs().format('YYYY-MM-DD'),
+  remark: ''
+})
+
+function openRateCreate() {
+  Object.assign(rateForm, { commodityId: '', loadTerminalId: '', unloadTerminalId: '', mode: '公路', unitPrice: 40, effectiveDate: dayjs().format('YYYY-MM-DD'), remark: '' })
+  rateCreateDialog.value = true
+}
+
+function submitRateCreate() {
+  const r = createRateCard({ ...rateForm })
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
+  rateCreateDialog.value = false
+  ElMessage.success(`运价卡 ${r.id} 已创建`)
+}
+
+const rateEditDialog = ref(false)
+const rateEditTarget = ref(null)
+const rateEditPrice = ref(0)
+const rateEditReason = ref('')
+
+function openRateEdit(row) {
+  rateEditTarget.value = row
+  rateEditPrice.value = row.unitPrice
+  rateEditReason.value = ''
+  rateEditDialog.value = true
+}
+
+function submitRateEdit() {
+  const r = updateRateCard(rateEditTarget.value.id, { unitPrice: rateEditPrice.value, remark: rateEditReason.value ? `调价：${rateEditReason.value}` : rateEditTarget.value.remark })
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
+  if (!r.changed) {
+    ElMessage.info('运价未变化')
+    return
+  }
+  rateEditDialog.value = false
+  ElMessage.success(`运价卡 ${rateEditTarget.value.id} 已调价：${r.changes.join('；')}`)
+}
+
+function toggleRate(row) {
+  const r = toggleRateCard(row.id)
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
+  ElMessage.success(`运价卡 ${row.id} 已${r.status === 'active' ? '启用' : '停用'}`)
+}
 
 const filter = reactive({ keyword: '', status: '', mode: '', dateRange: [] })
 const page = ref(1)
@@ -721,6 +907,18 @@ function exportCsv() {
   display: grid;
   grid-template-columns: repeat(6, 1fr);
   gap: 12px;
+}
+
+.rate-header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.form-tip {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 8px;
 }
 
 .stat-chip {

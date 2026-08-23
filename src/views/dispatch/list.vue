@@ -84,7 +84,7 @@
               <StatusTag :status="row.status" :map="statusMap" />
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="210" align="center" fixed="right">
+          <el-table-column label="操作" width="300" align="center" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" size="small" @click.stop="goDetail(row)">详情</el-button>
               <template v-if="can('dispatch')">
@@ -93,6 +93,16 @@
                   link type="warning" size="small"
                   @click.stop="confirmLoad(row)"
                 >确认装货</el-button>
+                <el-button
+                  v-if="row.status === 'pending' && isRoadMode(row.mode)"
+                  link type="primary" size="small"
+                  @click.stop="reassign(row)"
+                >改派</el-button>
+                <el-button
+                  v-if="row.status === 'pending'"
+                  link type="danger" size="small"
+                  @click.stop="cancel(row)"
+                >取消</el-button>
                 <el-button
                   v-if="row.status === 'loading'"
                   link type="primary" size="small"
@@ -162,6 +172,31 @@
         <el-button type="danger" @click="submitException">上报</el-button>
       </template>
     </el-dialog>
+
+    <!-- 改派调度单（装货前换车/换司机） -->
+    <el-dialog v-model="reassignDialog" title="改派调度单" width="460px">
+      <div v-if="reassignTarget">
+        <el-alert type="info" :closable="false" style="margin-bottom: 12px">
+          调度单 {{ reassignTarget.id }} 当前车辆 {{ find.vehicle(reassignTarget.vehicleId)?.plate || '—' }} / 司机 {{ find.driver(reassignTarget.driverId)?.name || '—' }}。改派后需司机重新接单。
+        </el-alert>
+        <el-form label-width="90px">
+          <el-form-item label="目标车辆" required>
+            <el-select v-model="reassignVehicle" filterable placeholder="选择空闲车辆" style="width: 100%">
+              <el-option v-for="v in reassignVehicles" :key="v.id" :label="v.label" :value="v.id" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="目标司机" required>
+            <el-select v-model="reassignDriver" filterable placeholder="选择空闲司机" style="width: 100%">
+              <el-option v-for="x in reassignDrivers" :key="x.id" :label="x.label" :value="x.id" />
+            </el-select>
+          </el-form-item>
+        </el-form>
+      </div>
+      <template #footer>
+        <el-button @click="reassignDialog = false">取消</el-button>
+        <el-button type="primary" @click="submitReassign">确认改派</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -181,6 +216,8 @@ import {
   confirmUnload as flowConfirmUnload,
   reportException as flowReportException,
   resumeDispatch,
+  cancelDispatch as flowCancelDispatch,
+  reassignDispatch as flowReassignDispatch,
   isRoadMode,
   visibleDispatches,
   dataScopeOf
@@ -200,7 +237,8 @@ const statusMap = {
   intransit: { label: '在途', type: 'primary' },
   unloading: { label: '卸货中', type: 'warning' },
   completed: { label: '已完成', type: 'success' },
-  exception: { label: '异常', type: 'danger' }
+  exception: { label: '异常', type: 'danger' },
+  cancelled: { label: '已取消', type: 'info' }
 }
 
 const filter = reactive({ keyword: '', status: '', commodityId: '', dateRange: [] })
@@ -323,6 +361,54 @@ function confirmUnload(row) {
     if (guardError(flowConfirmUnload(row))) return
     ElMessage.success('卸货确认成功，本次运输已完成')
   }).catch(() => {})
+}
+
+/* ===== 取消 / 改派（装货前） ===== */
+function cancel(row) {
+  ElMessageBox.prompt(`取消调度单 ${row.id}？请填写取消原因（车辆故障/客户改期等）。`, '取消调度单', {
+    type: 'warning',
+    confirmButtonText: '确认取消',
+    inputPlaceholder: '取消原因',
+    inputValidator: (v) => (v && v.trim() ? true : '请填写取消原因')
+  }).then(({ value }) => {
+    if (guardError(flowCancelDispatch(row, value))) return
+    ElMessage.success('调度单已取消')
+  }).catch(() => {})
+}
+
+const reassignDialog = ref(false)
+const reassignTarget = ref(null)
+const reassignVehicle = ref('')
+const reassignDriver = ref('')
+
+/** 可改派车辆：空闲、年检未过期、无其他未完结车次（排除本单） */
+const reassignVehicles = computed(() => {
+  const t = reassignTarget.value
+  const busy = new Set(db.dispatches.filter((x) => x.id !== t?.id && ['pending', 'loading', 'intransit', 'unloading', 'exception'].includes(x.status)).map((x) => x.vehicleId))
+  return db.vehicles.filter((v) => v.type !== '铁路敞车' && v.type !== '散货船' && v.status === 'idle' && !busy.has(v.id)).map((v) => ({ id: v.id, label: `${v.plate}（${v.type}）` }))
+})
+/** 可改派司机：空闲、无其他未完结车次（排除本单） */
+const reassignDrivers = computed(() => {
+  const t = reassignTarget.value
+  const busy = new Set(db.dispatches.filter((x) => x.id !== t?.id && ['pending', 'loading', 'intransit', 'unloading', 'exception'].includes(x.status)).map((x) => x.driverId))
+  return db.drivers.filter((x) => x.status === 'available' && !busy.has(x.id)).map((x) => ({ id: x.id, label: x.name }))
+})
+
+function openReassign(row) {
+  reassignTarget.value = row
+  reassignVehicle.value = ''
+  reassignDriver.value = ''
+  reassignDialog.value = true
+}
+
+function submitReassign() {
+  if (!reassignVehicle.value || !reassignDriver.value) {
+    ElMessage.warning('请选择目标车辆与司机')
+    return
+  }
+  if (guardError(flowReassignDispatch(reassignTarget.value, reassignVehicle.value, reassignDriver.value))) return
+  reassignDialog.value = false
+  ElMessage.success('改派成功，需司机重新接单')
 }
 
 function resume(row) {
