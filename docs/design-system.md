@@ -59,7 +59,9 @@
 | danger 基准 `#f53f3f` / 白底 | 3.71:1 | ⚠️ 仅限大字（≥18pt）或图形 |
 | info 基准 `#86909c` / 白底 | 3.24:1 | ⚠️ 仅限大字或图形 |
 | 次要文本 `#86909c` / 页面底 | 2.99:1 | ⚠️ 现有设计沿用，仅用于低重要文本 |
-| 白字 / 侧边栏 `#101a33` | 17.25:1 | ✅ AAA |
+| 侧边栏菜单文字 `#4e5969` / 白底 | 7.10:1 | ✅ AA |
+| 侧边栏激活文字 `#1e40a1` / `#f4f7fe` | 8.50:1 | ✅ AA |
+| 侧边栏激活图标 `#2b5ce6` / `#f4f7fe` | 5.19:1 | ✅（图形仅需 3:1） |
 
 ## 字体
 
@@ -126,6 +128,49 @@
      由 EP 主题变量自动取色，避免手写 hex -->
 <el-tag :type="level === 'high' ? 'danger' : 'warning'">高水位</el-tag>
 ```
+
+## 侧边栏（浅色浮层）· AppMenu 自研组件（2026-08-23）
+
+原 `el-menu` 深色侧边栏已替换为自研浅色菜单，设计目标：区别于常规深色后台，但导航结构（侧边栏 + 手风琴）不变，零学习成本。
+
+### 设计决策
+
+| 决策 | 说明 |
+|------|------|
+| 白底浮层 | 侧边栏纯白 + 右侧 1px `neutral-100` 发丝线，与页面底 `#f4f6fa` 形成层次 |
+| 扁平激活 pill | `primary-50` 底 + `primary-700` 文字 + `primary-500` 图标；无渐变、无投影、无左色条 |
+| 子菜单引导线 | 子项左侧 1px 竖线穿过父组图标中心，视觉归组 |
+| 结构不变 | 手风琴 unique-opened、路由高亮、收起态 64px、权限过滤逻辑沿用 |
+| Logo 扁平化 | 图标方块为扁平主色底（去渐变），底部发丝分隔线 |
+
+### 令牌
+
+| 令牌 | 值 | 用途 |
+|------|----|------|
+| `--sidebar-bg` | `#ffffff` | 侧边栏背景 |
+| `--sidebar-bg-hover` | `neutral-50` | 悬停底 |
+| `--sidebar-bg-active` | `primary-50` | 激活 pill 底 |
+| `--sidebar-text` | `neutral-700` | 菜单文字 |
+| `--sidebar-text-active` | `primary-700` | 激活文字（AA） |
+| `--sidebar-icon` | `neutral-500` | 默认图标 |
+| `--sidebar-icon-active` | `primary-500` | 激活图标 |
+| `--sidebar-border` | `neutral-100` | 右侧发丝线 / 引导线 / Logo 分隔线 |
+
+### 组件
+
+- `src/layout/components/Sidebar/AppMenu.vue` — 菜单本体（props：`items` / `active` / `collapsed`）
+- `src/layout/components/Sidebar/index.vue` — 容器：Logo + 权限过滤数据源（`menuAllowed`）+ 折叠态
+
+AppMenu 能力：
+
+- router 模式点击导航，当前页重复点击忽略
+- unique-opened：仅一个分组展开；激活项变化时自动展开所属分组（详情页经 `meta.activeMenu` 归位）
+- 收起态：仅图标；分组 hover 弹子菜单（`el-popover`，含组名标题），顶级项 hover 显示 tooltip
+- 键盘（展开态）：↑↓ 移动焦点、Home/End 首尾、→ 展开分组并聚焦首个子项、← 收起
+- 子菜单展开动画：CSS `grid-template-rows: 0fr→1fr`（无 JS 高度测量）；收起时内容经 `visibility` 延迟移出 a11y 树与 Tab 序
+- 支持 `prefers-reduced-motion` 动效降级
+
+注意：收起态子菜单 popper 经 `popper-class="sidebar-collapsed-popper"` teleport 到 body，样式为全局定义（`index.css`），勿用 scoped 样式。
 
 ## 变更品牌色
 

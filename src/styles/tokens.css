@@ -133,9 +133,15 @@
   --text-inverse: #ffffff;                        /* 深色底上的文字 */
 
   /* ================= 2. 语义令牌 · 布局 ================= */
-  --sidebar-bg: #101a33;
-  --sidebar-bg-active: rgba(43, 92, 230, 0.9);
-  --sidebar-text: #9aa5bd;
+  /* 侧边栏（浅色浮层）：白底 + 发丝分隔线；激活态为扁平浅蓝 pill（无渐变/无投影/无左色条） */
+  --sidebar-bg: #ffffff;
+  --sidebar-bg-hover: var(--color-neutral-50);
+  --sidebar-bg-active: var(--color-primary-50);
+  --sidebar-text: var(--color-neutral-700);
+  --sidebar-text-active: var(--color-primary-700);
+  --sidebar-icon: var(--color-neutral-500);
+  --sidebar-icon-active: var(--color-primary-500);
+  --sidebar-border: var(--color-neutral-100);
   --sidebar-width: 224px;
   --sidebar-width-collapsed: 64px;
   --navbar-height: 56px;

@@ -114,8 +114,14 @@
       "divider": "#e5e6eb"
     },
     "sidebar": {
-      "bg": "#101a33",
-      "active": "rgba(43, 92, 230, 0.9)"
+      "bg": "#ffffff",
+      "hover": "#f7f8fa",
+      "active": "#f4f7fe",
+      "text": "#4e5969",
+      "textActive": "#1e40a1",
+      "icon": "#86909c",
+      "iconActive": "#2b5ce6",
+      "border": "#f2f3f5"
     }
   },
   "typography": {
