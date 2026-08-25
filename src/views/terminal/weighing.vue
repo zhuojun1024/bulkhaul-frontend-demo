@@ -75,11 +75,11 @@
               <span v-else class="text-muted">正常</span>
             </template>
           </el-table-column>
-          <el-table-column v-if="can('weighing')" label="操作" width="90" align="center" fixed="right">
+          <ActionColumn v-if="can('weighing')" width="90" fixed="right">
             <template #default="{ row }">
               <el-button size="small" text type="primary" @click="openCorrect(row)">复磅更正</el-button>
             </template>
-          </el-table-column>
+          </ActionColumn>
         </el-table>
 
         <div class="pagination-wrap">
@@ -157,6 +157,7 @@
 
 <script setup>
 defineOptions({ name: 'Weighing' })
+import ActionColumn from '@/components/ActionColumn.vue'
 import { ref, reactive, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'

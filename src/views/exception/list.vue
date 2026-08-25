@@ -78,7 +78,7 @@
               >{{ row.escalated >= 2 ? '升级督办' : '已升级' }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="130" align="center" fixed="right">
+          <ActionColumn width="130" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" size="small" @click.stop="openDrawer(row)">处理</el-button>
               <el-button
@@ -87,7 +87,7 @@
                 @click.stop="closeException(row)"
               >关闭</el-button>
             </template>
-          </el-table-column>
+          </ActionColumn>
         </el-table>
 
         <div class="pagination-wrap">
@@ -178,6 +178,7 @@
 
 <script setup>
 defineOptions({ name: 'Exception' })
+import ActionColumn from '@/components/ActionColumn.vue'
 import { ref, reactive, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Refresh } from '@element-plus/icons-vue'

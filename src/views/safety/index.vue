@@ -44,7 +44,7 @@
                   <StatusTag :status="row.status" :map="accidentStatusMap" />
                 </template>
               </el-table-column>
-              <el-table-column v-if="can('safety')" label="操作" width="80" align="center" fixed="right">
+              <ActionColumn v-if="can('safety')" width="80" fixed="right">
                 <template #default="{ row }">
                   <el-button
                     v-if="row.status === 'handling'"
@@ -53,7 +53,7 @@
                   >结案</el-button>
                   <span v-else class="text-muted">—</span>
                 </template>
-              </el-table-column>
+              </ActionColumn>
             </el-table>
           </div>
         </div>
@@ -80,7 +80,7 @@
                   <StatusTag :status="row.status" :map="trainingStatusMap" />
                 </template>
               </el-table-column>
-              <el-table-column v-if="can('safety')" label="操作" width="100" align="center" fixed="right">
+              <ActionColumn v-if="can('safety')" width="100" fixed="right">
                 <template #default="{ row }">
                   <el-button
                     v-if="row.status === 'scheduled'"
@@ -90,7 +90,7 @@
                   >标记完成</el-button>
                   <span v-else class="text-muted">—</span>
                 </template>
-              </el-table-column>
+              </ActionColumn>
             </el-table>
           </div>
         </div>
@@ -158,13 +158,13 @@
                   <StatusTag :status="row.status" :map="claimStatusMap" />
                 </template>
               </el-table-column>
-              <el-table-column v-if="can('insurance')" label="操作" width="180" align="center" fixed="right">
+              <ActionColumn v-if="can('insurance')" width="180" fixed="right">
                 <template #default="{ row }">
                   <el-button v-if="row.status === 'reported'" link type="primary" size="small" @click="openAssess(row)">定责核定</el-button>
                   <el-button v-if="row.status === 'assessed'" link type="success" size="small" @click="openSettle(row)">理赔结案</el-button>
                   <el-button v-if="row.status === 'reported' || row.status === 'assessed'" link type="danger" size="small" @click="rejectClaim(row)">拒赔</el-button>
                 </template>
-              </el-table-column>
+              </ActionColumn>
             </el-table>
             <el-empty v-if="!claims.length" description="暂无保险理赔单（可对事故报险）" :image-size="60" />
           </div>
@@ -365,6 +365,7 @@
 
 <script setup>
 defineOptions({ name: 'Safety' })
+import ActionColumn from '@/components/ActionColumn.vue'
 import { ref, reactive, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'

@@ -84,7 +84,7 @@
               <StatusTag :status="row.status" :map="statusMap" />
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="300" align="center" fixed="right">
+          <ActionColumn width="300" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" size="small" @click.stop="goDetail(row)">详情</el-button>
               <template v-if="can('dispatch')">
@@ -130,7 +130,7 @@
                 @click.stop="openReport(row)"
               >报异常</el-button>
             </template>
-          </el-table-column>
+          </ActionColumn>
         </el-table>
 
         <div class="pagination-wrap">
@@ -202,6 +202,7 @@
 
 <script setup>
 defineOptions({ name: 'Dispatch' })
+import ActionColumn from '@/components/ActionColumn.vue'
 import { ref, reactive, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -394,7 +395,7 @@ const reassignDrivers = computed(() => {
   return db.drivers.filter((x) => x.status === 'available' && !busy.has(x.id)).map((x) => ({ id: x.id, label: x.name }))
 })
 
-function openReassign(row) {
+function reassign(row) {
   reassignTarget.value = row
   reassignVehicle.value = ''
   reassignDriver.value = ''

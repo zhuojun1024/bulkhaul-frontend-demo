@@ -52,12 +52,12 @@
           </el-table-column>
           <el-table-column prop="content" label="内容" min-width="260" show-overflow-tooltip />
           <el-table-column prop="time" label="时间" width="150" />
-          <el-table-column label="操作" width="130" align="center" fixed="right">
+          <ActionColumn width="130" fixed="right">
             <template #default="{ row }">
               <el-button v-if="!row.read" link type="primary" size="small" @click.stop="markRead(row)">标为已读</el-button>
               <el-button link type="primary" size="small" @click.stop="openMessage(row)">查看</el-button>
             </template>
-          </el-table-column>
+          </ActionColumn>
         </el-table>
         <el-empty v-if="!filtered.length" description="暂无消息" :image-size="60" />
 
@@ -102,6 +102,7 @@
 
 <script setup>
 defineOptions({ name: 'MessageCenter' })
+import ActionColumn from '@/components/ActionColumn.vue'
 import { ref, reactive, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'

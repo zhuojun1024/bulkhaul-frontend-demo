@@ -40,12 +40,12 @@
           <el-table-column prop="refId" label="关联单号" width="130" />
           <el-table-column prop="summary" label="摘要" min-width="220" show-overflow-tooltip />
           <el-table-column prop="date" label="日期" width="160" />
-          <el-table-column label="操作" width="150" align="center" fixed="right">
+          <ActionColumn width="150" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" @click="preview(row)">预览</el-button>
               <el-button link type="primary" @click="download(row)">下载</el-button>
             </template>
-          </el-table-column>
+          </ActionColumn>
         </el-table>
 
         <div class="pagination-wrap">
@@ -74,6 +74,7 @@
 
 <script setup>
 defineOptions({ name: 'DocumentArchive' })
+import ActionColumn from '@/components/ActionColumn.vue'
 import { ref, reactive, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, Refresh, Download } from '@element-plus/icons-vue'

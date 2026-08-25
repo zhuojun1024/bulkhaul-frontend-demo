@@ -108,7 +108,7 @@
               <StatusTag :status="row.status" :map="statusMap" />
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="250" align="center" fixed="right">
+          <ActionColumn width="250" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" size="small" @click.stop="goDetail(row)">详情</el-button>
               <el-button
@@ -128,7 +128,7 @@
                 @click.stop="archive(row)"
               >归档</el-button>
             </template>
-          </el-table-column>
+          </ActionColumn>
         </el-table>
 
         <div class="pagination-wrap">
@@ -180,7 +180,7 @@
                   <StatusTag :status="row.status" :map="requestStatusMap" />
                 </template>
               </el-table-column>
-              <el-table-column v-if="can('contract')" label="操作" width="170" align="center" fixed="right">
+              <ActionColumn v-if="can('contract')" width="170" fixed="right">
                 <template #default="{ row }">
                   <template v-if="row.status === 'pending'">
                     <el-button link type="primary" size="small" @click="openConvert(row)">生成合同草稿</el-button>
@@ -193,7 +193,7 @@
                   >查看合同</el-button>
                   <span v-else class="text-muted" :title="row.rejectReason">已驳回</span>
                 </template>
-              </el-table-column>
+              </ActionColumn>
             </el-table>
             <el-empty v-if="!requestRows.length" description="暂无运输需求" :image-size="60" />
           </div>
@@ -235,7 +235,7 @@
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column v-if="can('rate')" label="操作" width="130" align="center" fixed="right">
+              <ActionColumn v-if="can('rate')" width="130" fixed="right">
                 <template #default="{ row }">
                   <el-button link type="primary" size="small" @click="openRateEdit(row)">调价</el-button>
                   <el-button
@@ -245,7 +245,7 @@
                     @click="toggleRate(row)"
                   >{{ row.status === 'active' ? '停用' : '启用' }}</el-button>
                 </template>
-              </el-table-column>
+              </ActionColumn>
             </el-table>
             <el-empty v-if="!rateRows.length" description="暂无运价卡" :image-size="60" />
           </div>
@@ -481,6 +481,7 @@
 
 <script setup>
 defineOptions({ name: 'Contract' })
+import ActionColumn from '@/components/ActionColumn.vue'
 import { ref, reactive, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'

@@ -79,7 +79,7 @@
               <StatusTag :status="row.status" :map="statusMap" />
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="140" align="center" fixed="right">
+          <ActionColumn width="140" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" size="small" @click.stop="goDetail(row)">详情</el-button>
               <el-button
@@ -93,7 +93,7 @@
                 @click.stop="cancel(row)"
               >取消</el-button>
             </template>
-          </el-table-column>
+          </ActionColumn>
         </el-table>
 
         <div class="pagination-wrap">
@@ -151,6 +151,7 @@
 
 <script setup>
 defineOptions({ name: 'Plan' })
+import ActionColumn from '@/components/ActionColumn.vue'
 import { ref, reactive, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'

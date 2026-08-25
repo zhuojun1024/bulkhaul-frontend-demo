@@ -82,7 +82,7 @@
               <StatusTag :status="row.status" :map="statusMap" />
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="150" align="center" fixed="right">
+          <ActionColumn width="150" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" size="small" @click.stop="goDetail(row)">详情</el-button>
               <el-button
@@ -101,7 +101,7 @@
                 @click.stop="settle(row)"
               >结算</el-button>
             </template>
-          </el-table-column>
+          </ActionColumn>
         </el-table>
 
         <div class="pagination-wrap">
@@ -158,11 +158,11 @@
                 </template>
               </el-table-column>
               <el-table-column prop="summary" label="摘要" min-width="160" show-overflow-tooltip />
-              <el-table-column label="操作" width="90" align="center" fixed="right">
+              <ActionColumn width="90" fixed="right">
                 <template #default="{ row }">
                   <el-button v-if="can('settlement')" link type="primary" size="small" @click="openMatch(row)">核销</el-button>
                 </template>
-              </el-table-column>
+              </ActionColumn>
             </el-table>
             <el-empty v-if="!unmatched.length" description="暂无待核销银行流水" :image-size="60" />
           </div>
@@ -225,12 +225,12 @@
                   <el-tag size="small" :type="row.status === 'paid' ? 'success' : 'warning'" effect="light">{{ row.status === 'paid' ? '已付' : '待付' }}</el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="操作" width="100" align="center" fixed="right">
+              <ActionColumn width="100" fixed="right">
                 <template #default="{ row }">
                   <el-button v-if="row.status === 'pending' && can('settlement')" link type="primary" size="small" @click="openPay(row)">付款</el-button>
                   <span v-else-if="row.status === 'paid'" class="text-muted">{{ row.payMethod }}</span>
                 </template>
-              </el-table-column>
+              </ActionColumn>
             </el-table>
             <el-empty v-if="!payables.length" description="暂无趟次应付（公路车次完成或点击“生成应付”后生成）" :image-size="60" />
           </div>
@@ -365,6 +365,7 @@
 
 <script setup>
 defineOptions({ name: 'Settlement' })
+import ActionColumn from '@/components/ActionColumn.vue'
 import { ref, reactive, computed, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'

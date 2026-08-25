@@ -62,7 +62,7 @@
               />
             </template>
           </el-table-column>
-          <el-table-column v-if="can('user')" label="操作" width="250" align="center" fixed="right">
+          <ActionColumn v-if="can('user')" width="250" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" size="small" @click="openDialog(row)">编辑</el-button>
               <el-button
@@ -81,7 +81,7 @@
                 @click="removeUser(row)"
               >删除</el-button>
             </template>
-          </el-table-column>
+          </ActionColumn>
         </el-table>
 
         <div class="pagination-wrap">
@@ -166,6 +166,7 @@
 
 <script setup>
 defineOptions({ name: 'SysUser' })
+import ActionColumn from '@/components/ActionColumn.vue'
 import { ref, reactive, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Plus, Refresh } from '@element-plus/icons-vue'

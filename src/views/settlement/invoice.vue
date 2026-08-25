@@ -65,7 +65,7 @@
               </el-tooltip>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="140" align="center" fixed="right">
+          <ActionColumn width="140" fixed="right">
             <template #default="{ row }">
               <el-button
                 v-if="row.status === 'pending' && can('invoice')"
@@ -79,7 +79,7 @@
               >红冲</el-button>
               <el-button link type="info" size="small" @click="preview(row)">查看</el-button>
             </template>
-          </el-table-column>
+          </ActionColumn>
         </el-table>
 
         <div class="pagination-wrap">
@@ -128,6 +128,7 @@
 
 <script setup>
 defineOptions({ name: 'Invoice' })
+import ActionColumn from '@/components/ActionColumn.vue'
 import { ref, reactive, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'

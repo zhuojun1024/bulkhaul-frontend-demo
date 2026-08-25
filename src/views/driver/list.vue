@@ -87,7 +87,7 @@
               <StatusTag :status="row.status" :map="statusMap" />
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="150" align="center" fixed="right">
+          <ActionColumn width="150" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" size="small" @click.stop="goDetail(row)">详情</el-button>
               <el-button v-if="can('driver')" link size="small" @click.stop="openDriverDialog(row)">编辑</el-button>
@@ -102,7 +102,7 @@
                 @click.stop="enable(row)"
               >启用</el-button>
             </template>
-          </el-table-column>
+          </ActionColumn>
         </el-table>
 
         <div class="pagination-wrap">
@@ -166,6 +166,7 @@
 
 <script setup>
 defineOptions({ name: 'Driver' })
+import ActionColumn from '@/components/ActionColumn.vue'
 import { ref, reactive, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'

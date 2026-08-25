@@ -149,6 +149,25 @@
 - 已更新本文件 + README（场站/仓库/银行流水录入）
 - 已 commit + push（9f040b9，8 文件 +576/-26）
 
+---
+
+## 第三轮优化（全局 UI：操作列自适应宽度）
+
+### F9 [P1] 操作列按可见按钮数自适应宽度 — done-verified（verify-actioncol E2E，5 断言）
+- 问题：带操作列的表格按钮受 RBAC + 行状态双重控制，数量动态；列宽写死导致
+  权限少的账号（如调度管理只见"详情"）看到过宽空白列（300px）。
+- 方案：新增全局组件 `src/components/ActionColumn.vue`——包装 el-table-column，
+  列宽绑定响应式值；每行单元格用 MutationObserver 监听按钮 v-if 增删，
+  列宽 = clamp(当前页最宽行按钮总宽 + 16, minWidth 80, maxWidth 420)。
+  20 个视图文件 28 处操作列批量替换（含 v-if 列常显的保留原 v-if）。
+- 顺带修复：dispatch/list.vue "改派"按钮绑定 `reassign(row)` 但函数名为
+  `openReassign`（未定义，点击抛错、对话框打不开）→ 函数改名 reassign；
+  portal/index.vue 6 处全角空格（历史 lint 错误）→ 普通空格。
+- 测试：scripts/verify-actioncol.mjs（puppeteer E2E：只读用户筛"待装货"操作列 80px
+  vs 管理员同筛选 250px，随按钮数收敛；npm test 554 全绿、build 干净、
+  verify-ui 19 组场景回归）
+- 验收：列宽随权限/行状态动态收敛，无固定宽空白列
+
 ## 压缩后重入协议
 
 1. 重读本文件，找到第一个非 done-verified 的项；

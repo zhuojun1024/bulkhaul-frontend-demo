@@ -15,7 +15,7 @@
             <div class="panel">
               <div class="panel__body">
                 <el-table :data="monthly" stripe size="small">
-                  <el-table-column prop="month" label="月份" width="100" />
+                  <el-table-column prop="month" label="月份" min-width="100" />
                   <el-table-column prop="trips" label="完成车次" width="90" align="right" />
                   <el-table-column label="运量(吨)" width="110" align="right">
                     <template #default="{ row }"><span class="num">{{ formatNum(row.volume) }}</span></template>
@@ -140,7 +140,7 @@
                 <div class="panel__header"><span class="panel__title">月度成本利润</span></div>
                 <div class="panel__body">
                   <el-table :data="cost.byMonth" stripe size="small">
-                    <el-table-column prop="month" label="月份" width="100" />
+                    <el-table-column prop="month" label="月份" min-width="100" />
                     <el-table-column prop="trips" label="完成车次" width="90" align="right" />
                     <el-table-column label="成本" width="110" align="right">
                       <template #default="{ row }"><span class="num">{{ formatMoney(row.cost) }}</span></template>
@@ -173,7 +173,7 @@
                 </div>
                 <div class="panel__body">
                   <el-table :data="cost.byVehicle" stripe size="small" max-height="360">
-                    <el-table-column prop="plate" label="车牌" width="110" />
+                    <el-table-column prop="plate" label="车牌" min-width="110" />
                     <el-table-column prop="type" label="车型" width="110" />
                     <el-table-column prop="trips" label="车次" width="70" align="right" />
                     <el-table-column label="成本" width="100" align="right">

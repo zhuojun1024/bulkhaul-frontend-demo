@@ -176,14 +176,14 @@
                 </template>
               </el-table-column>
               <el-table-column prop="remark" label="备注" min-width="70" />
-              <el-table-column v-if="can('settlement')" label="操作" width="70" align="center">
+              <ActionColumn v-if="can('settlement')" width="70">
                 <template #default="{ row }">
                   <el-button v-if="!row.reversed && canRevert" link type="danger" size="small" @click="openRevert(row)">
                     冲正
                   </el-button>
                   <span v-else class="text-muted">—</span>
                 </template>
-              </el-table-column>
+              </ActionColumn>
             </el-table>
             <el-empty v-else description="暂无收款记录，结算确认后可登记收款" :image-size="60" />
           </div>
@@ -284,7 +284,7 @@
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column v-if="can('dispatch')" label="操作" width="90" align="center">
+          <ActionColumn v-if="can('dispatch')" width="90">
             <template #default="{ row }">
               <el-button
                 v-if="row.hasReceipt === false"
@@ -297,7 +297,7 @@
               </el-button>
               <span v-else class="text-muted">—</span>
             </template>
-          </el-table-column>
+          </ActionColumn>
         </el-table>
         <el-empty
           v-else
@@ -427,6 +427,7 @@
 
 <script setup>
 defineOptions({ name: 'SettlementDetail' })
+import ActionColumn from '@/components/ActionColumn.vue'
 import { ref, reactive, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'

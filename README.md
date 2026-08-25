@@ -203,6 +203,7 @@ src/
 |---|---|---|
 | 服务层冒烟 | `npm test`（`scripts/verify-flow.mjs`） | 纯 Node：mock 数据一致性、状态机闭环、RBAC 默认拒绝、35 个业务环节逐条校验 |
 | UI E2E | `npm run test:ui`（`scripts/verify-ui.mjs`） | puppeteer-core + 本机 Chrome/Edge：19 组场景（登录/主链路操作/权限拦截/门户/司机端/锁定/回归） |
+| 操作列宽度 | `node scripts/verify-actioncol.mjs` | puppeteer-core：ActionColumn 自适应宽度实测（只读用户 1 按钮 80px vs 管理员 5 按钮 250px，随权限收敛） |
 | CI | `.github/workflows/ci.yml` | push/PR 触发：安装 → 冒烟测试 → 构建 |
 
 历史审计与整改记录见 [docs/flow-audit.md](docs/flow-audit.md)（P0–P3 全部环节已整改闭环）；2026-08 二次审计修复（卸货中异常恢复/手工入库/对账明细/司机端异常上报/司机新增导入/重置密码/报表运量口径/拆车余数）与第二轮整改（场站新增编辑/仓库新增编辑/银行流水录入）见 [docs/fix-plan.md](docs/fix-plan.md)。

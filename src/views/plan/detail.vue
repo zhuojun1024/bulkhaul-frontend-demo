@@ -66,11 +66,11 @@
               <StatusTag :status="row.status" :map="dispatchStatusMap" />
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="80" align="center">
+          <ActionColumn width="80">
             <template #default="{ row }">
               <el-button link type="primary" size="small" @click="$router.push(`/dispatch/${row.id}`)">详情</el-button>
             </template>
-          </el-table-column>
+          </ActionColumn>
         </el-table>
         <el-empty v-if="!dispatches.length" description="尚未生成调度单" :image-size="80" />
       </div>
@@ -118,6 +118,7 @@
 
 <script setup>
 defineOptions({ name: 'PlanDetail' })
+import ActionColumn from '@/components/ActionColumn.vue'
 import { ref, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'

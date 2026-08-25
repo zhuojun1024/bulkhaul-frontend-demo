@@ -54,7 +54,7 @@
               <StatusTag :status="row.status" :map="statusMap" />
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="150" align="center" fixed="right">
+          <ActionColumn width="150" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" size="small" @click.stop="openDetail(row)">指标</el-button>
               <el-button v-if="can('commodity')" link type="primary" size="small" @click.stop="openDialog(row)">编辑</el-button>
@@ -66,7 +66,7 @@
                 @click.stop="toggleStatus(row)"
               >{{ row.status === 'active' ? '停用' : '启用' }}</el-button>
             </template>
-          </el-table-column>
+          </ActionColumn>
         </el-table>
       </div>
     </div>
@@ -135,6 +135,7 @@
 
 <script setup>
 defineOptions({ name: 'Commodity' })
+import ActionColumn from '@/components/ActionColumn.vue'
 import { ref, reactive, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, Plus, Refresh, Upload } from '@element-plus/icons-vue'

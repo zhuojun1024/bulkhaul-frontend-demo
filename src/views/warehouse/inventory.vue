@@ -97,7 +97,7 @@
               <StatusTag :status="row.status" :map="statusMap" />
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="130" align="center" fixed="right">
+          <ActionColumn width="130" fixed="right">
             <template #default="{ row }">
               <el-button
                 v-if="row.status === 'normal' && can('warehouse')"
@@ -115,7 +115,7 @@
                 @click="expireRow(row)"
               >标记临期</el-button>
             </template>
-          </el-table-column>
+          </ActionColumn>
         </el-table>
 
         <div class="pagination-wrap">
@@ -189,6 +189,7 @@
 
 <script setup>
 defineOptions({ name: 'Inventory' })
+import ActionColumn from '@/components/ActionColumn.vue'
 import { ref, reactive, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'

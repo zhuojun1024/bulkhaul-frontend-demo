@@ -135,11 +135,11 @@
                   <StatusTag :status="row.status" :map="contractStatusMap" />
                 </template>
               </el-table-column>
-              <el-table-column label="操作" width="70" align="center">
+              <ActionColumn width="70">
                 <template #default="{ row }">
                   <el-button link type="primary" size="small" @click="$router.push(`/contract/${row.id}`)">详情</el-button>
                 </template>
-              </el-table-column>
+              </ActionColumn>
             </el-table>
             <el-empty v-if="!contracts.length" description="暂无合同" :image-size="60" />
           </div>
@@ -162,11 +162,11 @@
                   <StatusTag :status="row.status" :map="settleStatusMap" />
                 </template>
               </el-table-column>
-              <el-table-column label="操作" width="70" align="center">
+              <ActionColumn width="70">
                 <template #default="{ row }">
                   <el-button link type="primary" size="small" @click="$router.push(`/settlement/${row.id}`)">详情</el-button>
                 </template>
-              </el-table-column>
+              </ActionColumn>
             </el-table>
             <el-empty v-if="!settlements.length" description="暂无结算记录" :image-size="60" />
           </div>
@@ -202,6 +202,7 @@
 
 <script setup>
 defineOptions({ name: 'CustomerDetail' })
+import ActionColumn from '@/components/ActionColumn.vue'
 import { ref, reactive, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'

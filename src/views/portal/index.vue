@@ -115,8 +115,8 @@
                   <template #default="{ row }">
                     <div v-if="row.reconciliation" class="recon-detail">
                       <div class="recon-detail__summary">
-                        对账时间：{{ row.reconciliation.date }}　·　差异车次 {{ row.reconciliation.diffCount }}　·　
-                        损耗 {{ row.reconciliation.lossQty }} 吨（{{ formatMoney(row.reconciliation.lossAmount) }}）　·　
+                        对账时间：{{ row.reconciliation.date }} · 差异车次 {{ row.reconciliation.diffCount }} · 
+                        损耗 {{ row.reconciliation.lossQty }} 吨（{{ formatMoney(row.reconciliation.lossAmount) }}） · 
                         质量扣重 {{ row.reconciliation.qualityQty }} 吨（{{ formatMoney(row.reconciliation.qualityAmount) }}）
                       </div>
                       <el-table :data="row.reconciliation.items" size="small" stripe>
