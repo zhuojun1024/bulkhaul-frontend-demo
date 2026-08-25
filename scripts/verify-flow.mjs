@@ -104,6 +104,9 @@ import {
   saveDriver,
   importDrivers,
   resetPassword,
+  saveTerminal,
+  saveWarehouse,
+  addBankStatement,
   saveUser,
   removeUser,
   toggleUserStatus,
@@ -3072,6 +3075,68 @@ setOperator({ name: '张建国', username: 'admin', role: '平台管理员' })
   } else {
     console.log('  - 跳过拆车余数（无执行中的非公路合同）')
   }
+}
+{
+  // 环节33：F6a 场站新增/编辑——新建 / 必填与查重拦截 / 编辑 / RBAC
+  const tCountBefore = db.terminals.length
+  const q33r = saveTerminal({ name: '测试新场站', type: 'loading', region: '华北', capacity: 20000, address: '测试地址', contact: '测试站长', phone: '13800000001' })
+  check('环节33：新建场站成功（默认 operating/吞吐0）', q33r.ok === true && /^T\d{3}$/.test(q33r.id) && db.terminals.length === tCountBefore + 1)
+  const q33t = db.terminals.find((x) => x.id === q33r.id)
+  check('环节33：新建场站结构完整', q33t && q33t.status === 'operating' && q33t.todayThroughput === 0 && q33t.queueVehicles === 0 && q33t.warehouseId === null)
+  check('环节33：场站名称缺失被拦截', !!saveTerminal({ name: '', capacity: 1000 }).error)
+  check('环节33：场站重名被拦截', !!saveTerminal({ name: '测试新场站', capacity: 1000 }).error)
+  check('环节33：日能力非正被拦截', !!saveTerminal({ name: '能力非法场站', capacity: 0 }).error)
+  const q33e = saveTerminal({ id: q33r.id, name: '测试新场站改', type: 'both', capacity: 30000, warehouseId: db.warehouses[0].id })
+  check('环节33：编辑场站成功（改类型/能力/绑定仓库）', q33e.ok === true && q33t.name === '测试新场站改' && q33t.capacity === 30000 && q33t.warehouseId === db.warehouses[0].id)
+  // RBAC：调度员无 terminal 权限
+  setOperator({ name: '测试调度员', username: 'q33dispatcher', role: '调度员' })
+  check('环节33：调度员新建场站被服务层拦截', !!saveTerminal({ name: '越权场站', capacity: 1000 }).error)
+  setOperator({ name: '张建国', username: 'admin', role: '平台管理员' })
+  // 清理
+  const ti = db.terminals.findIndex((x) => x.id === q33r.id)
+  if (ti > -1) db.terminals.splice(ti, 1)
+}
+{
+  // 环节34：F6b 仓库新增/编辑——新建 / 必填与查重拦截 / 容量下限守卫 / 编辑 / RBAC
+  const wCountBefore = db.warehouses.length
+  const q34r = saveWarehouse({ name: '测试新仓库', type: '煤仓', capacity: 60000, address: '测试地址', manager: '测试经理' })
+  check('环节34：新建仓库成功（默认 operating/used=0）', q34r.ok === true && /^WH\d{3}$/.test(q34r.id) && db.warehouses.length === wCountBefore + 1)
+  const q34w = db.warehouses.find((x) => x.id === q34r.id)
+  check('环节34：新建仓库结构完整', q34w && q34w.status === 'operating' && q34w.used === 0)
+  check('环节34：仓库名称缺失被拦截', !!saveWarehouse({ name: '', capacity: 1000 }).error)
+  check('环节34：仓库重名被拦截', !!saveWarehouse({ name: '测试新仓库', capacity: 1000 }).error)
+  check('环节34：容量非正被拦截', !!saveWarehouse({ name: '容量非法仓库', capacity: 0 }).error)
+  // 容量下限守卫：编辑时容量不得低于已用库存
+  q34w.used = 5000
+  const q34low = saveWarehouse({ id: q34r.id, name: '测试新仓库', capacity: 3000 })
+  check('环节34：编辑容量低于已用库存被拦截', !!q34low.error && q34low.error.includes('已用库存'))
+  const q34e = saveWarehouse({ id: q34r.id, name: '测试新仓库改', capacity: 80000 })
+  check('环节34：编辑仓库成功', q34e.ok === true && q34w.name === '测试新仓库改' && q34w.capacity === 80000)
+  // RBAC：调度员无 warehouse-maint 权限
+  setOperator({ name: '测试调度员', username: 'q34dispatcher', role: '调度员' })
+  check('环节34：调度员新建仓库被服务层拦截', !!saveWarehouse({ name: '越权仓库', capacity: 1000 }).error)
+  setOperator({ name: '张建国', username: 'admin', role: '平台管理员' })
+  // 清理
+  const wi = db.warehouses.findIndex((x) => x.id === q34r.id)
+  if (wi > -1) db.warehouses.splice(wi, 1)
+}
+{
+  // 环节35：F7 银行流水录入——守卫拦截 / 录入成功（unmatched 进入待核销）/ RBAC
+  const bCountBefore = db.bankRecords.length
+  check('环节35：对手方缺失被拦截', !!addBankStatement({ counterparty: '', amount: 1000, time: '2026-08-25 10:00' }).error)
+  check('环节35：金额非正被拦截', !!addBankStatement({ counterparty: '某客户', amount: 0, time: '2026-08-25 10:00' }).error)
+  check('环节35：到账时间缺失被拦截', !!addBankStatement({ counterparty: '某客户', amount: 1000, time: '' }).error)
+  const q35r = addBankStatement({ counterparty: db.customers[0].name, amount: 123456, time: '2026-08-25 10:00', summary: 'F7 测试：运费付款' })
+  check('环节35：流水录入成功（YH 序号/待核销/进入待核销列表）', q35r.ok === true && /^YH-\d{4}$/.test(q35r.id) && db.bankRecords.length === bCountBefore + 1)
+  const q35b = db.bankRecords.find((x) => x.id === q35r.id)
+  check('环节35：录入流水结构完整（unmatched/无核销关联）', q35b && q35b.status === 'unmatched' && q35b.settlementId === null && db.bankRecords.filter((x) => x.status === 'unmatched').some((x) => x.id === q35r.id))
+  // RBAC：调度员无 settlement 权限
+  setOperator({ name: '测试调度员', username: 'q35dispatcher', role: '调度员' })
+  check('环节35：调度员录入流水被服务层拦截', !!addBankStatement({ counterparty: '某客户', amount: 1000, time: '2026-08-25 10:00' }).error)
+  setOperator({ name: '张建国', username: 'admin', role: '平台管理员' })
+  // 清理
+  const bi = db.bankRecords.findIndex((x) => x.id === q35r.id)
+  if (bi > -1) db.bankRecords.splice(bi, 1)
 }
 
 console.log(`\n结果：${pass} 通过，${fail} 失败`)

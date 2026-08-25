@@ -49,7 +49,7 @@ export const ROLE_ACTIONS = {
   只读用户: [],
   调度员: ['contract', 'plan', 'dispatch', 'exception', 'vehicle', 'driver'],
   结算专员: ['settlement', 'invoice', 'customer', 'rate'],
-  场站操作员: ['dispatch', 'weighing', 'warehouse'],
+  场站操作员: ['dispatch', 'weighing', 'warehouse', 'terminal', 'warehouse-maint'],
   安全管理员: ['dispatch', 'exception', 'safety', 'insurance'],
   客户: ['customer-confirm', 'customer-request'],
   司机: []
@@ -95,6 +95,8 @@ export const ACTION_OPTIONS = [
   { code: 'settlement', label: '结算（生成/对账/结算/收款/重算）' },
   { code: 'invoice', label: '开票/红冲' },
   { code: 'weighing', label: '磅单补录/复磅更正' },
+  { code: 'terminal', label: '场站管理（新增/编辑）' },
+  { code: 'warehouse-maint', label: '仓库管理（新增/编辑）' },
   { code: 'warehouse', label: '库存锁定/解锁/临期' },
   { code: 'vehicle', label: '车辆报修/恢复' },
   { code: 'driver', label: '司机停用/启用' },

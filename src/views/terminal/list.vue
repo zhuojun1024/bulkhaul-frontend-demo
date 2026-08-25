@@ -1,6 +1,7 @@
 <template>
   <div class="page">
     <PageHeader title="场站管理" desc="装/卸货场站运行状态、吞吐量与排队情况">
+      <el-button v-if="can('terminal')" type="primary" :icon="Plus" @click="openDialog()">新增场站</el-button>
       <el-button type="primary" :icon="ScaleToOriginal" @click="$router.push('/terminal/weighing')">
         磅单记录
       </el-button>
@@ -50,27 +51,80 @@
             <el-icon :size="13"><Phone /></el-icon>
             {{ t.contact }} {{ t.phone }}
           </span>
-          <el-button size="small" text type="primary" @click="$router.push('/terminal/weighing')">
-            磅单
-          </el-button>
+          <span>
+            <el-button v-if="can('terminal')" size="small" text @click="openDialog(t)">编辑</el-button>
+            <el-button size="small" text type="primary" @click="$router.push('/terminal/weighing')">
+              磅单
+            </el-button>
+          </span>
         </div>
       </div>
     </div>
+
+    <!-- F6a：新增/编辑场站（RBAC terminal，服务层守卫 + 审计） -->
+    <el-dialog v-model="dialogVisible" :title="form.id ? '编辑场站' : '新增场站'" width="520px">
+      <el-form :model="form" label-width="100px">
+        <el-form-item label="场站名称" required>
+          <el-input v-model="form.name" placeholder="如：XX 港煤炭码头" />
+        </el-form-item>
+        <el-form-item label="类型" required>
+          <el-select v-model="form.type" style="width: 100%">
+            <el-option label="装卸一体" value="both" />
+            <el-option label="装货场" value="loading" />
+            <el-option label="卸货场" value="unloading" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="区域">
+          <el-select v-model="form.region" style="width: 100%">
+            <el-option v-for="r in regionOptions" :key="r" :label="r" :value="r" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="日能力(吨)" required>
+          <el-input-number v-model="form.capacity" :min="1" :step="1000" controls-position="right" style="width: 100%" />
+        </el-form-item>
+        <el-form-item label="配套仓库">
+          <el-select v-model="form.warehouseId" clearable placeholder="无（装卸货不联动仓储）" style="width: 100%">
+            <el-option v-for="w in db.warehouses" :key="w.id" :label="`${w.name}（${w.type}）`" :value="w.id" />
+          </el-select>
+          <div class="form-tip">绑定后该场站装卸货将联动仓储出入库（装货 FIFO 出库、卸货按出磅净重入库）</div>
+        </el-form-item>
+        <el-form-item label="地址">
+          <el-input v-model="form.address" placeholder="详细地址" />
+        </el-form-item>
+        <el-form-item label="联系人">
+          <el-input v-model="form.contact" placeholder="如：王站长" />
+        </el-form-item>
+        <el-form-item label="联系电话">
+          <el-input v-model="form.phone" placeholder="联系电话" />
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="form.remark" type="textarea" :rows="2" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="dialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="save">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 defineOptions({ name: 'Terminal' })
-import { computed } from 'vue'
-import { ScaleToOriginal, Location, Phone } from '@element-plus/icons-vue'
+import { ref, reactive, computed } from 'vue'
+import { ElMessage } from 'element-plus'
+import { ScaleToOriginal, Location, Phone, Plus } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db } from '@/mock'
+import { saveTerminal } from '@/mock/flow'
 import { formatNum } from '@/utils'
 import { useTokens } from '@/utils/tokens'
+import { usePerm } from '@/permission'
 
 const tokens = useTokens()
+const { can } = usePerm()
 
 
 const typeMap = { loading: '装货场', unloading: '卸货场', both: '装卸一体' }
@@ -93,6 +147,67 @@ function progressColor(t) {
   if (ratio > 0.85) return tokens.danger
   if (ratio > 0.6) return tokens.warning
   return tokens.success
+}
+
+/* ===== F6a：新增/编辑场站（RBAC terminal，服务层守卫 + 审计） ===== */
+const dialogVisible = ref(false)
+const form = reactive({
+  id: '',
+  name: '',
+  type: 'both',
+  region: '',
+  capacity: 10000,
+  warehouseId: null,
+  address: '',
+  contact: '',
+  phone: '',
+  remark: ''
+})
+const regionOptions = computed(() => [...new Set(db.terminals.map((t) => t.region))])
+
+function openDialog(t) {
+  if (t) {
+    Object.assign(form, {
+      id: t.id,
+      name: t.name,
+      type: t.type,
+      region: t.region,
+      capacity: t.capacity,
+      warehouseId: t.warehouseId || null,
+      address: t.address,
+      contact: t.contact,
+      phone: t.phone,
+      remark: t.remark
+    })
+  } else {
+    Object.assign(form, {
+      id: '',
+      name: '',
+      type: 'both',
+      region: regionOptions.value[0] || '',
+      capacity: 10000,
+      warehouseId: null,
+      address: '',
+      contact: '',
+      phone: '',
+      remark: ''
+    })
+  }
+  dialogVisible.value = true
+}
+
+function save() {
+  if (!form.name.trim()) {
+    ElMessage.warning('请输入场站名称')
+    return
+  }
+  const r = saveTerminal({ ...form })
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
+  dialogVisible.value = false
+  ElMessage.success(form.id ? '场站已更新' : '场站已新增')
 }
 </script>
 
@@ -202,5 +317,12 @@ function progressColor(t) {
   gap: 4px;
   font-size: 12px;
   color: var(--text-secondary);
+}
+
+.form-tip {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin-top: 2px;
 }
 </style>

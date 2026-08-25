@@ -94,6 +94,61 @@
 - npm run build 成功（vue-cli-service build，dist 可部署）
 - 已更新本文件全部状态 + README（辅助流程/功能模块/测试与质量章节）
 
+---
+
+## 第二轮整改（基础数据维护 + 财务核销链路）
+
+> 触发：重新评估"功能完整性/流程闭环/逻辑自洽"后，识别出基础数据维护（场站/仓库）
+> 与财务核销（银行流水来源）两类缺口。基线 533 → 目标 554+。
+
+### F6a [P1] 场站新增/编辑 — done-verified（环节 33，8 断言）
+- 问题：terminal/list.vue 只读，flow.js 无 saveTerminal；合同强依赖装/卸场站，
+  但场站只能靠种子数据，与已补齐的司机/车辆/商品/客户不对称。
+- 方案：`saveTerminal(payload)`（RBAC: terminal）：名称必填且查重、类型合法
+  （loading/unloading/both）、日能力>0；新建默认 operating/吞吐0/无配套仓库；
+  编辑可改配套仓库（影响装卸货仓储联动）。permission-table 加 `terminal` 操作码
+  （授场站操作员）。terminal/list.vue 加"新增场站"按钮 + 卡片"编辑" + 表单对话框。
+- 文件：src/mock/flow.js（saveTerminal）、src/permission-table.js、src/views/terminal/list.vue
+- 测试：verify-flow 环节 33（新建/结构/名称缺失/重名/能力非正/编辑/调度员越权拦截）
+- 验收：npm test 全绿
+
+### F6b [P1] 仓库新增/编辑 — done-verified（环节 34，8 断言）
+- 问题：warehouse/list.vue 只读，flow.js 无 saveWarehouse；仓库只能靠种子数据。
+- 方案：`saveWarehouse(payload)`（RBAC: warehouse-maint）：名称必填且查重、容量>0；
+  新建默认 operating/used=0；编辑容量不得低于已用库存（used）。permission-table 加
+  `warehouse-maint` 操作码（授场站操作员）。warehouse/list.vue 加"新增仓库"按钮 +
+  卡片"编辑" + 表单对话框。
+- 文件：src/mock/flow.js（saveWarehouse）、src/permission-table.js、src/views/warehouse/list.vue
+- 测试：verify-flow 环节 34（新建/结构/名称缺失/重名/容量非正/容量下限守卫/编辑/越权拦截）
+- 验收：npm test 全绿
+
+### F7 [P1] 银行流水录入 — done-verified（环节 35，7 断言）
+- 问题：db.bankRecords 只有种子数据，全代码无录入入口；核销流程（手动/自动）逻辑
+  完整但"流水从哪来"断链，演示时只能核销种子流水。
+- 方案：`addBankStatement(payload)`（RBAC: settlement）：对手方/金额/到账时间必填、
+  金额>0；录入后 status=unmatched 进入待核销，可走自动核销（金额=账单未付余额）
+  或手动核销，闭合"流水从哪来"。settlement/list.vue 银行对账页加"流水录入"按钮 +
+  对话框（对手方下拉可输入/金额/到账时间/摘要）。
+- 文件：src/mock/flow.js（addBankStatement）、src/views/settlement/list.vue
+- 测试：verify-flow 环节 35（对手方缺失/金额非正/时间缺失/录入成功 unmatched/结构/越权拦截）
+- 验收：npm test 全绿
+
+### F8 [P2] 已知取舍（留档 backlog，不实现）
+- 说明：以下三项在演示系统层面可接受，作为"已知取舍"留档，暂不实现。
+  若走向真实系统再补。
+  1. 异常损失单一金额字段：finishException 的 cost 不区分货损/车损/维修费，
+     真实理赔责任认定需拆分；演示用单字段+备注可接受。
+  2. 客户门户不能自助预付：collectPrepayment 仅平台侧（客户详情页）操作，
+     真实系统客户应能自助充值；演示由销售代操作可接受。
+  3. 银行自动核销仅精确匹配：一笔流水只核销一张账单、容差 0.01 元，
+     真实银行常"一笔付多账/含手续费"会落到人工核销；演示可接受，UI 已说明口径。
+
+### FINAL-2 收尾 — in-progress
+- npm test 全绿（环节 1–35，554 断言，0 失败）
+- npm run build 成功
+- 更新本文件 + README（场站/仓库/银行流水录入）
+- commit + push
+
 ## 压缩后重入协议
 
 1. 重读本文件，找到第一个非 done-verified 的项；

@@ -122,16 +122,27 @@
         <div class="panel">
           <div class="panel__header">
             <span class="panel__title">待核销银行流水</span>
-            <el-button
-              v-if="can('settlement')"
-              type="primary"
-              size="small"
-              :icon="MagicStick"
-              :disabled="!unmatched.length"
-              @click="autoMatch"
-            >
-              自动核销
-            </el-button>
+            <span>
+              <el-button
+                v-if="can('settlement')"
+                type="primary"
+                size="small"
+                :icon="Plus"
+                @click="openBankEntry"
+              >
+                流水录入
+              </el-button>
+              <el-button
+                v-if="can('settlement')"
+                type="primary"
+                size="small"
+                :icon="MagicStick"
+                :disabled="!unmatched.length"
+                @click="autoMatch"
+              >
+                自动核销
+              </el-button>
+            </span>
           </div>
           <div class="panel__body">
             <el-alert type="info" :closable="false" style="margin-bottom: 12px">
@@ -290,6 +301,39 @@
       </template>
     </el-dialog>
 
+    <!-- F7：银行流水录入（登记客户已转账但平台未登记的到账，闭合核销链路） -->
+    <el-dialog v-model="bankEntryDialog" title="银行流水录入" width="480px">
+      <el-alert type="info" :closable="false" style="margin-bottom: 12px">
+        登记银行侧到账流水（客户已转账、平台未登记）。录入后进入"待核销"，金额与某账单未付余额一致时可自动核销，否则手动核销。
+      </el-alert>
+      <el-form :model="bankEntryForm" label-width="100px">
+        <el-form-item label="对手方" required>
+          <el-select v-model="bankEntryForm.counterparty" filterable allow-create default-first-option placeholder="选择或输入付款单位" style="width: 100%">
+            <el-option v-for="c in db.customers" :key="c.id" :label="c.name" :value="c.name" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="到账金额" required>
+          <el-input-number v-model="bankEntryForm.amount" :min="1" :step="10000" controls-position="right" style="width: 100%" />
+        </el-form-item>
+        <el-form-item label="到账时间" required>
+          <el-date-picker
+            v-model="bankEntryForm.time"
+            type="datetime"
+            value-format="YYYY-MM-DD HH:mm"
+            placeholder="选择到账时间"
+            style="width: 100%"
+          />
+        </el-form-item>
+        <el-form-item label="摘要">
+          <el-input v-model="bankEntryForm.summary" placeholder="如：运费付款 / 质量保证金" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="bankEntryDialog = false">取消</el-button>
+        <el-button type="primary" @click="doBankEntry">录入</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 趟次应付付款 -->
     <el-dialog v-model="payDialog" title="趟次应付付款" width="460px">
       <div v-if="payTarget">
@@ -328,7 +372,7 @@ import { Search, Download, Refresh, Postcard, DocumentAdd, MagicStick, Plus } fr
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
-import { settlementCandidates, generateSettlements, startReconcile as flowStartReconcile, confirmSettle, recalcSettlement, autoMatchBank, matchBankRecord, generatePayables, payPayable, payableStats as flowPayableStats } from '@/mock/flow'
+import { settlementCandidates, generateSettlements, startReconcile as flowStartReconcile, confirmSettle, recalcSettlement, autoMatchBank, matchBankRecord, addBankStatement, generatePayables, payPayable, payableStats as flowPayableStats } from '@/mock/flow'
 import { usePerm } from '@/permission'
 import { formatMoney, formatNum } from '@/utils'
 import dayjs from 'dayjs'
@@ -396,6 +440,29 @@ function autoMatch() {
     const matched = autoMatchBank()
     ElMessage.success(matched.length ? `自动核销完成：${matched.length} 笔银行流水已核销` : '暂无满足自动核销条件的流水')
   }).catch(() => {})
+}
+
+/* ===== F7：银行流水录入（RBAC settlement，服务层守卫 + 审计 + 通知） ===== */
+const bankEntryDialog = ref(false)
+const bankEntryForm = reactive({ counterparty: '', amount: 10000, time: '', summary: '' })
+
+function openBankEntry() {
+  Object.assign(bankEntryForm, { counterparty: '', amount: 10000, time: dayjs().format('YYYY-MM-DD HH:mm'), summary: '' })
+  bankEntryDialog.value = true
+}
+
+function doBankEntry() {
+  if (!bankEntryForm.counterparty) {
+    ElMessage.warning('请选择或输入对手方')
+    return
+  }
+  const r = addBankStatement({ ...bankEntryForm })
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
+  bankEntryDialog.value = false
+  ElMessage.success(`银行流水 ${r.id} 已录入，进入待核销`)
 }
 
 /* ===== 趟次应付（P1 成本侧闭环） ===== */

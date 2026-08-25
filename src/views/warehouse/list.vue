@@ -1,6 +1,7 @@
 <template>
   <div class="page">
     <PageHeader title="仓储管理" desc="各仓库容量、库存水位与运行状态">
+      <el-button v-if="can('warehouse-maint')" type="primary" :icon="Plus" @click="openDialog()">新增仓库</el-button>
       <el-button type="primary" :icon="Tickets" @click="$router.push('/warehouse/inventory')">
         库存明细
       </el-button>
@@ -45,28 +46,72 @@
             <el-icon :size="13"><Location /></el-icon>
             {{ w.address }}
           </span>
-          <el-button size="small" text type="primary" @click="goInventory(w)">
-            库存
-          </el-button>
+          <span>
+            <el-button v-if="can('warehouse-maint')" size="small" text @click="openDialog(w)">编辑</el-button>
+            <el-button size="small" text type="primary" @click="goInventory(w)">
+              库存
+            </el-button>
+          </span>
         </div>
       </div>
     </div>
+
+    <!-- F6b：新增/编辑仓库（RBAC warehouse-maint，服务层守卫 + 审计） -->
+    <el-dialog v-model="dialogVisible" :title="form.id ? '编辑仓库' : '新增仓库'" width="480px">
+      <el-form :model="form" label-width="90px">
+        <el-form-item label="仓库名称" required>
+          <el-input v-model="form.name" placeholder="如：XX 港 1 号煤仓" />
+        </el-form-item>
+        <el-form-item label="类型" required>
+          <el-select v-model="form.type" style="width: 100%">
+            <el-option label="煤仓" value="煤仓" />
+            <el-option label="矿石仓" value="矿石仓" />
+            <el-option label="粮食仓" value="粮食仓" />
+            <el-option label="化工库" value="化工库" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="容量(吨)" required>
+          <el-input-number v-model="form.capacity" :min="1" :step="10000" controls-position="right" style="width: 100%" />
+          <div v-if="form.id" class="form-tip">当前已用 {{ form.used }} 吨，容量不能低于已用库存</div>
+        </el-form-item>
+        <el-form-item label="地址">
+          <el-input v-model="form.address" placeholder="详细地址" />
+        </el-form-item>
+        <el-form-item label="负责人">
+          <el-input v-model="form.manager" placeholder="如：王站长" />
+        </el-form-item>
+        <el-form-item label="联系电话">
+          <el-input v-model="form.phone" placeholder="联系电话" />
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="form.remark" type="textarea" :rows="2" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="dialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="save">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 defineOptions({ name: 'Warehouse' })
-import { computed } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { House, Tickets, Location } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
+import { House, Tickets, Location, Plus } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db } from '@/mock'
+import { saveWarehouse } from '@/mock/flow'
 import { formatNum } from '@/utils'
 import { useTokens } from '@/utils/tokens'
+import { usePerm } from '@/permission'
 
 const tokens = useTokens()
+const { can } = usePerm()
 
 const router = useRouter()
 
@@ -95,6 +140,63 @@ function levelColor(w) {
 
 function goInventory(w) {
   router.push({ path: '/warehouse/inventory', query: { warehouseId: w.id } })
+}
+
+/* ===== F6b：新增/编辑仓库（RBAC warehouse-maint，服务层守卫 + 审计） ===== */
+const dialogVisible = ref(false)
+const form = reactive({
+  id: '',
+  name: '',
+  type: '煤仓',
+  capacity: 50000,
+  used: 0,
+  address: '',
+  manager: '',
+  phone: '',
+  remark: ''
+})
+
+function openDialog(w) {
+  if (w) {
+    Object.assign(form, {
+      id: w.id,
+      name: w.name,
+      type: w.type,
+      capacity: w.capacity,
+      used: w.used,
+      address: w.address,
+      manager: w.manager,
+      phone: w.phone,
+      remark: w.remark
+    })
+  } else {
+    Object.assign(form, {
+      id: '',
+      name: '',
+      type: '煤仓',
+      capacity: 50000,
+      used: 0,
+      address: '',
+      manager: '',
+      phone: '',
+      remark: ''
+    })
+  }
+  dialogVisible.value = true
+}
+
+function save() {
+  if (!form.name.trim()) {
+    ElMessage.warning('请输入仓库名称')
+    return
+  }
+  const r = saveWarehouse({ ...form })
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
+  dialogVisible.value = false
+  ElMessage.success(form.id ? '仓库已更新' : '仓库已新增')
 }
 </script>
 
@@ -208,5 +310,12 @@ function goInventory(w) {
   gap: 4px;
   font-size: 12px;
   color: var(--text-secondary);
+}
+
+.form-tip {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin-top: 2px;
 }
 </style>

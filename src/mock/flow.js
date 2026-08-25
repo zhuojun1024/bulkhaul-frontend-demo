@@ -2848,6 +2848,41 @@ export function importVehicles(rows) {
 
 /* ===== 银行对账核销（G8：银行流水 → 账单核销，收款闭环） ===== */
 
+/** F7 银行流水录入（RBAC：settlement）：登记银行侧到账流水（客户已转账但平台未登记）
+ *  守卫：对手方/金额/到账时间必填，金额>0；录入后为待核销（unmatched），
+ *  可走自动核销（金额=某账单未付余额）或手动核销，闭合"流水从哪来"的演示链路 */
+export function addBankStatement(payload) {
+  const permErr = requireAction('settlement')
+  if (permErr) return permErr
+  const counterparty = String(payload.counterparty || '').trim()
+  const amount = Number(payload.amount)
+  const time = String(payload.time || '').trim()
+  if (!counterparty) return { error: '请填写对手方（付款单位）' }
+  if (!amount || amount <= 0) return { error: '到账金额须大于 0' }
+  if (!time) return { error: '请选择到账时间' }
+  let max = 0
+  for (const b of db.bankRecords) {
+    const m = /^YH-(\d+)$/.exec(String(b.id || ''))
+    if (m) max = Math.max(max, parseInt(m[1], 10))
+  }
+  const b = {
+    id: 'YH-' + String(max + 1).padStart(4, '0'),
+    accountNo: payload.accountNo || '6222 **** **** 8899',
+    counterparty,
+    amount,
+    time,
+    summary: String(payload.summary || '').trim() || '银行到账',
+    status: 'unmatched',
+    settlementId: null,
+    matchTime: null,
+    matchBy: ''
+  }
+  db.bankRecords.push(b)
+  logAction('结算管理', '流水录入', `登记银行流水 ${b.id}（${counterparty} ${formatMoney(amount)}），待核销`)
+  notify('新增待核销银行流水', 'settlement', '/settlement', `银行流水 ${b.id}：${counterparty} 到账 ${formatMoney(amount)}，请核销`, toRoles('settlement'))
+  return { ok: true, id: b.id }
+}
+
 /** 手动核销：待核销银行流水核销至指定账单（写收款流水，超未付余额拦截）
  *  守卫：RBAC（settlement）；流水须待核销；流水金额不可超过账单未付余额 */
 export function matchBankRecord(b, s) {
@@ -3124,6 +3159,99 @@ export function toggleCommodityStatus(c) {
   c.status = c.status === 'active' ? 'inactive' : 'active'
   logAction('商品管理', c.status === 'active' ? '启用商品' : '停用商品', `商品 ${c.name} ${c.status === 'active' ? '启用' : '停用'}`)
   return { ok: true }
+}
+
+/** F6a 新建/编辑场站（RBAC：terminal）；守卫：名称必填且查重、类型合法、日能力>0
+ *  新建默认 operating、无配套仓库；编辑可改配套仓库（影响装卸货仓储联动） */
+export function saveTerminal(payload) {
+  const permErr = requireAction('terminal')
+  if (permErr) return permErr
+  const name = String(payload.name || '').trim()
+  if (!name) return { error: '请输入场站名称' }
+  const type = ['loading', 'unloading', 'both'].includes(payload.type) ? payload.type : 'both'
+  const capacity = Number(payload.capacity)
+  if (!capacity || capacity <= 0) return { error: '日能力须大于 0' }
+  if (payload.id) {
+    const t = db.terminals.find((x) => x.id === payload.id)
+    if (!t) return { error: '场站不存在' }
+    if (db.terminals.some((x) => x.id !== t.id && x.name === name)) return { error: `场站名称「${name}」已存在` }
+    Object.assign(t, {
+      name,
+      type,
+      region: payload.region || t.region,
+      address: payload.address || t.address,
+      capacity,
+      contact: payload.contact || t.contact,
+      phone: payload.phone || t.phone,
+      warehouseId: payload.warehouseId !== undefined ? payload.warehouseId || null : t.warehouseId,
+      remark: payload.remark !== undefined ? String(payload.remark) : t.remark
+    })
+    logAction('场站管理', '编辑场站', `场站 ${t.id} 更新：${name}`)
+    return { ok: true, id: t.id }
+  }
+  if (db.terminals.some((x) => x.name === name)) return { error: `场站名称「${name}」已存在` }
+  const t = {
+    id: genId('T', 3, db.terminals),
+    name,
+    type,
+    region: payload.region || DATA_REGIONS[0] || '华北',
+    address: payload.address || '',
+    capacity,
+    warehouseId: payload.warehouseId || null,
+    contact: payload.contact || '',
+    phone: payload.phone || '',
+    status: 'operating',
+    todayThroughput: 0,
+    queueVehicles: 0,
+    remark: payload.remark ? String(payload.remark) : ''
+  }
+  db.terminals.push(t)
+  logAction('场站管理', '新建场站', `场站 ${t.id} 创建：${name}（${t.region}，日能力 ${capacity} 吨）`)
+  return { ok: true, id: t.id }
+}
+
+/** F6b 新建/编辑仓库（RBAC：warehouse-maint）；守卫：名称必填且查重、容量>0
+ *  新建默认 operating、used=0；编辑容量不得低于已用库存（used） */
+export function saveWarehouse(payload) {
+  const permErr = requireAction('warehouse-maint')
+  if (permErr) return permErr
+  const name = String(payload.name || '').trim()
+  if (!name) return { error: '请输入仓库名称' }
+  const capacity = Number(payload.capacity)
+  if (!capacity || capacity <= 0) return { error: '容量须大于 0' }
+  if (payload.id) {
+    const w = db.warehouses.find((x) => x.id === payload.id)
+    if (!w) return { error: '仓库不存在' }
+    if (db.warehouses.some((x) => x.id !== w.id && x.name === name)) return { error: `仓库名称「${name}」已存在` }
+    if (capacity < w.used) return { error: `容量不能低于已用库存 ${w.used} 吨` }
+    Object.assign(w, {
+      name,
+      type: payload.type || w.type,
+      address: payload.address || w.address,
+      capacity,
+      manager: payload.manager || w.manager,
+      phone: payload.phone || w.phone,
+      remark: payload.remark !== undefined ? String(payload.remark) : w.remark
+    })
+    logAction('仓储管理', '编辑仓库', `仓库 ${w.id} 更新：${name}`)
+    return { ok: true, id: w.id }
+  }
+  if (db.warehouses.some((x) => x.name === name)) return { error: `仓库名称「${name}」已存在` }
+  const w = {
+    id: genId('WH', 3, db.warehouses),
+    name,
+    type: payload.type || '煤仓',
+    address: payload.address || '',
+    capacity,
+    used: 0,
+    manager: payload.manager || '',
+    phone: payload.phone || '',
+    status: 'operating',
+    remark: payload.remark ? String(payload.remark) : ''
+  }
+  db.warehouses.push(w)
+  logAction('仓储管理', '新建仓库', `仓库 ${w.id} 创建：${name}（${w.type}，容量 ${capacity} 吨）`)
+  return { ok: true, id: w.id }
 }
 
 /** 客户冻结/解冻（RBAC：customer） */
