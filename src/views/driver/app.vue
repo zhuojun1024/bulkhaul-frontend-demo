@@ -78,6 +78,14 @@
               <el-button v-if="d.status === 'loading'" size="small" type="primary" @click="onDepart(d)">发车</el-button>
               <el-button v-if="d.status === 'intransit'" size="small" type="success" @click="onArrive(d)">到达卸货场</el-button>
               <el-button v-if="d.status === 'unloading'" size="small" type="success" @click="openSign(d)">确认卸货并签收</el-button>
+              <!-- F4a：执行中（待装货/装货/在途/卸货）可上报异常，司机为第一知情人 -->
+              <el-button
+                v-if="['pending', 'loading', 'intransit', 'unloading'].includes(d.status)"
+                size="small"
+                type="danger"
+                plain
+                @click="openException(d)"
+              >上报异常</el-button>
               <el-button v-if="d.status === 'exception'" size="small" type="danger" plain @click="$router.push(`/dispatch/${d.id}`)">
                 异常处理中
               </el-button>
@@ -149,12 +157,50 @@
         <el-button type="primary" @click="submitSign">确认签收</el-button>
       </template>
     </el-dialog>
+
+    <!-- F4a：司机端上报异常（执行中状态，source=driver） -->
+    <el-dialog v-model="excDialog" title="上报异常" width="420px">
+      <div v-if="excTarget">
+        <el-alert
+          :title="`调度单 ${excTarget.id}：${find.commodity(excTarget.commodityId)?.name} ${excTarget.quantity} 吨`"
+          type="warning"
+          :closable="false"
+          show-icon
+        />
+        <el-form label-width="90px" style="margin-top: 16px">
+          <el-form-item label="异常类型" required>
+            <el-select v-model="excForm.type" style="width: 100%">
+              <el-option label="车辆故障" value="vehicle" />
+              <el-option label="交通事故" value="accident" />
+              <el-option label="货物损坏" value="damage" />
+              <el-option label="道路/天气延误" value="delay" />
+              <el-option label="其他" value="other" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="严重程度" required>
+            <el-radio-group v-model="excForm.level">
+              <el-radio value="low">轻微</el-radio>
+              <el-radio value="medium">一般</el-radio>
+              <el-radio value="high">严重</el-radio>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item label="异常描述" required>
+            <el-input v-model="excForm.description" type="textarea" :rows="3" placeholder="请描述异常情况（位置、现象、影响）" />
+          </el-form-item>
+        </el-form>
+        <div class="sign-tip">上报后车次转入异常状态，由平台异常处理人员受理处置；事故类将同步生成事故记录。</div>
+      </div>
+      <template #footer>
+        <el-button @click="excDialog = false">取消</el-button>
+        <el-button type="danger" @click="submitException">提交上报</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 defineOptions({ name: 'DriverApp' })
-import { ref, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Van, CircleCheck, Aim, SwitchButton } from '@element-plus/icons-vue'
@@ -164,6 +210,7 @@ import {
   signReceipt,
   driverDepart,
   driverArrive,
+  driverReportException,
   loadCodeOf,
   unloadCodeOf,
   scanConfirmLoad,
@@ -304,6 +351,28 @@ function submitSign() {
   signReceipt(signTarget.value, signer.value.trim())
   signDialog.value = false
   ElMessage.success('卸货完成，电子签收单已生成')
+}
+
+/* ===== F4a：司机端上报异常（执行中状态，走 flow.driverReportException 身份守卫 + 状态机） ===== */
+const excDialog = ref(false)
+const excTarget = ref(null)
+const excForm = reactive({ type: 'other', level: 'medium', description: '' })
+
+function openException(d) {
+  excTarget.value = d
+  Object.assign(excForm, { type: 'other', level: 'medium', description: '' })
+  excDialog.value = true
+}
+
+function submitException() {
+  if (!excForm.description.trim()) {
+    ElMessage.warning('请填写异常描述')
+    return
+  }
+  const r = driverReportException(excTarget.value, excForm.description, excForm.type, excForm.level)
+  if (guardError(r)) return
+  excDialog.value = false
+  ElMessage.success('异常已上报，请等待平台处理')
 }
 </script>
 

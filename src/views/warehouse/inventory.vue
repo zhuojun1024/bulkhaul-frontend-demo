@@ -1,6 +1,7 @@
 <template>
   <div class="page">
-    <PageHeader title="库存管理" desc="各仓库商品批次库存，支持锁定与临期预警">
+    <PageHeader title="库存管理" desc="各仓库商品批次库存，支持手工入库、锁定与临期预警">
+      <el-button v-if="can('warehouse')" type="primary" :icon="Plus" @click="openInboundDialog">手工入库</el-button>
       <el-button v-if="can('warehouse')" :icon="Setting" @click="openSqDialog">安全库存设置</el-button>
       <el-button :icon="Download" @click="exportCsv">导出</el-button>
     </PageHeader>
@@ -153,6 +154,36 @@
         <el-button type="primary" @click="saveSq">保存</el-button>
       </template>
     </el-dialog>
+
+    <!-- F2：手工入库/补库（采购到货/外采直入，RBAC warehouse） -->
+    <el-dialog v-model="inboundDialog" title="手工入库" width="460px">
+      <el-form :model="inboundForm" label-width="90px">
+        <el-form-item label="仓库" required>
+          <el-select v-model="inboundForm.warehouseId" placeholder="选择仓库" style="width: 100%">
+            <el-option v-for="w in db.warehouses" :key="w.id" :label="`${w.name}（占用 ${w.used}/${w.capacity} 吨）`" :value="w.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="商品" required>
+          <el-select v-model="inboundForm.commodityId" placeholder="选择商品" style="width: 100%">
+            <el-option v-for="c in db.commodities" :key="c.id" :label="c.name" :value="c.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="入库量" required>
+          <el-input-number v-model="inboundForm.quantity" :min="1" :step="100" controls-position="right" style="width: 100%" />
+          <div class="sq-tip">单位：吨。入库后生成新批次（状态正常，可发库存增加）</div>
+        </el-form-item>
+        <el-form-item label="批次号">
+          <el-input v-model="inboundForm.batch" placeholder="缺省自动生成 B{日期}-M{序号}" />
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="inboundForm.remark" placeholder="如：采购到货 / 外采直入" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="inboundDialog = false">取消</el-button>
+        <el-button type="primary" @click="saveInbound">入库</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -161,12 +192,12 @@ defineOptions({ name: 'Inventory' })
 import { ref, reactive, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Search, Download, Refresh, Setting } from '@element-plus/icons-vue'
+import { Search, Download, Refresh, Setting, Plus } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
-import { setInventoryStatus, inventoryAlerts, safetyStockOf, setSafetyStock } from '@/mock/flow'
+import { setInventoryStatus, inventoryAlerts, safetyStockOf, setSafetyStock, manualInbound } from '@/mock/flow'
 import { formatNum } from '@/utils'
 import dayjs from 'dayjs'
 import { usePerm } from '@/permission'
@@ -245,6 +276,29 @@ function saveSq() {
   }
   sqDialog.value = false
   ElMessage.success('安全库存下限已保存')
+}
+
+/* ===== F2：手工入库/补库（RBAC warehouse，服务层守卫 + 审计） ===== */
+const inboundDialog = ref(false)
+const inboundForm = reactive({ warehouseId: '', commodityId: '', quantity: 100, batch: '', remark: '' })
+
+function openInboundDialog() {
+  Object.assign(inboundForm, { warehouseId: '', commodityId: '', quantity: 100, batch: '', remark: '' })
+  inboundDialog.value = true
+}
+
+function saveInbound() {
+  if (!inboundForm.warehouseId || !inboundForm.commodityId) {
+    ElMessage.warning('请选择仓库和商品')
+    return
+  }
+  const r = manualInbound(inboundForm.warehouseId, inboundForm.commodityId, inboundForm.quantity, inboundForm.batch, inboundForm.remark)
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
+  inboundDialog.value = false
+  ElMessage.success(`入库成功，批次 ${r.batch}`)
 }
 
 function ageDays(inDate) {

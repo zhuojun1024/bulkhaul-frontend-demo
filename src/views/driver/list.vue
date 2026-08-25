@@ -1,6 +1,8 @@
 <template>
   <div class="page">
     <PageHeader title="司机管理" desc="司机档案、证照效期与出勤状态管理">
+      <el-button v-if="can('driver')" type="primary" :icon="Plus" @click="openDriverDialog">新增司机</el-button>
+      <el-button v-if="can('driver')" :icon="Upload" @click="openImport">导入</el-button>
       <el-button :icon="Download" @click="exportCsv">导出</el-button>
     </PageHeader>
 
@@ -88,6 +90,7 @@
           <el-table-column label="操作" width="150" align="center" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" size="small" @click.stop="goDetail(row)">详情</el-button>
+              <el-button v-if="can('driver')" link size="small" @click.stop="openDriverDialog(row)">编辑</el-button>
               <el-button
                 v-if="row.status !== 'disabled' && can('driver')"
                 link type="danger" size="small"
@@ -114,6 +117,50 @@
         </div>
       </div>
     </div>
+
+    <!-- F4b：新增/编辑司机（RBAC driver，服务层守卫 + 审计） -->
+    <el-dialog v-model="driverDialog" :title="driverForm.id ? '编辑司机' : '新增司机'" width="480px">
+      <el-form :model="driverForm" label-width="100px">
+        <el-form-item label="姓名" required>
+          <el-input v-model="driverForm.name" placeholder="司机姓名" />
+        </el-form-item>
+        <el-form-item label="手机号" required>
+          <el-input v-model="driverForm.phone" placeholder="手机号（登录账号）" />
+        </el-form-item>
+        <el-form-item label="驾照类型">
+          <el-select v-model="driverForm.licenseType" style="width: 100%">
+            <el-option label="A2" value="A2" />
+            <el-option label="B2" value="B2" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="驾照号">
+          <el-input v-model="driverForm.licenseNo" placeholder="驾驶证编号" />
+        </el-form-item>
+        <el-form-item label="驾照到期">
+          <el-date-picker v-model="driverForm.licenseExpire" type="date" value-format="YYYY-MM-DD" placeholder="到期日期" style="width: 100%" />
+        </el-form-item>
+        <el-form-item label="紧急联系人">
+          <el-input v-model="driverForm.emergencyContact" placeholder="姓名 手机号" />
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="driverForm.remark" type="textarea" :rows="2" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="driverDialog = false">取消</el-button>
+        <el-button type="primary" @click="saveDriverForm">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- F4b：司机导入（Excel/CSV，按手机号去重） -->
+    <ImportDialog
+      v-model="importVisible"
+      title="导入司机"
+      :columns="importColumns"
+      :sample="importSample"
+      :result="importResult"
+      @confirm="doImport"
+    />
   </div>
 </template>
 
@@ -122,11 +169,12 @@ defineOptions({ name: 'Driver' })
 import { ref, reactive, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Download, Refresh } from '@element-plus/icons-vue'
+import { Search, Download, Refresh, Plus, Upload } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
+import ImportDialog from '@/components/ImportDialog.vue'
 import { db } from '@/mock'
-import { toggleDriverStatus } from '@/mock/flow'
+import { toggleDriverStatus, saveDriver, importDrivers } from '@/mock/flow'
 import { formatNum } from '@/utils'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
@@ -217,6 +265,84 @@ function enable(row) {
     return
   }
   ElMessage.success(`${row.name} 已启用`)
+}
+
+/* ===== F4b：新增/编辑司机（RBAC driver，服务层守卫 + 审计） ===== */
+const driverDialog = ref(false)
+const driverForm = reactive({
+  id: '',
+  name: '',
+  phone: '',
+  licenseType: 'A2',
+  licenseNo: '',
+  licenseExpire: '',
+  emergencyContact: '',
+  remark: ''
+})
+
+function openDriverDialog(row) {
+  if (row) {
+    Object.assign(driverForm, {
+      id: row.id,
+      name: row.name,
+      phone: row.phone,
+      licenseType: row.licenseType,
+      licenseNo: row.licenseNo,
+      licenseExpire: row.licenseExpire,
+      emergencyContact: row.emergencyContact,
+      remark: row.remark
+    })
+  } else {
+    Object.assign(driverForm, {
+      id: '',
+      name: '',
+      phone: '',
+      licenseType: 'A2',
+      licenseNo: '',
+      licenseExpire: '',
+      emergencyContact: '',
+      remark: ''
+    })
+  }
+  driverDialog.value = true
+}
+
+function saveDriverForm() {
+  if (!driverForm.name.trim() || !driverForm.phone.trim()) {
+    ElMessage.warning('请填写姓名和手机号')
+    return
+  }
+  const r = saveDriver({ ...driverForm })
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
+  driverDialog.value = false
+  ElMessage.success(driverForm.id ? '司机信息已更新' : '司机已新增')
+}
+
+/* ===== F4b：司机导入（Excel/CSV → flow.importDrivers，按手机号去重） ===== */
+const importVisible = ref(false)
+const importResult = ref(null)
+const importColumns = [
+  { key: 'name', label: '姓名', required: true },
+  { key: 'phone', label: '手机号', required: true },
+  { key: 'licenseType', label: '驾照类型(A2/B2)' },
+  { key: 'licenseNo', label: '驾照号' },
+  { key: 'licenseExpire', label: '驾照到期(YYYY-MM-DD)' },
+  { key: 'emergencyContact', label: '紧急联系人' }
+]
+const importSample = [['李铁柱', '13800001234', 'A2', '14010119850101', '2029-12-31', '王芳 13900005678']]
+
+function openImport() {
+  importResult.value = null
+  importVisible.value = true
+}
+
+function doImport(rows) {
+  importResult.value = importDrivers(rows)
+  const r = importResult.value
+  ElMessage.success(`导入完成：新增 ${r.created.length} 条，跳过重复 ${r.skipped.length} 条${r.errors.length ? `，失败 ${r.errors.length} 条` : ''}`)
 }
 
 function exportCsv() {

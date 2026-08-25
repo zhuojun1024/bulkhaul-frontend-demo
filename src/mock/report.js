@@ -1,5 +1,5 @@
 import { db, NOW } from './base'
-import { outstandingOf, tripCostOf, prepaymentAvailable, dispatchRevenueOf } from './flow'
+import { outstandingOf, tripCostOf, prepaymentAvailable, dispatchRevenueOf, settleQtyOf } from './flow'
 import dayjs from 'dayjs'
 import { round } from '@/utils'
 
@@ -11,7 +11,9 @@ import { round } from '@/utils'
  *  - 商品运量：损耗率=（进磅净重-出磅净重）/进磅净重，按调度单配对
  *  - 场站吞吐：按磅单场站与类型汇总
  *  - 成本利润：单车次全成本（燃油×装载系数+磨损+司机+过路费+折旧，非公路按运输单元能耗口径），
- *    收入=调度单约定运费（quantity×unitPrice），毛利=收入-成本
+ *    收入=出磅净重×单价（dispatchRevenueOf），毛利=收入-成本
+ *  - F5a 运量口径统一：月度/客户/商品三报表运量 = 出磅净重之和（settleQtyOf，
+ *    无出磅单回退调度量），与结算口径一致
  */
 
 /** 月度运营报表（近 6 个月） */
@@ -24,7 +26,8 @@ export function monthlyReport() {
     return {
       month: m,
       trips: done.length,
-      volume: +done.reduce((s, d) => s + d.quantity, 0).toFixed(1),
+      // F5a：运量 = 出磅净重之和（与结算同口径）
+      volume: +done.reduce((s, d) => s + settleQtyOf(d), 0).toFixed(1),
       settleAmount: settlements.reduce((s, x) => s + x.totalAmount, 0),
       paidAmount: payments.reduce((s, x) => s + x.amount, 0),
       overdueCount: settlements.filter((s) => s.status === 'overdue' && s.period === m).length
@@ -39,7 +42,8 @@ export function customerReport() {
     .map((c) => {
       const contractIds = new Set(db.contracts.filter((x) => x.shipperId === c.id).map((x) => x.id))
       const done = db.dispatches.filter((d) => d.status === 'completed' && contractIds.has(d.contractId))
-      const volume = done.reduce((s, d) => s + d.quantity, 0)
+      // F5a：运量 = 出磅净重之和（与结算同口径）
+      const volume = +done.reduce((s, d) => s + settleQtyOf(d), 0).toFixed(2)
       const settleAmount = db.settlements.filter((s) => s.customerId === c.id).reduce((s, x) => s + x.totalAmount, 0)
       const outstanding = outstandingOf(c.id)
       // P2 报表口径对齐：授信占用 = 未付 - 可用预付款（与 creditCheck 同口径，预付款冲减信用占用）
@@ -81,7 +85,8 @@ export function commodityReport() {
   return db.commodities
     .map((c) => {
       const done = db.dispatches.filter((d) => d.status === 'completed' && d.commodityId === c.id)
-      const volume = done.reduce((s, d) => s + d.quantity, 0)
+      // F5a：运量 = 出磅净重之和（与结算同口径）
+      const volume = +done.reduce((s, d) => s + settleQtyOf(d), 0).toFixed(2)
       const l = lossMap[c.id]
       return {
         id: c.id,

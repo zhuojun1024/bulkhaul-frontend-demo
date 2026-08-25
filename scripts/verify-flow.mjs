@@ -74,6 +74,7 @@ import {
   outsourceFreightOf,
   cancelDispatch,
   reassignDispatch,
+  releaseResource,
   dunning,
   notify,
   markMessageRead,
@@ -99,6 +100,10 @@ import {
   sendVehicleRepair,
   resumeVehicle,
   setInventoryStatus,
+  manualInbound,
+  saveDriver,
+  importDrivers,
+  resetPassword,
   saveUser,
   removeUser,
   toggleUserStatus,
@@ -107,6 +112,7 @@ import {
   updateRolePerms,
   driverDepart,
   driverArrive,
+  driverReportException,
   visibleMessages,
   rolesWithAction,
   toRoles,
@@ -2749,6 +2755,323 @@ setOperator({ name: '张建国', username: 'admin', role: '平台管理员' })
   check('环节25：消息超上限裁剪至 MAX_MESSAGES', db.messages.length === MAX_MESSAGES)
   db.messages.length = 0
   db.messages.push(...q25origMsgs)
+}
+{
+  // 环节26：F1 卸货中异常恢复——按 exceptionFrom 精确回原态（unloading/intransit/loading）
+  const q26c = db.contracts.find((c) => c.status === 'executing' && isRoadMode(c.mode))
+  if (q26c) {
+    const q26p = {
+      id: 'YH-Q26',
+      contractId: q26c.id,
+      commodityId: q26c.commodityId,
+      quantity: 35,
+      loadTerminalId: q26c.loadTerminalId,
+      unloadTerminalId: q26c.unloadTerminalId,
+      mode: q26c.mode,
+      unitPrice: q26c.unitPrice,
+      status: 'pending',
+      progress: 0
+    }
+    db.plans.unshift(q26p)
+    const { created: q26ds } = createDispatches(q26p, 1)
+    const d26 = q26ds[0]
+    if (d26) {
+      // 场景1：卸货中异常 → 恢复回 unloading（而非旧的 intransit），且可继续 confirmUnload
+      acceptDispatch(d26)
+      confirmLoad(d26)
+      depart(d26)
+      arrive(d26)
+      const e26a = reportException(d26, 'F1 测试：卸货中异常', 'other', 'medium')
+      check('环节26：卸货中上报异常 → exception 且记录 exceptionFrom=unloading', d26.status === 'exception' && d26.exceptionFrom === 'unloading' && e26a.status === 'pending')
+      resumeDispatch(d26)
+      check('环节26：卸货中异常恢复 → 回 unloading（非 intransit）', d26.status === 'unloading' && d26.progress === 96 && d26.exceptionFrom === null)
+      confirmUnload(d26)
+      check('环节26：恢复后可直接确认卸货完成（不重走到达/卸货）', d26.status === 'completed' && !!d26.unloadTime)
+      // 场景2：在途异常 → 恢复回 intransit（行为不变）
+      const { created: q26ds2 } = createDispatches(q26p, 1)
+      const d26b = q26ds2[0]
+      if (d26b) {
+        acceptDispatch(d26b)
+        confirmLoad(d26b)
+        depart(d26b)
+        reportException(d26b, 'F1 测试：在途异常', 'other', 'medium')
+        check('环节26：在途上报异常 → exceptionFrom=intransit', d26b.status === 'exception' && d26b.exceptionFrom === 'intransit')
+        resumeDispatch(d26b)
+        check('环节26：在途异常恢复 → 回 intransit', d26b.status === 'intransit' && d26b.speed > 0)
+        // 场景3：装货中异常 → 恢复回 loading（行为不变）
+        const { created: q26ds3 } = createDispatches(q26p, 1)
+        const d26c = q26ds3[0]
+        if (d26c) {
+          acceptDispatch(d26c)
+          confirmLoad(d26c)
+          reportException(d26c, 'F1 测试：装货中异常', 'other', 'medium')
+          check('环节26：装货中上报异常 → exceptionFrom=loading', d26c.status === 'exception' && d26c.exceptionFrom === 'loading')
+          resumeDispatch(d26c)
+          check('环节26：装货中异常恢复 → 回 loading', d26c.status === 'loading' && d26c.progress === 5)
+        }
+        // 场景4：旧数据兼容（无 exceptionFrom，有 loadTime）→ 回退 intransit
+        d26b.exceptionFrom = undefined
+        d26b.status = 'exception'
+        resumeDispatch(d26b)
+        check('环节26：无 exceptionFrom 旧数据（已装货）→ 回退 intransit', d26b.status === 'intransit')
+        // 收尾：取消剩余未完结车次，避免占用资源
+        for (const x of [d26b, d26c]) {
+          if (x && !['completed', 'cancelled'].includes(x.status)) {
+            x.status = 'cancelled'
+            releaseResource(x)
+          }
+        }
+      }
+      // 清理：删除测试计划（车次已完成/已取消，不影响合同进度回卷）
+      const pi = db.plans.findIndex((x) => x.id === q26p.id)
+      if (pi > -1) db.plans.splice(pi, 1)
+    }
+  }
+}
+{
+  // 环节27：F2 仓储手工入库/补库——正常入库 / 守卫拦截 / 容量拦截 / RBAC
+  const q27wh = db.warehouses.find((w) => w.status === 'operating')
+  if (q27wh) {
+    const usedBefore = q27wh.used
+    const invCountBefore = db.inventories.length
+    // 正常入库：生成批次、used 累加、可发库存增加
+    const availBefore = availableStockOf(q27wh.id, 'CM001')
+    const q27r = manualInbound(q27wh.id, 'CM001', 500, '', 'F1 测试：采购到货')
+    check('环节27：手工入库成功且生成批次', q27r.ok === true && /^B\d{6}-M\d{3}$/.test(q27r.batch) && db.inventories.length === invCountBefore + 1)
+    const q27inv = db.inventories.find((x) => x.id === q27r.id)
+    check('环节27：入库批次结构完整（normal/数量/来源）', q27inv && q27inv.quantity === 500 && q27inv.status === 'normal' && q27inv.source === 'manual')
+    check('环节27：仓库占用累加', q27wh.used === +(usedBefore + 500).toFixed(2))
+    check('环节27：可发库存增加（补库后可恢复装货）', availableStockOf(q27wh.id, 'CM001') === availBefore + 500)
+    // 守卫拦截：数量非法 / 仓库不存在 / 商品不存在
+    check('环节27：数量非正被拦截', !!manualInbound(q27wh.id, 'CM001', 0).error)
+    check('环节27：仓库不存在被拦截', !!manualInbound('WH-NOPE', 'CM001', 100).error)
+    check('环节27：商品不存在被拦截', !!manualInbound(q27wh.id, 'CM-NOPE', 100).error)
+    // 容量拦截：超容量入库
+    const q27over = manualInbound(q27wh.id, 'CM001', q27wh.capacity + 100000)
+    check('环节27：超仓库容量被拦截', !!q27over.error && q27over.error.includes('超仓库容量'))
+    // RBAC：调度员无 warehouse 权限
+    setOperator({ name: '测试调度员', username: 'q27dispatcher', role: '调度员' })
+    const q27rbac = manualInbound(q27wh.id, 'CM001', 100)
+    check('环节27：调度员手工入库被服务层拦截', !!q27rbac.error && q27rbac.error.includes('无此操作权限'))
+    setOperator({ name: '张建国', username: 'admin', role: '平台管理员' })
+    // 清理：删除测试批次、还原 used
+    const qi = db.inventories.findIndex((x) => x.id === q27r.id)
+    if (qi > -1) db.inventories.splice(qi, 1)
+    q27wh.used = usedBefore
+  }
+}
+{
+  // 环节28：F4a 司机端异常上报——司机本人上报 / 非本人拦截 / 非司机角色拦截 / 事故类联动
+  const q28c = db.contracts.find((c) => c.status === 'executing' && isRoadMode(c.mode))
+  if (q28c) {
+    const q28p = {
+      id: 'YH-Q28',
+      contractId: q28c.id,
+      commodityId: q28c.commodityId,
+      quantity: 35,
+      loadTerminalId: q28c.loadTerminalId,
+      unloadTerminalId: q28c.unloadTerminalId,
+      mode: q28c.mode,
+      unitPrice: q28c.unitPrice,
+      status: 'pending',
+      progress: 0
+    }
+    db.plans.unshift(q28p)
+    const { created: q28ds } = createDispatches(q28p, 1)
+    const d28 = q28ds[0]
+    if (d28) {
+      const dr28 = db.drivers.find((x) => x.id === d28.driverId)
+      // 场景1：非本人司机拦截（另一司机账号操作本车次）
+      const other = db.drivers.find((x) => x.id !== d28.driverId && x.status !== 'disabled')
+      if (other) {
+        setOperator({ name: other.name, username: 'q28other', role: '司机', driverId: other.id })
+        const q28a = driverReportException(d28, 'F4a 测试：非本人司机上报')
+        check('环节28：非本人司机上报被身份守卫拦截', !!q28a.error && q28a.error.includes('只能操作指派给本人的车次'))
+      }
+      // 场景2：非司机角色（无 dispatch 权限）拦截
+      setOperator({ name: '测试结算', username: 'q28settle', role: '结算专员' })
+      const q28b = driverReportException(d28, 'F4a 测试：结算角色上报')
+      check('环节28：非司机端角色上报被身份守卫拦截', !!q28b.error && q28b.error.includes('非司机端身份'))
+      // 场景3：本人司机上报成功（source=driver，状态机流转）
+      setOperator({ name: dr28.name, username: 'q28driver', role: '司机', driverId: dr28.id })
+      const q28c1 = driverReportException(d28, 'F4a 测试：司机本人上报车辆故障', 'vehicle', 'medium')
+      check('环节28：司机本人上报成功（source=driver）', q28c1.ok === true && d28.status === 'exception' && db.exceptions[0].source === 'driver')
+      // 场景4：描述为空拦截
+      const q28d = driverReportException(d28, '   ')
+      check('环节28：异常描述为空被拦截', !!q28d.error && q28d.error.includes('异常描述'))
+      // 场景5：事故类联动事故记录（先恢复运输再报事故）
+      setOperator({ name: '张建国', username: 'admin', role: '平台管理员' })
+      resumeDispatch(d28)
+      setOperator({ name: dr28.name, username: 'q28driver', role: '司机', driverId: dr28.id })
+      const accBefore = db.accidents.length
+      const q28e = driverReportException(d28, 'F4a 测试：司机上报交通事故', 'accident', 'high')
+      check('环节28：司机端事故类上报联动事故记录', q28e.ok === true && db.accidents.length === accBefore + 1 && db.exceptions[0].accidentId === db.accidents[0].id)
+      // 收尾：取消车次、清理计划
+      setOperator({ name: '张建国', username: 'admin', role: '平台管理员' })
+      d28.status = 'cancelled'
+      releaseResource(d28)
+      const pi = db.plans.findIndex((x) => x.id === q28p.id)
+      if (pi > -1) db.plans.splice(pi, 1)
+    }
+  }
+}
+{
+  // 环节29：F4b 司机新增/编辑/导入——新建 / 必填拦截 / 手机号查重 / 编辑 / 导入去重 / RBAC
+  const drvCountBefore = db.drivers.length
+  // 新建成功（默认 available / rating 5 / version 1）
+  const q29r = saveDriver({ name: '测试新司机', phone: '13900009999', licenseType: 'B2', licenseNo: '14010119900101', licenseExpire: '2030-06-30' })
+  check('环节29：新建司机成功（默认值完整）', q29r.ok === true && /^D\d{3}$/.test(q29r.id) && db.drivers.length === drvCountBefore + 1)
+  const q29d = db.drivers.find((x) => x.id === q29r.id)
+  check('环节29：新建司机结构（available/评分5/乐观锁1/入职今天）', q29d && q29d.status === 'available' && q29d.rating === 5 && q29d.version === 1 && q29d.totalTrips === 0 && q29d.licenseType === 'B2')
+  // 必填拦截
+  check('环节29：姓名缺失被拦截', !!saveDriver({ name: '', phone: '13900008888' }).error)
+  check('环节29：手机号缺失被拦截', !!saveDriver({ name: '无手机号司机', phone: '' }).error)
+  // 手机号查重（新建与编辑两路径）
+  check('环节29：新建手机号重复被拦截', !!saveDriver({ name: '重号司机', phone: '13900009999' }).error)
+  const q29edit = saveDriver({ id: q29r.id, name: '测试新司机', phone: db.drivers.find((x) => x.id !== q29r.id).phone })
+  check('环节29：编辑改手机号撞他人被拦截', !!q29edit.error && q29edit.error.includes('已被其他司机使用'))
+  // 编辑成功（改姓名/驾照到期）
+  const q29e = saveDriver({ id: q29r.id, name: '测试新司机改', phone: '13900009999', licenseExpire: '2031-01-01' })
+  check('环节29：编辑司机成功', q29e.ok === true && db.drivers.find((x) => x.id === q29r.id).name === '测试新司机改' && db.drivers.find((x) => x.id === q29r.id).licenseExpire === '2031-01-01')
+  // 导入：新增 + 手机号去重 + 必填失败 三段返回
+  const existingPhone = db.drivers.find((x) => x.id !== q29r.id).phone
+  const q29imp = importDrivers([
+    { name: '导入司机甲', phone: '13900007777', licenseType: 'A2' },
+    { name: '导入司机乙', phone: existingPhone },
+    { name: '', phone: '' }
+  ])
+  check('环节29：导入三段返回（新增1/去重1/失败1）', q29imp.created.length === 1 && q29imp.skipped.length === 1 && q29imp.errors.length === 1 && db.drivers.length === drvCountBefore + 2)
+  check('环节29：导入司机默认值（available/remark=导入）', db.drivers.some((x) => x.name === '导入司机甲' && x.status === 'available' && x.remark === '导入'))
+  // RBAC：结算专员无 driver 权限（调度员本身持有 driver 权限，不可用）
+  setOperator({ name: '测试结算', username: 'q29settle', role: '结算专员' })
+  check('环节29：结算专员新增司机被服务层拦截', !!saveDriver({ name: '越权司机', phone: '13900006666' }).error)
+  check('环节29：结算专员导入司机被服务层拦截', !!importDrivers([{ name: '越权导入', phone: '13900005555' }]).error)
+  setOperator({ name: '张建国', username: 'admin', role: '平台管理员' })
+  // 清理：删除测试司机
+  db.drivers.filter((x) => ['13900009999', '13900007777'].includes(x.phone)).forEach((x) => {
+    const i = db.drivers.findIndex((y) => y.id === x.id)
+    if (i > -1) db.drivers.splice(i, 1)
+  })
+}
+{
+  // 环节30：F4c 管理员重置密码——重置后旧密码失效/新密码登录成功/短密码拦截/RBAC/审计留痕
+  const q30u = saveUser({ username: 'q30test', name: '重置密码测试', role: '调度员', password: 'old123456' })
+  check('环节30：前置——创建测试用户', q30u.ok === true)
+  const q30uid = q30u.id
+  const q30user = db.users.find((x) => x.id === q30uid)
+  const hashBefore = q30user.passwordHash
+  // 短密码/空密码拦截
+  check('环节30：空密码被拦截', !!resetPassword(q30uid, '').error)
+  check('环节30：短密码（<6位）被拦截', !!resetPassword(q30uid, '123').error)
+  // 重置成功（哈希变更）
+  const q30r = resetPassword(q30uid, 'new654321')
+  check('环节30：重置成功且哈希变更', q30r.ok === true && db.users.find((x) => x.id === q30uid).passwordHash !== hashBefore)
+  // 旧密码登录失败
+  const q30c1 = generateCaptcha()
+  const q30old = login('q30test', 'old123456', q30c1.id, q30c1.code)
+  check('环节30：重置后旧密码登录失败', !q30old.ok && q30old.code === 'credential')
+  // 新密码登录成功
+  const q30c2 = generateCaptcha()
+  const q30new = login('q30test', 'new654321', q30c2.id, q30c2.code)
+  check('环节30：重置后新密码登录成功', q30new.ok === true && q30new.user.username === 'q30test')
+  // 审计留痕（不落新密码明文）
+  const q30log = db.logs.find((a) => a.action === '重置密码' && a.detail.includes('q30test'))
+  check('环节30：重置密码审计留痕且不含新密码明文', !!q30log && !q30log.detail.includes('new654321'))
+  // RBAC：结算专员无 user 权限
+  setOperator({ name: '测试结算', username: 'q30settle', role: '结算专员' })
+  check('环节30：结算专员重置密码被服务层拦截', !!resetPassword(q30uid, 'hack123456').error)
+  setOperator({ name: '张建国', username: 'admin', role: '平台管理员' })
+  // 清理：删除测试用户
+  removeUser(db.users.find((x) => x.id === q30uid))
+}
+{
+  // 环节31：F5a 报表运量口径统一——月度/客户/商品三报表运量 = 出磅净重之和（非调度量）
+  const q31c = db.customers.find((c) => c.type === 'shipper' || c.type === 'both')
+  if (q31c) {
+    const q31contract = db.contracts.find((x) => x.shipperId === q31c.id)
+    const q31cm = db.commodities[0]
+    if (q31contract && q31cm) {
+      // 记录三报表改动前对应行 volume
+      const monthKey = dayjs(NOW).format('YYYY-MM')
+      const mrBefore = monthlyReport().find((m) => m.month === monthKey)?.volume ?? 0
+      const crBefore = customerReport().find((r) => r.id === q31c.id)?.volume ?? 0
+      const cdrBefore = commodityReport().find((r) => r.id === q31cm.id)?.volume ?? 0
+      // 构造一个已完成公路车次：调度量 100，出磅净重 98（净重≠调度量）
+      const q31d = {
+        id: 'D-Q31',
+        contractId: q31contract.id,
+        commodityId: q31cm.id,
+        quantity: 100,
+        loadTerminalId: q31contract.loadTerminalId,
+        unloadTerminalId: q31contract.unloadTerminalId,
+        mode: 'road',
+        unitPrice: q31contract.unitPrice,
+        status: 'completed',
+        unloadTime: dayjs(NOW).format('YYYY-MM-DD HH:mm'),
+        progress: 100
+      }
+      db.dispatches.push(q31d)
+      db.weighings.push({ id: 'W-Q31', dispatchId: 'D-Q31', type: '出磅', net: 98, terminalId: q31contract.unloadTerminalId })
+      // 三报表对应行 volume 应各 +98（出磅净重），而非 +100（调度量）
+      const mrAfter = monthlyReport().find((m) => m.month === monthKey)?.volume ?? 0
+      const crAfter = customerReport().find((r) => r.id === q31c.id)?.volume ?? 0
+      const cdrAfter = commodityReport().find((r) => r.id === q31cm.id)?.volume ?? 0
+      check('环节31：月度报表运量按出磅净重聚合（+98 非 +100）', Math.abs((mrAfter - mrBefore) - 98) < 0.05)
+      check('环节31：客户报表运量按出磅净重聚合（+98 非 +100）', Math.abs((crAfter - crBefore) - 98) < 0.05)
+      check('环节31：商品报表运量按出磅净重聚合（+98 非 +100）', Math.abs((cdrAfter - cdrBefore) - 98) < 0.05)
+      // 清理：删车次 + 出磅单
+      const di = db.dispatches.findIndex((x) => x.id === 'D-Q31')
+      if (di > -1) db.dispatches.splice(di, 1)
+      const wi = db.weighings.findIndex((x) => x.id === 'W-Q31')
+      if (wi > -1) db.weighings.splice(wi, 1)
+    }
+  }
+}
+{
+  // 环节32：F5b 计划拆车余数修正——Σ车次量 = 计划量（非公路分支，不依赖车辆/司机资源）
+  const q32c = db.contracts.find((x) => x.status === 'executing' && !isRoadMode(x.mode))
+  if (q32c) {
+    // 场景1：100 吨拆 3 车（原 round 均摊 34×3=102 超量）→ 34/33/33 总和 100
+    const q32p1 = {
+      id: 'YH-Q32A',
+      contractId: q32c.id,
+      commodityId: q32c.commodityId,
+      quantity: 100,
+      loadTerminalId: q32c.loadTerminalId,
+      unloadTerminalId: q32c.unloadTerminalId,
+      mode: q32c.mode,
+      unitPrice: q32c.unitPrice,
+      status: 'pending',
+      progress: 0
+    }
+    db.plans.unshift(q32p1)
+    const r1 = createDispatches(q32p1, 3)
+    const q1 = r1.created.map((d) => d.quantity)
+    check('环节32：100吨拆3车 = 33/33/34（Σ=100，不超量）', r1.created.length === 3 && q1.join('/') === '33/33/34' && q1.reduce((s, x) => s + x, 0) === 100)
+    // 场景2：90 吨拆 3 车（整除）→ 30/30/30 行为不变
+    const q32p2 = { ...q32p1, id: 'YH-Q32B', quantity: 90 }
+    db.plans.unshift(q32p2)
+    const r2 = createDispatches(q32p2, 3)
+    const q2 = r2.created.map((d) => d.quantity)
+    check('环节32：90吨拆3车整除 = 30/30/30（行为不变）', r2.created.length === 3 && q2.join('/') === '30/30/30')
+    // 场景3：2 吨拆 3 车（每车至少1吨，余数≤0）→ 自动降级为 2 车各 1 吨（Σ=2，不超量）
+    const q32p3 = { ...q32p1, id: 'YH-Q32C', quantity: 2 }
+    db.plans.unshift(q32p3)
+    const r3 = createDispatches(q32p3, 3)
+    const q3 = r3.created.map((d) => d.quantity)
+    check('环节32：2吨拆3车（余数≤0）= 降级2车各1吨（Σ=2）', r3.created.length === 2 && q3.join('/') === '1/1' && q3.reduce((s, x) => s + x, 0) === 2)
+    // 清理：取消测试车次 + 删计划
+    for (const d of [...r1.created, ...r2.created, ...r3.created]) {
+      d.status = 'cancelled'
+      releaseResource(d)
+    }
+    for (const pid of ['YH-Q32A', 'YH-Q32B', 'YH-Q32C']) {
+      const pi = db.plans.findIndex((x) => x.id === pid)
+      if (pi > -1) db.plans.splice(pi, 1)
+    }
+  } else {
+    console.log('  - 跳过拆车余数（无执行中的非公路合同）')
+  }
 }
 
 console.log(`\n结果：${pass} 通过，${fail} 失败`)

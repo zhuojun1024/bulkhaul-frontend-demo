@@ -109,7 +109,60 @@
               <el-tag size="small" type="info" effect="plain">共 {{ settlements.length }} 笔</el-tag>
             </div>
             <div class="panel__body">
-              <el-table :data="settlements" size="small" stripe>
+              <el-table :data="settlements" size="small" stripe row-key="id">
+                <!-- F3：对账明细展开行——逐车次展示 调度量/进磅/出磅/结算量/损耗/质量扣重/差异，确认与异议有据可依 -->
+                <el-table-column type="expand">
+                  <template #default="{ row }">
+                    <div v-if="row.reconciliation" class="recon-detail">
+                      <div class="recon-detail__summary">
+                        对账时间：{{ row.reconciliation.date }}　·　差异车次 {{ row.reconciliation.diffCount }}　·　
+                        损耗 {{ row.reconciliation.lossQty }} 吨（{{ formatMoney(row.reconciliation.lossAmount) }}）　·　
+                        质量扣重 {{ row.reconciliation.qualityQty }} 吨（{{ formatMoney(row.reconciliation.qualityAmount) }}）
+                      </div>
+                      <el-table :data="row.reconciliation.items" size="small" stripe>
+                        <el-table-column prop="dispatchId" label="调度单号" width="110" />
+                        <el-table-column prop="plate" label="车牌/单元" width="110" />
+                        <el-table-column label="调度量(吨)" width="100" align="right">
+                          <template #default="{ row: i }"><span class="num">{{ i.dispatchQty }}</span></template>
+                        </el-table-column>
+                        <el-table-column label="进磅(吨)" width="90" align="right">
+                          <template #default="{ row: i }"><span class="num">{{ i.inNet != null ? i.inNet : '—' }}</span></template>
+                        </el-table-column>
+                        <el-table-column label="出磅(吨)" width="90" align="right">
+                          <template #default="{ row: i }"><span class="num">{{ i.outNet != null ? i.outNet : '—' }}</span></template>
+                        </el-table-column>
+                        <el-table-column label="结算量(吨)" width="100" align="right">
+                          <template #default="{ row: i }"><span class="num">{{ i.settleQty }}</span></template>
+                        </el-table-column>
+                        <el-table-column label="损耗(吨)" width="90" align="right">
+                          <template #default="{ row: i }"><span class="num">{{ i.loss }}</span></template>
+                        </el-table-column>
+                        <el-table-column label="质量扣重(吨)" width="110" align="right">
+                          <template #default="{ row: i }"><span class="num">{{ i.qualityQty }}</span></template>
+                        </el-table-column>
+                        <el-table-column label="差异(吨)" width="90" align="right">
+                          <template #default="{ row: i }">
+                            <span class="num" :class="{ 'text-danger': i.status === 'diff' }">{{ i.diff }}</span>
+                          </template>
+                        </el-table-column>
+                        <el-table-column label="签收" width="70" align="center">
+                          <template #default="{ row: i }">
+                            <el-tag v-if="i.hasReceipt === true" size="small" type="success" effect="light">已签收</el-tag>
+                            <el-tag v-else-if="i.hasReceipt === false" size="small" type="danger" effect="light">未签收</el-tag>
+                            <span v-else class="text-muted">—</span>
+                          </template>
+                        </el-table-column>
+                        <el-table-column label="比对" width="80" align="center">
+                          <template #default="{ row: i }">
+                            <el-tag v-if="i.status === 'diff'" size="small" type="danger" effect="light">差异</el-tag>
+                            <el-tag v-else size="small" type="success" effect="light">一致</el-tag>
+                          </template>
+                        </el-table-column>
+                      </el-table>
+                    </div>
+                    <div v-else class="recon-detail__empty">该账单尚未对账，暂无明细</div>
+                  </template>
+                </el-table-column>
                 <el-table-column prop="billNo" label="账单编号" min-width="140" />
                 <el-table-column prop="period" label="周期" width="90" />
                 <el-table-column label="金额" width="130" align="right">
@@ -523,5 +576,23 @@ const invoiceStatusMap = {
 
 .text-danger {
   color: var(--color-danger);
+}
+
+/* F3：对账明细展开行 */
+.recon-detail {
+  padding: 8px 16px 4px;
+  background: var(--bg-subtle, rgba(0, 0, 0, 0.02));
+}
+
+.recon-detail__summary {
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.recon-detail__empty {
+  padding: 12px 16px;
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 </style>

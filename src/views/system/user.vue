@@ -62,7 +62,7 @@
               />
             </template>
           </el-table-column>
-          <el-table-column v-if="can('user')" label="操作" width="190" align="center" fixed="right">
+          <el-table-column v-if="can('user')" label="操作" width="250" align="center" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" size="small" @click="openDialog(row)">编辑</el-button>
               <el-button
@@ -70,6 +70,11 @@
                 link type="warning" size="small"
                 @click="openScope(row)"
               >数据范围</el-button>
+              <!-- F4c：管理员重置密码（忘记密码/账号锁定的恢复入口） -->
+              <el-button
+                link type="warning" size="small"
+                @click="openResetPw(row)"
+              >重置密码</el-button>
               <el-button
                 v-if="row.username !== 'admin'"
                 link type="danger" size="small"
@@ -136,6 +141,26 @@
         <el-button type="primary" @click="saveScope">保存</el-button>
       </template>
     </el-dialog>
+
+    <!-- F4c：重置密码（RBAC user，服务层守卫 + 审计，不落新密码明文） -->
+    <el-dialog v-model="resetPwVisible" title="重置登录密码" width="440px">
+      <div v-if="resetPwTarget" class="scope-tip">
+        账号 <b>@{{ resetPwTarget.username }}</b>（{{ resetPwTarget.role }}）
+      </div>
+      <el-form label-width="90px" style="margin-top: 12px">
+        <el-form-item label="新密码" required>
+          <el-input v-model="resetPwForm.password" type="password" show-password placeholder="至少 6 位" />
+        </el-form-item>
+        <el-form-item label="确认密码" required>
+          <el-input v-model="resetPwForm.confirm" type="password" show-password placeholder="再次输入新密码" />
+        </el-form-item>
+      </el-form>
+      <div class="scope-tip">重置后该账号立即生效，旧密码失效；请通过安全渠道告知用户新密码。</div>
+      <template #footer>
+        <el-button @click="resetPwVisible = false">取消</el-button>
+        <el-button type="primary" @click="saveResetPw">确认重置</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -146,7 +171,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Plus, Refresh } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { db } from '@/mock'
-import { removeUser as flowRemoveUser, saveUser, toggleUserStatus, DATA_REGIONS, setDataScope } from '@/mock/flow'
+import { removeUser as flowRemoveUser, saveUser, toggleUserStatus, resetPassword, DATA_REGIONS, setDataScope } from '@/mock/flow'
 import { usePerm } from '@/permission'
 
 const { can } = usePerm()
@@ -173,6 +198,35 @@ function saveScope() {
   }
   scopeVisible.value = false
   ElMessage.success(scopeForm.regions.length ? `数据范围已设为：${scopeForm.regions.join('、')}` : '已恢复全量数据')
+}
+
+/* ===== F4c：重置密码（RBAC user，服务层守卫 + 审计） ===== */
+const resetPwVisible = ref(false)
+const resetPwTarget = ref(null)
+const resetPwForm = reactive({ password: '', confirm: '' })
+
+function openResetPw(row) {
+  resetPwTarget.value = row
+  Object.assign(resetPwForm, { password: '', confirm: '' })
+  resetPwVisible.value = true
+}
+
+function saveResetPw() {
+  if (!resetPwForm.password) {
+    ElMessage.warning('请设置新密码')
+    return
+  }
+  if (resetPwForm.password !== resetPwForm.confirm) {
+    ElMessage.warning('两次输入的密码不一致')
+    return
+  }
+  const r = resetPassword(resetPwTarget.value.id, resetPwForm.password)
+  if (r && r.error) {
+    ElMessage.error(r.error)
+    return
+  }
+  resetPwVisible.value = false
+  ElMessage.success(`账号 ${resetPwTarget.value.username} 密码已重置`)
 }
 
 
