@@ -121,7 +121,9 @@ import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { User, Lock, Key } from '@element-plus/icons-vue'
 import { useUserStore } from '@/store'
-import { setOperator, login as serviceLogin, generateCaptcha } from '@/mock/flow'
+import { setOperator } from '@/mock/flow'
+import { db } from '@/mock'
+import { api, hydrate } from '@/mock/api'
 import dayjs from 'dayjs'
 
 const router = useRouter()
@@ -142,13 +144,15 @@ const rules = {
   // 验证码不设必填校验：空验证码交由服务层判定（与 M8 失败锁定口径一致，服务层为唯一校验点）
 }
 
-/* ===== 环节9：登录验证码（一次性、60 秒有效，点击图片刷新） ===== */
+/* ===== 环节9：登录验证码（一次性、60 秒有效，点击图片刷新）——切真实 API：GET /api/auth/captcha ===== */
 const captchaId = ref('')
 const captchaSvg = ref('')
-function refreshCaptcha() {
-  const cap = generateCaptcha()
-  captchaId.value = cap.id
-  captchaSvg.value = cap.svg
+async function refreshCaptcha() {
+  const r = await api('GET', '/auth/captcha')
+  if (r.ok && r.data) {
+    captchaId.value = r.data.id
+    captchaSvg.value = r.data.svg
+  }
 }
 
 const features = [
@@ -250,42 +254,57 @@ onMounted(() => {
   if (form.username.trim()) checkLock(form.username.trim())
 })
 
-function onLogin() {
-  formRef.value.validate((valid) => {
-    if (!valid) return
-    const id = form.username.trim()
-    // M8：锁定期内直接拦截（不触达账号校验）
-    if (checkLock(id)) {
-      ElMessage.error(`登录失败次数过多，账号已锁定，请 ${lockLeft.value} 秒后再试`)
-      return
-    }
-    // 环节9：服务层校验（验证码一次性 + 密码哈希比对 + 账号状态），审计日志由服务层记录
-    const result = serviceLogin(id, form.password, captchaId.value, form.captcha)
-    if (result.ok) {
-      clearFail(id)
-      setOperator(result.user)
-      userStore.login(result.user)
-      result.user.lastLogin = dayjs().format('YYYY-MM-DD HH:mm')
-      ElMessage.success(`登录成功，欢迎回来，${result.user.name}`)
-      // 司机角色进司机端，客户角色进门户，其余角色进工作台
-      const home = result.user.role === '司机' ? '/driver-app' : result.user.role === '客户' ? '/portal' : '/workbench'
-      router.push(route.query.redirect || home)
-      return
-    }
-    // M8：验证码/凭据失败计入锁定（停用账号不计）；失败后刷新验证码供重试
-    if (result.code === 'credential' || result.code === 'captcha') {
-      const rec = recordFail(id)
-      if (rec.until) {
-        checkLock(id)
-        ElMessage.error(`登录失败次数过多，连续 ${MAX_FAILS} 次失败，账号已锁定 5 分钟`)
-      } else {
-        ElMessage.error(`${result.error}，还剩 ${MAX_FAILS - rec.count} 次机会将锁定账号`)
-      }
-    } else {
-      ElMessage.error(result.error)
-    }
-    refreshCaptcha()
+async function onLogin() {
+  const valid = await new Promise((resolve) => formRef.value.validate(resolve))
+  if (!valid) return
+  const id = form.username.trim()
+  // M8：锁定期内直接拦截（不触达账号校验）
+  if (checkLock(id)) {
+    ElMessage.error(`登录失败次数过多，账号已锁定，请 ${lockLeft.value} 秒后再试`)
+    return
+  }
+  // 环节9：真实 API 登录（POST /api/auth/login：验证码一次性 + bcrypt 密码 + 账号状态，审计由后端记录）
+  const result = await api('POST', '/auth/login', {
+    username: id,
+    password: form.password,
+    captchaId: captchaId.value,
+    captchaCode: form.captcha
   })
+  if (result.ok && result.data) {
+    clearFail(id)
+    const token = result.data.token
+    // 先落 token（hydrate 依赖 localStorage 里的 token 鉴权），再 hydrate 后端权威态
+    userStore.login(result.data.user, token)
+    try {
+      await hydrate()
+    } catch (e) {
+      console.warn('[登录] hydrate 失败：', e && e.message)
+    }
+    // 后端 login 不返回 phone，从 hydrate 后的 db.users 取完整档案（含 phone/driverId，供导航栏/司机端）
+    const full = db.users.find((u) => u.username === id) || result.data.user
+    setOperator(full)
+    userStore.userInfo.phone = full.phone || ''
+    userStore.userInfo.driverId = full.driverId || ''
+    full.lastLogin = dayjs().format('YYYY-MM-DD HH:mm')
+    ElMessage.success(`登录成功，欢迎回来，${full.name}`)
+    // 司机角色进司机端，客户角色进门户，其余角色进工作台
+    const home = full.role === '司机' ? '/driver-app' : full.role === '客户' ? '/portal' : '/workbench'
+    router.push(route.query.redirect || home)
+    return
+  }
+  // M8：验证码/凭据失败计入锁定（停用账号不计）；失败后刷新验证码供重试
+  if (result.code === 'credential' || result.code === 'captcha') {
+    const rec = recordFail(id)
+    if (rec.until) {
+      checkLock(id)
+      ElMessage.error(`登录失败次数过多，连续 ${MAX_FAILS} 次失败，账号已锁定 5 分钟`)
+    } else {
+      ElMessage.error(`${result.error}，还剩 ${MAX_FAILS - rec.count} 次机会将锁定账号`)
+    }
+  } else {
+    ElMessage.error(result.error || '登录失败')
+  }
+  refreshCaptcha()
 }
 </script>
 

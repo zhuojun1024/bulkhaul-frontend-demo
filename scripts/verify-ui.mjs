@@ -62,8 +62,29 @@ const MIME = {
   '.woff': 'font/woff',
   '.woff2': 'font/woff2'
 }
+const { request: httpRequest } = await import('node:http')
 const server = createServer((req, res) => {
   const urlPath = decodeURIComponent(new URL(req.url, BASE).pathname)
+  // 切真实 API：/api/* 反向代理到后端 8081（无 CORS，前端用相对 /api）
+  if (urlPath.startsWith('/api')) {
+    const opts = {
+      host: '127.0.0.1',
+      port: 8081,
+      path: req.url,
+      method: req.method,
+      headers: { ...req.headers, host: '127.0.0.1:8081' }
+    }
+    const proxyReq = httpRequest(opts, (proxyRes) => {
+      res.writeHead(proxyRes.statusCode || 502, proxyRes.headers)
+      proxyRes.pipe(res)
+    })
+    proxyReq.on('error', (e) => {
+      res.writeHead(502, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ ok: false, error: '后端代理失败: ' + e.message, code: 'proxy' }))
+    })
+    req.pipe(proxyReq)
+    return
+  }
   let filePath = path.join(DIST, urlPath === '/' ? 'index.html' : urlPath)
   if (!filePath.startsWith(DIST) || !existsSync(filePath) || !path.extname(filePath)) {
     filePath = path.join(DIST, 'index.html')
@@ -127,6 +148,10 @@ async function login(page, username, password) {
     btn.click()
   })
   await page.waitForFunction((u) => localStorage.getItem('blms_user') === u, { timeout: 15000 }, username)
+  // 切真实 API：登录页 onLogin 在 blms_user 落盘后才 hydrate() 填充 db.users 并 router.push(home)。
+  // 路由守卫读 db.users 判定权限，须等浏览器离开登录页（hydrate + 导航完成）后再做后续导航，
+  // 否则守卫因 db.users 未填充而误判未登录 → 重定向回登录页。
+  await page.waitForFunction(() => !window.location.hash.startsWith('#/login'), { timeout: 15000 })
 }
 
 /** 应用内 hash 导航 */
@@ -134,6 +159,45 @@ async function nav(page, hash) {
   await page.evaluate((h) => {
     window.location.hash = h
   }, hash)
+}
+
+/* ===== 切真实 API：node 侧读后端快照（替代旧架构的 localStorage['blms_db_snapshot']） =====
+ * 新架构 db 由后端 hydrate（GET /api/snapshot），浏览器不再写 localStorage 快照。
+ * 测试需要"种子态"或"写后持久化"数据时，node 侧直接登录后端拉快照（独立于浏览器）。 */
+const BACKEND = 'http://127.0.0.1:8081/api'
+let _backendToken = null
+async function getBackendSnapshot() {
+  if (!_backendToken) {
+    const cap = (await (await fetch(BACKEND + '/auth/captcha')).json()).data
+    const loginRes = await fetch(BACKEND + '/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'admin', password: '123456', captchaId: cap.id, captchaCode: cap.code })
+    })
+    _backendToken = (await loginRes.json()).data.token
+  }
+  const snapRes = await fetch(BACKEND + '/snapshot', { headers: { Authorization: 'Bearer ' + _backendToken } })
+  return (await snapRes.json()).data
+}
+/** 轮询后端快照直到条件满足（替代旧架构的 page.waitForFunction 读 localStorage）；超时返回 false */
+async function waitForBackend(condFn, { timeout = 15000, interval = 500 } = {}) {
+  const start = Date.now()
+  for (;;) {
+    const v = condFn(await getBackendSnapshot())
+    if (v) return v
+    if (Date.now() - start > timeout) return false
+    await new Promise((r) => setTimeout(r, interval))
+  }
+}
+/** 重置后端内存数据仓库回种子态（等价旧架构"每场景全新种子"：跨场景恢复种子前置数据）。
+ *  回归组（场景 16-19）依赖种子前置数据，而主链路组（场景 1-15）会消耗种子资源，
+ *  故每个回归场景开始前重置，保证浏览器 hydrate 与 node 侧 waitForBackend 都读到种子态。 */
+async function resetDemo() {
+  await getBackendSnapshot() // 确保 token 已登录
+  const res = await fetch(BACKEND + '/admin/reset-demo', { method: 'POST', headers: { Authorization: 'Bearer ' + _backendToken } })
+  const r = await res.json()
+  if (!r.ok) console.log('  [reset-demo] 重置失败：', r.error)
+  return r.ok
 }
 
 /** 弹窗内 el-select（按表单项标签定位）：打开下拉 → 输入过滤 → 点击匹配选项 */
@@ -729,23 +793,16 @@ try {
   console.log('== 14. N-1：司机账号全链路扫码（司机端入口不被 RBAC 拦截） ==')
   {
     const { ctx, page } = await newPage(browser)
-    // 1) 从种子快照取"待装货公路车次 + 司机启用账号（手机号=登录账号）"组合
+    // 1) 从后端快照取"待装货公路车次 + 司机启用账号（手机号=登录账号）"组合
     await page.goto(BASE + '/#/login', { waitUntil: 'networkidle0' })
-    const seedHandle = await page.waitForFunction(
-      () => {
-        const raw = localStorage.getItem('blms_db_snapshot')
-        if (!raw) return false
-        const snap = JSON.parse(raw)
+    const seed = await waitForBackend((snap) => {
         const d = (snap.dispatches || []).find((x) => x.status === 'pending' && x.vehicleId)
         if (!d) return false
         const drv = (snap.drivers || []).find((x) => x.id === d.driverId && x.status !== 'disabled')
         if (!drv) return false
         const u = (snap.users || []).find((x) => x.username === drv.phone && x.status === 'active')
         return u ? { dispatchId: d.id, phone: drv.phone } : false
-      },
-      { timeout: 15000 }
-    )
-    const seed = await seedHandle.jsonValue()
+      }, { timeout: 15000 })
     check('N-1：种子含待装货公路车次与司机手机号账号', !!seed)
     if (seed) {
       // 2) 手机号登录 → 直达司机端（账号锁定本人）
@@ -840,6 +897,7 @@ try {
 
   /* ===== 场景 16：环节1-3 UI（补签入口 / 客户异议 / 改价审批） ===== */
   console.log('== 16. 环节1-3：补签入口 + 客户异议 + 改价审批（UI 接线） ==')
+  await resetDemo() // 回归组起点：主链路组（1-15）已消耗种子资源，重置回种子态
   {
     const { ctx, page } = await newPage(browser)
     // 页面工具：可见弹窗内按钮（按标题定位，规避已关闭弹窗残留 DOM）
@@ -865,19 +923,12 @@ try {
         el.dispatchEvent(new Event('input', { bubbles: true }))
       }
     })
-    // 种子快照：取"已完成未签收公路车次"与"执行中合同"
-    const seedHandle = await page.waitForFunction(
-      () => {
-        const raw = localStorage.getItem('blms_db_snapshot')
-        if (!raw) return false
-        const snap = JSON.parse(raw)
+    // 后端快照：取"已完成未签收公路车次"与"执行中合同"
+    const seed = await waitForBackend((snap) => {
         const d = (snap.dispatches || []).find((x) => x.status === 'completed' && x.vehicleId && !x.receipt)
         const c = (snap.contracts || []).find((x) => x.status === 'executing')
         return d && c ? { dispatchId: d.id, contractId: c.id } : false
-      },
-      { timeout: 15000 }
-    )
-    const seed = await seedHandle.jsonValue()
+      }, { timeout: 15000 })
     check('环节1：种子含已完成未签收公路车次（补签演示前置）', !!seed)
     if (seed) {
       // 环节1：admin 调度详情"补签"
@@ -988,6 +1039,7 @@ try {
 
   /* ===== 场景 17：环节4-6 UI（质量扣减 / 预付款管理 / 消息免打扰） ===== */
   console.log('== 17. 环节4-6：质量扣减 + 预付款管理 + 消息免打扰（UI 接线） ==')
+  await resetDemo() // 场景 16 已改后端态，重置回种子态保证种子前置数据
   {
     const { ctx, page } = await newPage(browser)
     await page.goto(BASE + '/#/login', { waitUntil: 'networkidle0' })
@@ -1012,21 +1064,14 @@ try {
         el.dispatchEvent(new Event('input', { bubbles: true }))
       }
     })
-    // 种子快照：质量扣减账单 + CUS001 已结算/逾期未付清账单（预付款抵扣演示）
-    const seedHandle = await page.waitForFunction(
-      () => {
-        const raw = localStorage.getItem('blms_db_snapshot')
-        if (!raw) return false
-        const snap = JSON.parse(raw)
+    // 后端快照：质量扣减账单 + CUS001 已结算/逾期未付清账单（预付款抵扣演示）
+    const seed = await waitForBackend((snap) => {
         const s1 = (snap.settlements || []).find((x) => x.qualityDeduction > 0 && x.reconciliation)
         const s2 = (snap.settlements || []).find(
           (x) => x.customerId === 'CUS001' && ['settled', 'overdue'].includes(x.status) && x.totalAmount - x.paidAmount > 0
         )
         return s1 && s2 ? { qualitySettleId: s1.id, prepaySettleId: s2.id } : false
-      },
-      { timeout: 15000 }
-    )
-    const seed = await seedHandle.jsonValue()
+      }, { timeout: 15000 })
     check('环节4：种子含质量扣减账单（结算演示前置）', !!seed)
     if (seed) {
       await login(page, 'admin', '123456')
@@ -1113,23 +1158,19 @@ try {
         { timeout: 10000 }
       )
       check('环节6：保存后系统类消息显示"免打扰"标记', true)
-      // 设置持久化（快照 dnd.admin）
-      const dndSaved = await page.waitForFunction(
-        () => {
-          const raw = localStorage.getItem('blms_db_snapshot')
-          if (!raw) return false
-          const snap = JSON.parse(raw)
-          return snap.dnd && snap.dnd.admin && snap.dnd.admin.enabled === true && (snap.dnd.admin.mutedTypes || []).includes('system')
-        },
+      // 设置持久化（后端快照 dnd.admin）
+      const dndSaved = await waitForBackend(
+        (snap) => snap.dnd && snap.dnd.admin && snap.dnd.admin.enabled === true && (snap.dnd.admin.mutedTypes || []).includes('system'),
         { timeout: 10000 }
       )
-      check('环节6：免打扰设置随快照持久化（dnd.admin）', !!(await dndSaved.jsonValue()))
+      check('环节6：免打扰设置随后端快照持久化（dnd.admin）', !!dndSaved)
     }
     await ctx.close()
   }
 
   /* ===== 场景 18：环节7-8 UI（安全库存预警 / 数据权限行级过滤） ===== */
   console.log('== 18. 环节7-8：安全库存预警 + 数据权限（UI 接线） ==')
+  await resetDemo() // 场景 17 已改后端态，重置回种子态
   {
     // 环节7：库存管理"低于安全库存"预警面板 + 安全库存设置（admin）
     const { ctx, page } = await newPage(browser)
@@ -1176,18 +1217,15 @@ try {
       })
       await page.evaluate(() => window.__visDialogBtn('安全库存设置', '保存').click())
       await page.waitForFunction(() => !window.__visDialog('安全库存设置'), { timeout: 10000 })
-      // 设置持久化（快照 safetyStocks WH001/CM001 = 1234）
-      const sqSaved = await page.waitForFunction(
-        () => {
-          const raw = localStorage.getItem('blms_db_snapshot')
-          if (!raw) return false
-          const snap = JSON.parse(raw)
+      // 设置持久化（后端快照 safetyStocks WH001/CM001 = 1234）
+      const sqSaved = await waitForBackend(
+        (snap) => {
           const sq = (snap.safetyStocks || []).find((s) => s.warehouseId === 'WH001' && s.commodityId === 'CM001')
           return sq && sq.minQty === 1234
         },
         { timeout: 10000 }
       )
-      check('环节7：安全库存设置保存并随快照持久化（WH001/动力煤 = 1234）', !!(await sqSaved.jsonValue()))
+      check('环节7：安全库存设置保存并随后端快照持久化（WH001/动力煤 = 1234）', !!sqSaved)
     }
     await ctx.close()
   }
@@ -1195,22 +1233,15 @@ try {
     // 环节8：数据权限行级过滤（user02 调度员，仅华北装货侧）
     const { ctx, page } = await newPage(browser)
     await login(page, 'user02', '123456')
-    // 种子快照：计算华北装货侧调度单数（行级过滤预期值）
-    const seedHandle = await page.waitForFunction(
-      () => {
-        const raw = localStorage.getItem('blms_db_snapshot')
-        if (!raw) return false
-        const snap = JSON.parse(raw)
+    // 后端快照：计算华北装货侧调度单数（行级过滤预期值）
+    const seed = await waitForBackend((snap) => {
         if (!snap.dispatches || !snap.dataScopes) return false
         const north = new Set(['T001', 'T002', 'T003', 'T004', 'T005', 'T011'])
         const scoped = snap.dispatches.filter((d) => north.has(d.loadTerminalId)).length
         return scoped > 0 && scoped < snap.dispatches.length
           ? { scopedCount: scoped, totalCount: snap.dispatches.length, user02: snap.dataScopes.user02 }
           : false
-      },
-      { timeout: 15000 }
-    )
-    const seed = await seedHandle.jsonValue()
+      }, { timeout: 15000 })
     check('环节8：种子数据范围（user02 = 华北，且为真子集）', !!seed && seed.user02.regions.join() === '华北')
     if (seed) {
       await nav(page, '#/dispatch')
@@ -1232,6 +1263,7 @@ try {
 
   /* ===== 场景 19：环节9-10 UI（登录验证码 / 单证归档） ===== */
   console.log('== 19. 环节9-10：登录验证码 + 单证归档（UI 接线） ==')
+  await resetDemo() // 场景 18 已改后端态，重置回种子态（单证归档需种子单证）
   {
     const { ctx, page } = await newPage(browser)
     // 环节9：登录页验证码渲染 + 错误验证码拒绝 + 正确验证码登录

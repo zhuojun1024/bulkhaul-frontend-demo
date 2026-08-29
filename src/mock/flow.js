@@ -2,6 +2,7 @@ import { db, randInt, randomName, ROUTES, MAP_NODES, NOW, tareOf, loadVarianceOf
 import { ROLE_ACTIONS } from '@/permission-table'
 import dayjs from 'dayjs'
 import { round, formatMoney, hashPassword } from '@/utils'
+import { afterWrite } from './api'
 
 export { tareOf, ROAD_MODES, isRoadMode }
 
@@ -230,12 +231,14 @@ export function visibleMessages() {
 
 /** 标记消息已读（仅当前操作人可见的消息可标记，服务层守卫） */
 export function markMessageRead(m) {
+  afterWrite('markMessageRead', m)
   if (m && !m.read && (!m.to || m.to.includes(operator.role) || operator.role === '平台管理员')) m.read = true
   return { ok: true }
 }
 
 /** 全部标记已读（仅标记当前操作人可见的消息，避免把其他角色的定向消息标读），返回本次标记条数 */
 export function markAllMessagesRead() {
+  afterWrite('markAllMessagesRead')
   let n = 0
   for (const m of visibleMessages()) {
     if (!m.read) {
@@ -258,6 +261,7 @@ export function getDnd() {
 
 /** 保存免打扰设置（未登录态拒绝） */
 export function setDnd(settings) {
+  afterWrite('setDnd', settings)
   if (!operator.username) return { error: '未登录，无法保存免打扰设置' }
   db.dnd = db.dnd || {}
   db.dnd[operator.username] = {
@@ -326,6 +330,7 @@ export function visiblePlans() {
 
 /** 设置数据范围（RBAC：user）；regions 传 [] 清除范围（恢复全量）；平台管理员不可被限制 */
 export function setDataScope(username, regions) {
+  afterWrite('setDataScope', username, regions)
   const permErr = requireAction('user')
   if (permErr) return permErr
   const u = db.users.find((x) => x.username === username)
@@ -361,6 +366,7 @@ function pushWeighing(d, type, net, time) {
 
 /** 磅单补录：场站操作员对尚无该类型磅单的车次手工录单（仅公路口径车次） */
 export function manualWeighing(dispatchId, type, net) {
+  afterWrite('manualWeighing', dispatchId, type, net)
   const permErr = requireAction('weighing')
   if (permErr) return permErr
   const d = db.dispatches.find((x) => x.id === dispatchId)
@@ -379,6 +385,7 @@ export function manualWeighing(dispatchId, type, net) {
  *  结算联动：车次已入账单时按当前磅单重算金额；已对账/已结算账单因客户确认基于旧磅单而失效，
  *  回"待对账"并清除客户确认与对账快照，须重新对账 + 客户再确认（与异常补扣失效确认同机制） */
 export function correctWeighing(weighingId, newNet, reason) {
+  afterWrite('correctWeighing', weighingId, newNet, reason)
   const permErr = requireAction('weighing')
   if (permErr) return permErr
   const w = db.weighings.find((x) => x.id === weighingId)
@@ -574,6 +581,7 @@ function warehouseIn(d) {
  *  批次号缺省 B{YYMMDD}-M{序号}；入库后 wh.used 累加；留痕 + 通知仓储角色
  *  用途：解开"装货出库守卫拦截后无补库入口"的死路（库存扣到 0 可手工补库恢复装货） */
 export function manualInbound(warehouseId, commodityId, quantity, batch = '', remark = '') {
+  afterWrite('manualInbound', warehouseId, commodityId, quantity, batch, remark)
   const permErr = requireAction('warehouse')
   if (permErr) return permErr
   const wh = db.warehouses.find((x) => x.id === warehouseId)
@@ -678,6 +686,7 @@ function doConfirmLoad(d) {
 
 /** 确认装货（PC 端入口：RBAC 单点校验 dispatch） */
 export function confirmLoad(d) {
+  afterWrite('confirmLoad', d)
   const permErr = requireAction('dispatch')
   if (permErr) return permErr
   return doConfirmLoad(d)
@@ -698,6 +707,7 @@ function doDepart(d) {
 
 /** 发车（PC 端入口：RBAC 单点校验 dispatch） */
 export function depart(d) {
+  afterWrite('depart', d)
   const permErr = requireAction('dispatch')
   if (permErr) return permErr
   return doDepart(d)
@@ -716,6 +726,7 @@ function doArrive(d) {
 
 /** 到达（PC 端入口：RBAC 单点校验 dispatch） */
 export function arrive(d) {
+  afterWrite('arrive', d)
   const permErr = requireAction('dispatch')
   if (permErr) return permErr
   return doArrive(d)
@@ -761,6 +772,7 @@ function doConfirmUnload(d) {
 
 /** 确认卸货（PC 端入口：RBAC 单点校验 dispatch） */
 export function confirmUnload(d) {
+  afterWrite('confirmUnload', d)
   const permErr = requireAction('dispatch')
   if (permErr) return permErr
   return doConfirmUnload(d)
@@ -770,6 +782,7 @@ export function confirmUnload(d) {
  *  装货前车辆/司机仅被本单占用（status 仍 idle/available，经 BUSY_STATUSES 视为占用），
  *  取消后本单退出 BUSY_STATUSES，车辆/司机即回到可用，无需回滚仓储（装货前未出库）；回卷计划进度 */
 export function cancelDispatch(d, reason) {
+  afterWrite('cancelDispatch', d, reason)
   const permErr = requireAction('dispatch')
   if (permErr) return permErr
   if (d.status !== 'pending') return { error: `调度单 ${d.id} 当前非"待装货"状态，无法取消（仅装货前可取消）` }
@@ -787,6 +800,7 @@ export function cancelDispatch(d, reason) {
 /** 改派调度单（RBAC：dispatch）：仅"待装货"（装货前）公路车次可换车/换司机
  *  目标车辆/司机须空闲、年检/驾照未过期且无其他未完结车次（排除本单自身占用）；换司机后需重新接单 */
 export function reassignDispatch(d, vehicleId, driverId) {
+  afterWrite('reassignDispatch', d, vehicleId, driverId)
   const permErr = requireAction('dispatch')
   if (permErr) return permErr
   if (d.status !== 'pending') return { error: `调度单 ${d.id} 当前非"待装货"状态，无法改派（仅装货前可改派）` }
@@ -860,6 +874,7 @@ function createException(d, description, type, level, source = '') {
 
 /** 上报异常（用户操作入口：RBAC 单点校验 exception）：→ exception，生成异常单；事故类同步生成事故记录 */
 export function reportException(d, description, type = 'other', level = 'medium') {
+  afterWrite('reportException', d, description, type, level)
   const permErr = requireAction('exception')
   if (permErr) return permErr
   return createException(d, description, type, level)
@@ -868,6 +883,7 @@ export function reportException(d, description, type = 'other', level = 'medium'
 /** 恢复运输：exception → 异常前原状态（F1：按 exceptionFrom 精确恢复，
  *  loading/intransit/unloading 各自回原态；无 exceptionFrom 的旧数据回退 loadTime 二分）（RBAC：dispatch） */
 export function resumeDispatch(d) {
+  afterWrite('resumeDispatch', d)
   const permErr = requireAction('dispatch')
   if (permErr) return permErr
   if (d.status !== 'exception') return { error: `调度单 ${d.id} 当前非"异常"状态，无法恢复运输` }
@@ -898,6 +914,7 @@ export function resumeDispatch(d) {
 
 /** 受理异常：pending → handling，指派处理人（RBAC：exception） */
 export function acceptException(e, handler) {
+  afterWrite('acceptException', e, handler)
   const permErr = requireAction('exception')
   if (permErr) return permErr
   e.handler = handler
@@ -907,6 +924,7 @@ export function acceptException(e, handler) {
 
 /** 处置完成：填写处置结果与损失金额（RBAC：exception） */
 export function finishException(e, result, cost) {
+  afterWrite('finishException', e, result, cost)
   const permErr = requireAction('exception')
   if (permErr) return permErr
   e.result = result
@@ -924,6 +942,7 @@ export function finishException(e, result, cost) {
 /** 关闭归档：closed；事故类同步结案并更新车辆状态
  *  结算联动：车次已入账单且损失未计入 → 补扣损失（结算调整），避免"结算后异常才关闭"损失漏扣（RBAC：exception） */
 export function closeException(e) {
+  afterWrite('closeException', e)
   const permErr = requireAction('exception')
   if (permErr) return permErr
   e.status = 'closed'
@@ -991,6 +1010,7 @@ export function closeException(e) {
 
 /** 事故登记：手工登记事故记录（不一定关联车次异常单，如场外/历史事故补录）（RBAC：safety） */
 export function registerAccident(payload) {
+  afterWrite('registerAccident', payload)
   const permErr = requireAction('safety')
   if (permErr) return permErr
   const v = payload.vehicleId ? vehicleOf(payload.vehicleId) : null
@@ -1014,6 +1034,7 @@ export function registerAccident(payload) {
 
 /** 事故结案：handling → closed（独立入口，不依赖异常单关闭）（RBAC：safety） */
 export function closeAccident(a) {
+  afterWrite('closeAccident', a)
   const permErr = requireAction('safety')
   if (permErr) return permErr
   if (a.status !== 'handling') return { error: `事故 ${a.id} 当前非"处理中"状态，无法结案` }
@@ -1025,6 +1046,7 @@ export function closeAccident(a) {
 
 /** 培训计划：新建培训（计划中，参训司机待标记完成时记录）（RBAC：safety） */
 export function addTraining(payload) {
+  afterWrite('addTraining', payload)
   const permErr = requireAction('safety')
   if (permErr) return permErr
   if (!payload.title || !payload.title.trim()) return { error: '请填写培训主题' }
@@ -1046,6 +1068,7 @@ export function addTraining(payload) {
 
 /** 培训完成：计划中 → 已完成，记录实际参训司机（覆盖率口径按 driverIds 计算）（RBAC：safety） */
 export function completeTraining(t, driverIds) {
+  afterWrite('completeTraining', t, driverIds)
   const permErr = requireAction('safety')
   if (permErr) return permErr
   if (t.status !== 'scheduled') return { error: `培训 ${t.id} 当前非"计划中"状态，无法标记完成` }
@@ -1059,6 +1082,7 @@ export function completeTraining(t, driverIds) {
 
 /** 车辆检查登记（RBAC：safety） */
 export function addInspection(payload) {
+  afterWrite('addInspection', payload)
   const permErr = requireAction('safety')
   if (permErr) return permErr
   const v = payload.vehicleId ? vehicleOf(payload.vehicleId) : null
@@ -1118,6 +1142,7 @@ export function validateResourceCommit(v, dr, seen) {
  *  杜绝旧实现"第 M 张失败时前 M-1 张残留、计划状态不更新"的半套调度单；
  *  乐观锁：提交前 validateResourceCommit 二次校验（版本+占用），防并发超占 */
 export function createDispatches(p, count, vehicleIds = []) {
+  afterWrite('createDispatches', p, count, vehicleIds)
   const permErr = requireAction('dispatch')
   if (permErr) return { created: [], error: permErr.error }
   const c = contractOf(p.contractId)
@@ -1396,6 +1421,7 @@ function doGenerateSettlements(keys) {
 
 /** 生成结算单（用户操作入口：RBAC 单点校验 settlement） */
 export function generateSettlements(keys) {
+  afterWrite('generateSettlements', keys)
   const permErr = requireAction('settlement')
   if (permErr) return { error: permErr.error }
   return doGenerateSettlements(keys)
@@ -1456,6 +1482,7 @@ export function buildReconciliation(s, date) {
 
 /** 发起对账：执行三方比对并进入"对账中"（RBAC：settlement） */
 export function startReconcile(s) {
+  afterWrite('startReconcile', s)
   const permErr = requireAction('settlement')
   if (permErr) return permErr
   buildReconciliation(s)
@@ -1467,6 +1494,7 @@ export function startReconcile(s) {
 /** 重算结算单（仅"待对账"账单）：按当前磅单与已关闭异常重算费用，差异记入调整记录
  *  适用场景：生成账单后磅单补录/异常损失变化，对账前刷新金额 */
 export function recalcSettlement(s) {
+  afterWrite('recalcSettlement', s)
   const permErr = requireAction('settlement')
   if (permErr) return permErr
   if (s.status !== 'pending') return { error: `账单 ${s.billNo} 当前非"待对账"状态，无法重算` }
@@ -1515,6 +1543,7 @@ export function recalcSettlementStatus(s) {
  *  环节1 签收硬拦截：公路车次以电子签收单为收货依据，存在未签收公路车次不可确认结算
  *  （非公路豁免：铁路/水运/管道按运输单元执行，无签收凭证；漏签车次经"补签"补齐后放行） */
 export function confirmSettle(s) {
+  afterWrite('confirmSettle', s)
   const permErr = requireAction('settlement')
   if (permErr) return permErr
   if (s.status !== 'reconciling') return { error: `账单 ${s.billNo} 当前非"对账中"状态，无法确认结算` }
@@ -1536,6 +1565,7 @@ export function confirmSettle(s) {
 /** 登记收款：写入收款流水并更新已付金额，超收按未付余额截断（RBAC：settlement）
  *  M5 修复：存在"金额陈旧"发票（已开票但账单额已变化）时拦截收款——须先红冲重开，保证票款一致 */
 export function recordPayment(s, amount, method) {
+  afterWrite('recordPayment', s, amount, method)
   const permErr = requireAction('settlement')
   if (permErr) return permErr
   const staleInv = db.invoices.find((i) => i.settlementId === s.id && i.status === 'issued' && i.stale)
@@ -1563,6 +1593,7 @@ export function recordPayment(s, amount, method) {
  *  联动：预付款抵扣流水冲正时按 prepayUsed 回退对应预付款占用（p.used）；冲正不影响发票金额（发票按账单总额开具），无需红冲
  *  留痕：流水标记 reversed/revertTime/revertReason，审计日志 + 消息通知 */
 export function revertPayment(s, paymentId, reason = '') {
+  afterWrite('revertPayment', s, paymentId, reason)
   const permErr = requireAction('settlement')
   if (permErr) return permErr
   if (!['settled', 'overdue'].includes(s.status)) {
@@ -1592,6 +1623,7 @@ export function revertPayment(s, paymentId, reason = '') {
  *  level：reminder 付款提醒 / formal 正式催收 / legal 法务函；formal、legal 仅逾期账单
  *  每账单按轮次递增，形成催收工作流（提醒 → 正式催收 → 法务函） */
 export function dunning(s, level) {
+  afterWrite('dunning', s, level)
   const permErr = requireAction('settlement')
   if (permErr) return permErr
   if (!['settled', 'overdue'].includes(s.status)) return { error: `账单 ${s.billNo} 当前非"已结算/逾期"状态，无法催收` }
@@ -1642,6 +1674,7 @@ export function prepaymentAvailable(customerId) {
 /** 收取预付款（RBAC：settlement）：客户预付货款入台账，可用于账单抵扣并冲减信用占用
  *  守卫：客户存在且未冻结；金额须大于 0 */
 export function collectPrepayment(customerId, amount, method, remark = '') {
+  afterWrite('collectPrepayment', customerId, amount, method, remark)
   const permErr = requireAction('settlement')
   if (permErr) return permErr
   const c = db.customers.find((x) => x.id === customerId)
@@ -1667,6 +1700,7 @@ export function collectPrepayment(customerId, amount, method, remark = '') {
  *  与 recordPayment 同口径：仅"已结算/逾期"且存在未付余额的账单；存在"金额陈旧"发票时拦截（票款一致）；
  *  超额按 min(抵扣额, 未付余额, 可用预付款) 截断 */
 export function applyPrepayment(s, amount) {
+  afterWrite('applyPrepayment', s, amount)
   const permErr = requireAction('settlement')
   if (permErr) return permErr
   if (!['settled', 'overdue'].includes(s.status)) {
@@ -1744,6 +1778,7 @@ export function contractRemaining(contractId) {
  *  不改账单状态（结算确认仍由结算专员执行），结果记 customerConfirmed 并审计
  *  环节2：重新对账后客户再次确认时，关闭历史异议单（resolved） */
 export function customerConfirm(s) {
+  afterWrite('customerConfirm', s)
   const permErr = requireAction('customer-confirm')
   if (permErr) return permErr
   if (!s.reconciliation) return { error: `账单 ${s.billNo} 尚无对账结果，无法确认` }
@@ -1765,6 +1800,7 @@ export function customerConfirm(s) {
  *  触发重新对账：账单回到"待对账"并清除客户确认标记，结算侧须重新 startReconcile，
  *  结果生成后客户再确认（确认时异议单自动关闭）；已确认的账单不可撤销，不可再异议 */
 export function customerObjection(s, reason) {
+  afterWrite('customerObjection', s, reason)
   const permErr = requireAction('customer-confirm')
   if (permErr) return permErr
   if (!s.reconciliation) return { error: `账单 ${s.billNo} 尚无对账结果，无法提出异议` }
@@ -1784,6 +1820,7 @@ export function customerObjection(s, reason) {
 
 /** 客户发起运输需求（门户）：生成待处理需求单，由销售在合同管理转为合同草稿（RBAC：customer-request） */
 export function submitTransportRequest(customerId, payload) {
+  afterWrite('submitTransportRequest', customerId, payload)
   const permErr = requireAction('customer-request')
   if (permErr) return permErr
   const c = db.customers.find((x) => x.id === customerId)
@@ -1822,6 +1859,7 @@ export function submitTransportRequest(customerId, payload) {
 
 /** 需求转合同草稿（合同管理：销售确认商务条款后生成草稿，进入正常审批流）（RBAC：contract） */
 export function convertRequestToContract(r, fields = {}) {
+  afterWrite('convertRequestToContract', r, fields)
   const permErr = requireAction('contract')
   if (permErr) return permErr
   if (r.status !== 'pending') return { error: `运输需求 ${r.id} 当前非"待处理"状态，无法转换` }
@@ -1865,6 +1903,7 @@ export function convertRequestToContract(r, fields = {}) {
 
 /** 驳回运输需求：pending → rejected（须记录原因）（RBAC：contract） */
 export function rejectTransportRequest(r, reason) {
+  afterWrite('rejectTransportRequest', r, reason)
   const permErr = requireAction('contract')
   if (permErr) return permErr
   if (r.status !== 'pending') return { error: `运输需求 ${r.id} 当前非"待处理"状态，无法驳回` }
@@ -1943,6 +1982,7 @@ function doCreateTripPayable(d) {
 
 /** 批量生成趟次应付（RBAC：settlement）：为所有已完成公路且尚无应付的车次补生成（含历史/种子） */
 export function generatePayables() {
+  afterWrite('generatePayables')
   const permErr = requireAction('settlement')
   if (permErr) return permErr
   const targets = db.dispatches.filter(
@@ -1960,6 +2000,7 @@ export function generatePayables() {
 
 /** 趟次应付付款（RBAC：settlement）：待付 → 已付，记录付款时间/方式，成本侧核销 */
 export function payPayable(p, method) {
+  afterWrite('payPayable', p, method)
   const permErr = requireAction('settlement')
   if (permErr) return permErr
   if (!p || p.status !== 'pending') return { error: `应付单 ${p?.id || ''} 非"待付"状态，不可付款` }
@@ -2005,6 +2046,7 @@ function requireDriverApp(d) {
 
 /** 司机接单：标记已接单（不改状态机，装货确认前司机需先接单）（M6：司机端身份守卫） */
 export function acceptDispatch(d) {
+  afterWrite('acceptDispatch', d)
   const guardErr = requireDriverApp(d)
   if (guardErr) return guardErr
   d.accepted = true
@@ -2014,6 +2056,7 @@ export function acceptDispatch(d) {
 
 /** 司机端发车：走内部核心 doDepart（状态机守卫与 PC 端一致，M6：司机端身份守卫） */
 export function driverDepart(d) {
+  afterWrite('driverDepart', d)
   const guardErr = requireDriverApp(d)
   if (guardErr) return guardErr
   const r = doDepart(d)
@@ -2024,6 +2067,7 @@ export function driverDepart(d) {
 
 /** 司机端确认到达：走内部核心 doArrive（状态机守卫与 PC 端一致，M6：司机端身份守卫） */
 export function driverArrive(d) {
+  afterWrite('driverArrive', d)
   const guardErr = requireDriverApp(d)
   if (guardErr) return guardErr
   const r = doArrive(d)
@@ -2036,6 +2080,7 @@ export function driverArrive(d) {
  *  走 requireDriverApp 身份守卫（司机本人或 dispatch 权限角色）+ createException 内部核心
  *  （与 PC 端 reportException 同一状态机，source='driver' 标识来源） */
 export function driverReportException(d, description, type = 'other', level = 'medium') {
+  afterWrite('driverReportException', d, description, type, level)
   const guardErr = requireDriverApp(d)
   if (guardErr) return guardErr
   const desc = String(description || '').trim()
@@ -2048,6 +2093,7 @@ export function driverReportException(d, description, type = 'other', level = 'm
 
 /** 司机端电子签收：卸货完成后生成签收单（签收人+时间+签收码），是公路车次的收货凭证（M6：司机端身份守卫） */
 export function signReceipt(d, signer) {
+  afterWrite('signReceipt', d, signer)
   const guardErr = requireDriverApp(d)
   if (guardErr) return guardErr
   if (d.status !== 'completed') return { error: `调度单 ${d.id} 尚未卸货完成，签收单只能在卸货完成后生成` }
@@ -2065,6 +2111,7 @@ export function signReceipt(d, signer) {
  *  非公路豁免：铁路/水运/管道按运输单元执行，无签收凭证，无需补签
  *  补签后若车次已入账单且已有对账结果，重建对账清除"未签收"标记 */
 export function supplementReceipt(d, signer, reason) {
+  afterWrite('supplementReceipt', d, signer, reason)
   const permErr = requireAction('dispatch')
   if (permErr) return permErr
   if (!isRoadMode(d.mode)) return { error: `${d.mode} 车次按运输单元执行，无签收凭证，无需补签（非公路豁免）` }
@@ -2106,6 +2153,7 @@ export function unloadCodeOf(d) {
 /** 扫码确认装货：码不匹配/状态不符/未接单均拦截
  *  走内部核心 doConfirmLoad（状态机守卫与 PC 端一致，M6：司机端身份守卫） */
 export function scanConfirmLoad(d, code) {
+  afterWrite('scanConfirmLoad', d, code)
   const guardErr = requireDriverApp(d)
   if (guardErr) return guardErr
   const expect = loadCodeOf(d)
@@ -2119,6 +2167,7 @@ export function scanConfirmLoad(d, code) {
 /** 扫码确认卸货：码不匹配/状态不符均拦截
  *  走内部核心 doConfirmUnload（状态机守卫与 PC 端一致，M6：司机端身份守卫） */
 export function scanConfirmUnload(d, code) {
+  afterWrite('scanConfirmUnload', d, code)
   const guardErr = requireDriverApp(d)
   if (guardErr) return guardErr
   const expect = unloadCodeOf(d)
@@ -2300,6 +2349,7 @@ export function listInsuranceClaims() {
 
 /** 报险/投保：为事故登记保险理赔单（RBAC：insurance）；同一事故仅一张理赔单（重复报险拦截） */
 export function fileInsuranceClaim(accidentId, payload) {
+  afterWrite('fileInsuranceClaim', accidentId, payload)
   const permErr = requireAction('insurance')
   if (permErr) return permErr
   const a = db.accidents.find((x) => x.id === accidentId)
@@ -2333,6 +2383,7 @@ export function fileInsuranceClaim(accidentId, payload) {
 
 /** 责任认定 + 核定金额：reported → assessed（RBAC：insurance） */
 export function assessInsuranceClaim(claim, payload) {
+  afterWrite('assessInsuranceClaim', claim, payload)
   const permErr = requireAction('insurance')
   if (permErr) return permErr
   if (claim.status !== 'reported') return { error: `理赔单 ${claim.id} 当前非"已报险"状态，无法定责核定` }
@@ -2351,6 +2402,7 @@ export function assessInsuranceClaim(claim, payload) {
  *  理赔款冲减事故损失（accident.insuranceRecovered）；若事故损失已计入账单（异常补扣），
  *  按核定回收额（≤ 该异常损失）冲减账单 exceptionLoss，留调整记录；已结算账单回待对账须重新确认 */
 export function settleInsuranceClaim(claim, payload) {
+  afterWrite('settleInsuranceClaim', claim, payload)
   const permErr = requireAction('insurance')
   if (permErr) return permErr
   if (claim.status !== 'assessed') return { error: `理赔单 ${claim.id} 当前非"已定责核定"状态，无法理赔结案` }
@@ -2395,6 +2447,7 @@ export function settleInsuranceClaim(claim, payload) {
 
 /** 拒赔：reported/assessed → rejected（RBAC：insurance） */
 export function rejectInsuranceClaim(claim, reason) {
+  afterWrite('rejectInsuranceClaim', claim, reason)
   const permErr = requireAction('insurance')
   if (permErr) return permErr
   if (!['reported', 'assessed'].includes(claim.status)) return { error: `理赔单 ${claim.id} 当前状态无法拒赔` }
@@ -2426,6 +2479,7 @@ function buildApprovalChain() {
 
 /** 提交审批：draft → pending，生成审批链（重新提交时重置审批链）（RBAC：contract） */
 export function submitContractApproval(c) {
+  afterWrite('submitContractApproval', c)
   const permErr = requireAction('contract')
   if (permErr) return permErr
   if (c.status !== 'draft') return { error: `合同 ${c.id} 当前非"草稿"状态，无法提交审批` }
@@ -2440,6 +2494,7 @@ export function submitContractApproval(c) {
 /** 审批通过：推进当前待审批层级；末级通过 → executing
  *  返回 { final }：false 表示还有后续层级，true 表示全链通过 */
 export function approveContract(c, comment) {
+  afterWrite('approveContract', c, comment)
   const permErr = requireAction('contract-approve')
   if (permErr) return permErr
   const step = (c.approvalChain || []).find((s) => s.status === 'pending')
@@ -2465,6 +2520,7 @@ export function approveContract(c, comment) {
 
 /** 审批驳回：当前层级驳回 → 回草稿，后续层级取消（重新提交审批后重走全链） */
 export function rejectContract(c, reason) {
+  afterWrite('rejectContract', c, reason)
   const permErr = requireAction('contract-approve')
   if (permErr) return permErr
   const step = (c.approvalChain || []).find((s) => s.status === 'pending')
@@ -2512,6 +2568,7 @@ function applyContractFields(c, fields) {
  *  全链通过后才应用（数量/截止日期随同一变更单提交，一并待批）；仅数量/截止日期的变更仍即时生效。
  *  口径：已派车车次结算用派车时快照单价，改价仅影响未派车批次（不追溯） */
 export function changeContract(c, fields, reason) {
+  afterWrite('changeContract', c, fields, reason)
   const permErr = requireAction('contract')
   if (permErr) return permErr
   if (c.pendingChange) return { error: `合同 ${c.id} 已有变更待审批，审批完成前不可提交新变更` }
@@ -2536,6 +2593,7 @@ export function changeContract(c, fields, reason) {
 /** 环节3：改价审批通过——推进变更审批当前待批层级；末级通过 → 应用变更（单价生效）
  *  返回 { final }：false 表示还有后续层级，true 表示全链通过并已生效 */
 export function approveContractChange(c, comment) {
+  afterWrite('approveContractChange', c, comment)
   const permErr = requireAction('contract-approve')
   if (permErr) return permErr
   const pc = c.pendingChange
@@ -2563,6 +2621,7 @@ export function approveContractChange(c, comment) {
 
 /** 环节3：改价驳回——当前层级驳回即作废变更申请（合同单价保持不变），后续层级取消 */
 export function rejectContractChange(c, reason) {
+  afterWrite('rejectContractChange', c, reason)
   const permErr = requireAction('contract-approve')
   if (permErr) return permErr
   const pc = c.pendingChange
@@ -2583,6 +2642,7 @@ export function rejectContractChange(c, reason) {
 
 /** 合同延期：延长截止日期，记录变更历史（RBAC：contract） */
 export function extendContract(c, newDate, reason) {
+  afterWrite('extendContract', c, newDate, reason)
   const permErr = requireAction('contract')
   if (permErr) return permErr
   if (c.pendingChange) return { error: `合同 ${c.id} 已有变更待审批，审批完成前不可延期` }
@@ -2596,6 +2656,7 @@ export function extendContract(c, newDate, reason) {
  *  口径：待执行计划批次取消；已调度/执行中计划及在途车次继续完成运输并正常结算（已发生业务照常履约），
  *  终止后不可再新建计划（新建计划页仅列执行中合同）与下发调度单（createDispatches 守卫拦截） */
 export function terminateContract(c, reason, settleNow = true) {
+  afterWrite('terminateContract', c, reason, settleNow)
   const permErr = requireAction('contract')
   if (permErr) return permErr
   c.status = 'terminated'
@@ -2621,6 +2682,7 @@ export function terminateContract(c, reason, settleNow = true) {
  *  守卫：须执行中；未取消计划须全部完成（无待执行/已调度/执行中计划）
  *  适用：合同量含预留（拆批总量 < 合同量）时，计划全部完成也无法自动达 100%，由业务手动完结 */
 export function completeContract(c) {
+  afterWrite('completeContract', c)
   const permErr = requireAction('contract')
   if (permErr) return permErr
   if (c.status !== 'executing') return { error: `合同 ${c.id} 当前非"执行中"状态，无法完结` }
@@ -2640,6 +2702,7 @@ export function completeContract(c) {
 
 /** 合同归档：completed → archived（只读存档）（RBAC：contract） */
 export function archiveContract(c) {
+  afterWrite('archiveContract', c)
   const permErr = requireAction('contract')
   if (permErr) return permErr
   c.status = 'archived'
@@ -2669,6 +2732,7 @@ function markInvoiceStale(s, reason) {
  *  - 无记录（运行时新账单）→ 新建已开具记录（发票号按 结算单ID-发票ID 确定性派生）
  *  状态守卫：仅"未开票/待开具"账单可开具，防止重复开票 */
 export function issueInvoice(s) {
+  afterWrite('issueInvoice', s)
   const permErr = requireAction('invoice')
   if (permErr) return permErr
   if (s.invoiceStatus !== 'not-issued' && s.invoiceStatus !== 'pending') {
@@ -2705,6 +2769,7 @@ export function issueInvoice(s) {
 /** 发票开具（发票管理页薄封装）：解析结算单后委托统一入口 issueInvoice，
  *  与结算详情页同一开具路径、同一守卫、同一审计口径（RBAC：invoice） */
 export function issueInvoiceRow(inv) {
+  afterWrite('issueInvoiceRow', inv)
   const s = db.settlements.find((x) => x.id === inv.settlementId)
   if (!s) return { error: `发票 ${inv.id} 未找到对应结算单，无法开具` }
   return issueInvoice(s)
@@ -2712,6 +2777,7 @@ export function issueInvoiceRow(inv) {
 
 /** 发票红冲（发票管理页：已开具 → 已红冲，须填红冲原因）（RBAC：invoice） */
 export function redFlushInvoiceRow(inv, reason) {
+  afterWrite('redFlushInvoiceRow', inv, reason)
   const permErr = requireAction('invoice')
   if (permErr) return permErr
   if (inv.status !== 'issued') return { error: `发票 ${inv.id} 当前非"已开具"状态，无法红冲` }
@@ -2727,6 +2793,7 @@ export function redFlushInvoiceRow(inv, reason) {
 
 /** 客户导入：按客户名称去重（已存在跳过）；必填：客户名称（RBAC：customer） */
 export function importCustomers(rows) {
+  afterWrite('importCustomers', rows)
   const permErr = requireAction('customer')
   if (permErr) return permErr
   const created = []
@@ -2769,6 +2836,7 @@ export function importCustomers(rows) {
 
 /** 商品导入：按商品名称去重（已存在跳过）；必填：商品名称（RBAC：commodity） */
 export function importCommodities(rows) {
+  afterWrite('importCommodities', rows)
   const permErr = requireAction('commodity')
   if (permErr) return permErr
   const created = []
@@ -2807,6 +2875,7 @@ export function importCommodities(rows) {
 
 /** 车辆导入：按车牌去重（已存在跳过）；必填：车牌号；新导入车辆默认空闲、年检一年有效（RBAC：vehicle） */
 export function importVehicles(rows) {
+  afterWrite('importVehicles', rows)
   const permErr = requireAction('vehicle')
   if (permErr) return permErr
   const created = []
@@ -2852,6 +2921,7 @@ export function importVehicles(rows) {
  *  守卫：对手方/金额/到账时间必填，金额>0；录入后为待核销（unmatched），
  *  可走自动核销（金额=某账单未付余额）或手动核销，闭合"流水从哪来"的演示链路 */
 export function addBankStatement(payload) {
+  afterWrite('addBankStatement', payload)
   const permErr = requireAction('settlement')
   if (permErr) return permErr
   const counterparty = String(payload.counterparty || '').trim()
@@ -2886,6 +2956,7 @@ export function addBankStatement(payload) {
 /** 手动核销：待核销银行流水核销至指定账单（写收款流水，超未付余额拦截）
  *  守卫：RBAC（settlement）；流水须待核销；流水金额不可超过账单未付余额 */
 export function matchBankRecord(b, s) {
+  afterWrite('matchBankRecord', b, s)
   const permErr = requireAction('settlement')
   if (permErr) return permErr
   if (!b) return { error: '请选择银行流水' }
@@ -2907,6 +2978,7 @@ export function matchBankRecord(b, s) {
 /** 自动核销：待核销流水中，对手方+金额与账单（已结算/逾期）未付余额精确一致者自动核销
  *  口径：金额精确匹配（容差 0.01 元），避免误核销；其余流水保留待人工处理（RBAC：settlement） */
 export function autoMatchBank() {
+  afterWrite('autoMatchBank')
   const permErr = requireAction('settlement')
   if (permErr) return permErr
   const matched = []
@@ -2932,6 +3004,7 @@ export function autoMatchBank() {
  *  status: 'draft' 草稿 / 'pending' 提交审批（信用校验 + 生成审批链）
  *  守卫：必填要素、发货方/收货方类型与冻结状态、数量单价为正 */
 export function createContract(payload, status = 'draft') {
+  afterWrite('createContract', payload, status)
   const permErr = requireAction('contract')
   if (permErr) return permErr
   if (!payload.name || !String(payload.name).trim()) return { error: '请输入合同名称' }
@@ -3006,6 +3079,7 @@ export function rateOf(commodityId, loadTerminalId, unloadTerminalId, mode) {
 
 /** 新建运价卡（RBAC：rate）；同线路启用中运价卡唯一（重复则提示走调价） */
 export function createRateCard(payload) {
+  afterWrite('createRateCard', payload)
   const permErr = requireAction('rate')
   if (permErr) return permErr
   if (!payload.commodityId) return { error: '请选择商品' }
@@ -3040,6 +3114,7 @@ export function createRateCard(payload) {
 
 /** 运价卡调价/编辑（RBAC：rate）：调整单价/生效日期/备注，留变更历史；仅影响后续新签合同（已派车批次不追溯） */
 export function updateRateCard(id, fields) {
+  afterWrite('updateRateCard', id, fields)
   const permErr = requireAction('rate')
   if (permErr) return permErr
   const rc = db.rateCards.find((r) => r.id === id)
@@ -3065,6 +3140,7 @@ export function updateRateCard(id, fields) {
 
 /** 运价卡启停（RBAC：rate）：停用后不再被新合同查表引用 */
 export function toggleRateCard(id) {
+  afterWrite('toggleRateCard', id)
   const permErr = requireAction('rate')
   if (permErr) return permErr
   const rc = db.rateCards.find((r) => r.id === id)
@@ -3077,6 +3153,7 @@ export function toggleRateCard(id) {
 /** 新建运输计划（RBAC：plan）
  *  守卫：合同须执行中；批次数量不超过合同剩余可计划量 */
 export function createPlan(payload) {
+  afterWrite('createPlan', payload)
   const permErr = requireAction('plan')
   if (permErr) return permErr
   const c = contractOf(payload.contractId)
@@ -3106,6 +3183,7 @@ export function createPlan(payload) {
 
 /** 取消计划（RBAC：plan）；守卫：仅"待执行"计划可取消 */
 export function cancelPlan(p) {
+  afterWrite('cancelPlan', p)
   const permErr = requireAction('plan')
   if (permErr) return permErr
   if (p.status !== 'pending') return { error: `计划 ${p.id} 当前非"待执行"状态，无法取消` }
@@ -3116,6 +3194,7 @@ export function cancelPlan(p) {
 
 /** 新建/编辑商品（RBAC：commodity）；守卫：名称必填，新建时重名拦截 */
 export function saveCommodity(payload) {
+  afterWrite('saveCommodity', payload)
   const permErr = requireAction('commodity')
   if (permErr) return permErr
   const name = String(payload.name || '').trim()
@@ -3154,6 +3233,7 @@ export function saveCommodity(payload) {
 
 /** 商品启用/停用（RBAC：commodity） */
 export function toggleCommodityStatus(c) {
+  afterWrite('toggleCommodityStatus', c)
   const permErr = requireAction('commodity')
   if (permErr) return permErr
   c.status = c.status === 'active' ? 'inactive' : 'active'
@@ -3164,6 +3244,7 @@ export function toggleCommodityStatus(c) {
 /** F6a 新建/编辑场站（RBAC：terminal）；守卫：名称必填且查重、类型合法、日能力>0
  *  新建默认 operating、无配套仓库；编辑可改配套仓库（影响装卸货仓储联动） */
 export function saveTerminal(payload) {
+  afterWrite('saveTerminal', payload)
   const permErr = requireAction('terminal')
   if (permErr) return permErr
   const name = String(payload.name || '').trim()
@@ -3213,6 +3294,7 @@ export function saveTerminal(payload) {
 /** F6b 新建/编辑仓库（RBAC：warehouse-maint）；守卫：名称必填且查重、容量>0
  *  新建默认 operating、used=0；编辑容量不得低于已用库存（used） */
 export function saveWarehouse(payload) {
+  afterWrite('saveWarehouse', payload)
   const permErr = requireAction('warehouse-maint')
   if (permErr) return permErr
   const name = String(payload.name || '').trim()
@@ -3256,6 +3338,7 @@ export function saveWarehouse(payload) {
 
 /** 客户冻结/解冻（RBAC：customer） */
 export function toggleCustomerStatus(c) {
+  afterWrite('toggleCustomerStatus', c)
   const permErr = requireAction('customer')
   if (permErr) return permErr
   if (c.status === 'active') {
@@ -3271,6 +3354,7 @@ export function toggleCustomerStatus(c) {
 /** 司机停用/启用（RBAC：driver）
  *  守卫：有执行中车次（装货/在途/卸货）的司机不可停用；停用联动司机账号（G5 driverId 绑定） */
 export function toggleDriverStatus(d) {
+  afterWrite('toggleDriverStatus', d)
   const permErr = requireAction('driver')
   if (permErr) return permErr
   if (d.status === 'disabled') {
@@ -3292,6 +3376,7 @@ export function toggleDriverStatus(d) {
  *  守卫：姓名/手机号必填；手机号全局唯一（新建查重，编辑排除自身）；
  *  新建默认 status=available、rating=5、version=1（乐观锁） */
 export function saveDriver(payload) {
+  afterWrite('saveDriver', payload)
   const permErr = requireAction('driver')
   if (permErr) return permErr
   const name = String(payload.name || '').trim()
@@ -3339,6 +3424,7 @@ export function saveDriver(payload) {
 /** F4b 司机导入（RBAC：driver）：按手机号去重（已存在跳过）；必填：姓名、手机号
  *  与 importVehicles 同模式：created/skipped/errors 三段返回 + 审计 + 通知 */
 export function importDrivers(rows) {
+  afterWrite('importDrivers', rows)
   const permErr = requireAction('driver')
   if (permErr) return permErr
   const created = []
@@ -3382,6 +3468,7 @@ export function importDrivers(rows) {
 
 /** 车辆报修（RBAC：vehicle）；守卫：仅空闲车辆可报修 */
 export function sendVehicleRepair(v, reason) {
+  afterWrite('sendVehicleRepair', v, reason)
   const permErr = requireAction('vehicle')
   if (permErr) return permErr
   if (v.status !== 'idle') return { error: `车辆 ${v.plate} 当前非"空闲"状态，无法报修` }
@@ -3392,6 +3479,7 @@ export function sendVehicleRepair(v, reason) {
 
 /** 车辆维修完成恢复空闲（RBAC：vehicle）；守卫：仅维修中车辆可恢复 */
 export function resumeVehicle(v) {
+  afterWrite('resumeVehicle', v)
   const permErr = requireAction('vehicle')
   if (permErr) return permErr
   if (v.status !== 'maintenance') return { error: `车辆 ${v.plate} 当前非"维修中"状态，无法恢复` }
@@ -3404,6 +3492,7 @@ export function resumeVehicle(v) {
  *  status: locked 锁定 / normal 解锁 / near-expiry 标记临期
  *  环节7：锁定/标记临期会减少可发库存，若因此跌破安全库存下限（穿越阈值）发出预警 */
 export function setInventoryStatus(inv, status) {
+  afterWrite('setInventoryStatus', inv, status)
   const permErr = requireAction('warehouse')
   if (permErr) return permErr
   if (!['locked', 'normal', 'near-expiry'].includes(status)) return { error: '无效的库存状态' }
@@ -3419,6 +3508,7 @@ export function setInventoryStatus(inv, status) {
 
 /** 设置安全库存下限（RBAC：warehouse）；按仓库×商品 upsert，minQty 为可发库存告警下限（吨） */
 export function setSafetyStock(warehouseId, commodityId, minQty) {
+  afterWrite('setSafetyStock', warehouseId, commodityId, minQty)
   const permErr = requireAction('warehouse')
   if (permErr) return permErr
   const wh = db.warehouses.find((w) => w.id === warehouseId)
@@ -3441,6 +3531,7 @@ export function setSafetyStock(warehouseId, commodityId, minQty) {
 
 /** 新建/编辑用户（RBAC：user）；守卫：账号查重、新建须设密码 */
 export function saveUser(payload) {
+  afterWrite('saveUser', payload)
   const permErr = requireAction('user')
   if (permErr) return permErr
   const username = String(payload.username || '').trim()
@@ -3480,6 +3571,7 @@ export function saveUser(payload) {
 
 /** 删除用户（RBAC：user）；守卫：不可删除当前登录账号 */
 export function removeUser(u) {
+  afterWrite('removeUser', u)
   const permErr = requireAction('user')
   if (permErr) return permErr
   if (u.username === operator.username) return { error: '不能删除当前登录账号' }
@@ -3491,6 +3583,7 @@ export function removeUser(u) {
 
 /** 用户启用/停用（RBAC：user）；守卫：不可停用当前登录账号 */
 export function toggleUserStatus(u, active) {
+  afterWrite('toggleUserStatus', u, active)
   const permErr = requireAction('user')
   if (permErr) return permErr
   if (u.username === operator.username && !active) return { error: '不能停用当前登录账号' }
@@ -3504,6 +3597,7 @@ export function toggleUserStatus(u, active) {
  *  更新 passwordHash（只存哈希，审计日志不落新密码明文）；
  *  通知目标用户所在角色（停用用户跳过通知，恢复启用后可见） */
 export function resetPassword(userId, newPassword) {
+  afterWrite('resetPassword', userId, newPassword)
   const permErr = requireAction('user')
   if (permErr) return permErr
   const u = db.users.find((x) => x.id === userId)
@@ -3521,6 +3615,7 @@ export function resetPassword(userId, newPassword) {
 
 /** 新建角色（RBAC：role）；守卫：名称/编码查重；新建角色默认无任何权限（deny） */
 export function saveRole(payload) {
+  afterWrite('saveRole', payload)
   const permErr = requireAction('role')
   if (permErr) return permErr
   const name = String(payload.name || '').trim()
@@ -3543,6 +3638,7 @@ export function saveRole(payload) {
 
 /** 删除角色（RBAC：role）；守卫：内置角色不可删；角色下仍有用户不可删 */
 export function removeRole(role) {
+  afterWrite('removeRole', role)
   const permErr = requireAction('role')
   if (permErr) return permErr
   if (role.builtIn) return { error: `内置角色 ${role.name} 不可删除` }
@@ -3557,6 +3653,7 @@ export function removeRole(role) {
 
 /** 更新角色权限（RBAC：role）；perm: { menus: null|[], actions: null|[] }，null=全部，[]=无 */
 export function updateRolePerms(roleName, perm) {
+  afterWrite('updateRolePerms', roleName, perm)
   const permErr = requireAction('role')
   if (permErr) return permErr
   db.rolePerms[roleName] = perm
@@ -3570,6 +3667,7 @@ export function updateRolePerms(roleName, perm) {
 
 /** 启动时全量校准：计划/合同进度与调度实际执行对齐 */
 export function recalcAll() {
+  afterWrite('recalcAll')
   // 多式联运口径校准：调度单补运输方式；铁路/水运/管道按运输单元执行，不绑定车辆/司机
   for (const d of db.dispatches) {
     if (!d.mode) d.mode = contractOf(d.contractId)?.mode || '公路'

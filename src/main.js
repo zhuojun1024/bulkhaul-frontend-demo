@@ -11,19 +11,14 @@ import App from './App.vue'
 import router from './router'
 import { useUserStore } from './store'
 import { setOperator } from './mock/flow'
-import { enableAutoSave } from './mock/persist'
+import { hydrate } from './mock/api'
 import { startScheduler } from './mock/scheduler'
 import './styles/tokens.css'
 import './styles/index.css'
 
 NProgress.configure({ showSpinner: false, trickle: false })
 
-// 数据持久化：深度监听 db 变化，防抖写入 localStorage（浏览器环境生效）
-enableAutoSave()
-
-// 后端定时任务模拟（P2 架构下沉）：围栏事件 / GPS 遥测 / 逾期校准，独立于页面生命周期
-startScheduler()
-
+const pinia = createPinia()
 const app = createApp(App)
 
 // P3 工程加固：全局错误处理（组件/生命周期/事件回调未捕获异常统一兜底，避免白屏无提示）
@@ -36,22 +31,36 @@ for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
   app.component(key, component)
 }
 
-router.beforeEach((to, from, next) => {
-  NProgress.start()
-  document.title = to.meta.title
-    ? `${to.meta.title} - 大宗物流综合管理平台`
-    : '大宗物流综合管理平台'
-  next()
-})
-router.afterEach(() => {
-  NProgress.done()
-})
-
-const pinia = createPinia()
 app.use(pinia)
-// M7 修复：刷新后按持久化登录态恢复服务层 operator（审计日志操作人=实际登录用户，而非默认管理员）
-const userStore = useUserStore()
-if (userStore.userInfo.username) setOperator(userStore.userInfo)
 app.use(router)
 app.use(ElementPlus, { locale: zhCn })
-app.mount('#app')
+
+/**
+ * 启动引导（切真实 API）：
+ * 有已存 token → 从后端 /api/snapshot hydrate db（后端为权威态），恢复登录态与操作人，再挂载。
+ * 路由守卫（router/index.js）读 db.users / db.rolePerms 判定账号与菜单权限，
+ * 故必须在守卫首次执行前完成 hydrate，否则有效会话会被误判为未登录而跳登录页。
+ * 无 token（首次访问登录页）→ 跳过 hydrate，直接挂载（登录页不依赖 db）。
+ */
+async function bootstrap() {
+  const userStore = useUserStore()
+  const savedToken = localStorage.getItem('blms_token')
+  if (savedToken) {
+    try {
+      await hydrate()
+    } catch (e) {
+      console.warn('[启动] hydrate 失败，回退种子数据：', e && e.message)
+    }
+    // 恢复登录态（db.users 已由 hydrate 填充）；恢复失败（账号停用/不存在）则清登录态
+    if (!userStore.restore()) {
+      userStore.logout()
+    } else {
+      setOperator(userStore.userInfo)
+    }
+  }
+  app.mount('#app')
+  // 后端定时任务（真实 /api/scheduler/tick + 快照刷新）：围栏/遥测/逾期/升级，独立于页面生命周期
+  startScheduler()
+}
+
+bootstrap()

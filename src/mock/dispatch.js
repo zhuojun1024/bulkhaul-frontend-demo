@@ -91,9 +91,17 @@ for (const plan of executablePlans) {
     } else if (status === 'intransit') {
       dispatchTime = dayjs(NOW).subtract(randInt(2, 30), 'hour').minute(randInt(0, 59))
       loadTime = dispatchTime.add(40, 'minute')
-      progress = randInt(10, 90)
-      const remainHours = round((1 - progress / 100) * travelHours, 1)
-      eta = dayjs(NOW).add(Math.round(remainHours * 60), 'minute')
+      // 混合 ETA：偶数序号在途车次 ETA 已过（触发延误围栏，进度靠后），奇数仍在途中（ETA 未过）
+      // 用 dSeq 奇偶确定性分配，保证种子既有"延误"演示（围栏）也有"正常在途"演示
+      const pastEta = (dSeq % 2 === 0)
+      if (pastEta) {
+        progress = randInt(70, 95)
+        eta = dayjs(NOW).subtract(randInt(20, 90), 'minute')
+      } else {
+        progress = randInt(10, 60)
+        const remainHours = round((1 - progress / 100) * travelHours, 1)
+        eta = dayjs(NOW).add(Math.round(remainHours * 60), 'minute')
+      }
     } else if (status === 'loading') {
       dispatchTime = dayjs(NOW).subtract(randInt(1, 5), 'hour').minute(randInt(0, 59))
       progress = 5

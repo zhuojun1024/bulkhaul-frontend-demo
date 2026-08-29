@@ -53,20 +53,28 @@ export const useTagsViewStore = defineStore('tagsView', () => {
   return { visitedTags, cachedViews, addTag, removeTag, closeOthers, closeAll }
 })
 
-/** 用户状态（登录态与当前用户信息） */
+/** 用户状态（登录态与当前用户信息）
+ *  切真实 API：token 为后端 JWT；userInfo 由登录接口 / 启动 hydrate 后从 db.users 填充（不再在 store 内同步读 db）。 */
 export const useUserStore = defineStore('user', () => {
   const token = ref(localStorage.getItem('blms_token') || '')
-  // 刷新后按已存用户名从 mock 用户表恢复（含角色，供菜单/按钮权限使用）
-  const savedUsername = localStorage.getItem('blms_user')
-  const savedUser = savedUsername ? db.users.find((u) => u.username === savedUsername && u.status === 'active') : null
-  const userInfo = reactive(
-    savedUser
-      ? { name: savedUser.name, username: savedUser.username, role: savedUser.role, phone: savedUser.phone, driverId: savedUser.driverId || '' }
-      : {}
-  )
+  const userInfo = reactive({ name: '', username: '', role: '', phone: '', driverId: '' })
 
-  function login(user) {
-    localStorage.setItem('blms_token', 'mock-token-' + user.username)
+  /** 从 db.users 恢复当前登录用户（含角色/司机绑定，供菜单/按钮权限使用）；未登录/账号停用返回 false */
+  function restore() {
+    const saved = localStorage.getItem('blms_user')
+    if (!saved) return false
+    const u = db.users.find((x) => x.username === saved && x.status === 'active')
+    if (!u) return false
+    userInfo.name = u.name
+    userInfo.username = u.username
+    userInfo.role = u.role
+    userInfo.phone = u.phone
+    userInfo.driverId = u.driverId || ''
+    return true
+  }
+
+  function login(user, realToken) {
+    localStorage.setItem('blms_token', realToken || 'mock-token-' + user.username)
     localStorage.setItem('blms_user', user.username)
     token.value = localStorage.getItem('blms_token')
     userInfo.name = user.name
@@ -91,5 +99,5 @@ export const useUserStore = defineStore('user', () => {
     clearOperator()
   }
 
-  return { token, userInfo, login, logout }
+  return { token, userInfo, login, logout, restore }
 })
