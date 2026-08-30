@@ -248,6 +248,41 @@
   环节 1-10 汇总 **PASS=141 FAIL=0**（含原 4 条失败断言）；前端 `npm test` 556 通过 0 失败（无回归）。
 - 提交：bulkhaul-server（DispatchService.java + FlowIntegrationTest.java）；本文件同步（前端仓库）。
 
+## 第七轮：整体代码扫描（三层交叉核对 + 潜在问题排查）— done-verified
+
+- 范围：前端 mock 服务层（flow.js 95 导出函数）× api.js W 映射（97 写端点）× 后端 15 个 Controller（118 路由）
+  三层交叉核对 + RBAC 覆盖 + 类型/契约漂移 + 确定性 + 健壮性。
+- 核对结论（无问题）：
+  - **端点/字段漂移**：97 个 W 端点全部命中后端路由（method+path 一致）；带 body 的 25 个端点逐字段比对
+    （planId/count/vehicleIds、reason、description/type/level、handler、result/cost、amount/method、
+    newNet/reason、status、fields/reason、newDate、settleNow、customerId、regions、password 等）
+    与 Controller `body.get(...)` 全部一致，无静默丢字段。
+  - **afterWrite 覆盖**：flow.js 55 个 afterWrite 写函数全部在 W 映射中（浏览器态持久化无遗漏）；
+    其余 mock 模块无 afterWrite。
+  - **RBAC 覆盖**：全部状态变更 service 方法均有 `ctx.requireAction` 单点校验；司机端 4 方法
+    （acceptDispatch/driverDepart/driverArrive/signReceipt）用 requireDriverApp 身份守卫（与前端一致）；
+    自助类（setDnd/markMessageRead/markAllMessagesRead）前后端均无权限守卫（本人数据，口径一致）；
+    系统任务（scheduler tick/fence/createException/recalcSettlementStatus）无守卫（系统身份，口径一致）。
+  - **集合清单**：前端 api.js LIST_COLLS(29)+OBJ_COLLS(5) 与后端 DataStore 完全一致。
+  - **确定性**：genInvoiceNo 已用 long（无 hashStr 同款溢出）；Math.random 仅存在于 scheduler tick
+    （运行时遥测推进，非派生码路径，可接受）；无 TODO/FIXME 残留标记。
+  - **测试可信度**：FlowIntegrationTest @AfterAll `assertEquals(0, fail)` 真失败即构建红（非仅打印）。
+- 修复（2 处，均在 bulkhaul-server）：
+  1. **RecalcService.recalcAll 缺 RBAC 守卫**：POST /api/admin/recalc 全局口径校准（改写调度方式/
+     车辆司机占用/计划合同进度/结算状态 + commitAll）无任何权限校验——SecurityConfig 仅要求已认证，
+     且 rolePerms 种子中无任何角色授予 recalc/admin 操作 → 只读用户/客户/司机等任意登录角色可触发
+     全局数据变更。修复：service 入口加 `ctx.requireAction("admin")`（仅平台管理员 actions=null 全放行）。
+     前端启动时 recalcAll() 为内存本地校准，afterWrite 后台 POST 被拒仅 console.warn 不阻塞 UI（口径不变）。
+  2. **DispatchController /{id}/codes NPE**：调度单不存在时 `dispatchOf(id)` 返回 null →
+     `loadCodeOf(null)` → `str(null, "id")` NPE → 500。修复：null 时返回 ApiResult.fail（404 语义）。
+- 验证：WSL `mvn test` EXIT=0，PASS=141 FAIL=0（两处修复无回归）；前端 eslint 0 错、npm test 556 全绿、
+  npm run build 干净（扫描期间复验）。
+- 遗留（不阻塞，记录备查）：
+  - 浏览器态 afterWrite→后端 POST 链路无自动化契约测试（verify-ui 只覆盖 UI 行为）；字段漂移目前靠
+    人工核对（本轮已全量核对一遍）。后续可加"W 映射 vs Controller 路由"的 CI 静态检查防回归。
+  - DispatchController /probe 为阶段 2 鉴权探针（verify-auth.mjs 已随脚本清理删除，端点保留且带
+    @RequireAction，无风险；如需可删）。
+
 ## 压缩后重入协议
 
 1. 重读本文件，找到第一个非 done-verified 的项；
