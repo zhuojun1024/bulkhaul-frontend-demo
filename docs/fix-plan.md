@@ -222,6 +222,32 @@
 - 经验沉淀：docs/lessons-learned.md（环境拓扑/后端启动/验证基线/种子治理/断言纪律）；
   一次性脚本清理（server q-*/probe、web smoke-server、V1/V2 冗余 SQL 副本、dump-schema.json）。
 
+## 第六轮：后端集成测试整改（mvn test 4 条失败断言 → 全绿）— done-verified
+
+- 现象：bulkhaul-server `mvn test`（FlowIntegrationTest，环节 1-10 共享内存态、operator 注入平台管理员）
+  4 条断言失败：环节8 状态机守卫（d2 应为 intransit）、环节9 异常关闭补扣、环节9 重算幂等、
+  环节9 装卸码确定性派生。前端 mock（src/mock/flow.js）为业务权威口径，后端 1:1 平移时 3 处行为漂移 + 1 处类型错误。
+- 根因与修复（均在 bulkhaul-server）：
+  1. **装卸码（hashStr 类型错误）**：前端 `hashStr` 用 JS number（64 位 double，`n*31` 不溢出），
+     后端误用 `int` → 溢出回绕产生负值 → `loadCodeOf` 码值 <100000 或负数，`ZD\d{6}` 格式/确定性破坏。
+     修复：`DispatchService.hashStr` 改 `long`（`n*31 + ch) % 2147483647L`）。
+  2. **createDispatches 公路分支插入顺序**：前端 `db.dispatches.unshift(d)` 正向 → 列表"最新在前"
+     `[c2,c1,c0,...seed]`；后端误用反向 `for(i=last..0) add(0, pending[i])` → "最旧在前" `[c0,c1,c2,...seed]`。
+     环节6 事故测试 `find(intransit+loadTime)` 取"第一个"，后端因此选中 d2（created[1]）置 exception 且不再
+     恢复 → 环节8 守卫发现 d2=exception 失败（前端选中 created[2]，d2 保持 intransit）。修复：改正向
+     `for(d of pending) add(0,d)` 对齐前端 unshift。
+  3. **reportException 返回契约**：前端 `reportException` 直接返回异常单 `e`（`createException` 返回值）；
+     后端复制了 createException 全部逻辑却返回 `{ok, exception: e}`（包装）→ 测试 `e13.id` 为 null，
+     `finishException(null)`/`closeException(null)` 全落空 → 环节9 补扣/幂等连锁失败（重算幂等断言的
+     totalAmount 子句是补扣未执行的级联）。修复：`DispatchService.reportException` 委托
+     `ExceptionService.createException`（RBAC 单点校验 exception 后），直接返回 `e`；删除重复实现（消除双份漂移源）。
+- 测试侧（FlowIntegrationTest）：加 `@BeforeAll resetToSeed()`（等价前端 verify-ui 的 resetDemo，防上次运行
+  commitAll 污染 → 本次加载污染态 → 内存重复 ID → 主键冲突 → 连锁 NPE）；4 条断言补诊断信息（失败时打印
+  状态/金额/码值，便于定位）。
+- 验证：WSL Ubuntu-24.04（JDK17 / Maven 3.8.7 / MySQL blms_test / Redis）`mvn test` EXIT=0，
+  环节 1-10 汇总 **PASS=141 FAIL=0**（含原 4 条失败断言）；前端 `npm test` 556 通过 0 失败（无回归）。
+- 提交：bulkhaul-server（DispatchService.java + FlowIntegrationTest.java）；本文件同步（前端仓库）。
+
 ## 压缩后重入协议
 
 1. 重读本文件，找到第一个非 done-verified 的项；
