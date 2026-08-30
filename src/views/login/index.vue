@@ -292,15 +292,18 @@ async function onLogin() {
     router.push(route.query.redirect || home)
     return
   }
-  // M8：验证码/凭据失败计入锁定（停用账号不计）；失败后刷新验证码供重试
-  if (result.code === 'credential' || result.code === 'captcha') {
-    const rec = recordFail(id)
-    if (rec.until) {
-      checkLock(id)
-      ElMessage.error(`登录失败次数过多，连续 ${MAX_FAILS} 次失败，账号已锁定 5 分钟`)
-    } else {
-      ElMessage.error(`${result.error}，还剩 ${MAX_FAILS - rec.count} 次机会将锁定账号`)
-    }
+  // M8 + A2：服务端为防爆破权威（Redis 按账号计数凭据失败，换浏览器不可绕过）。
+  // 锁定态（code=locked）：服务端已锁定 → 强制本地锁定展示（倒计时/按钮禁用），文案用服务端返回；
+  // 凭据/验证码失败（code=credential/captcha）：本地计数为体验层（M8 原口径：两者均计入本地锁定），
+  // 剩余机会/锁定文案以服务端返回为准（credential 含"还剩 N 次"，captcha 为"验证码错误"）。
+  if (result.code === 'locked') {
+    recordFail(id) // 服务端权威 → 强制本地锁定
+    checkLock(id) // 更新按钮禁用态/倒计时
+    ElMessage.error(result.error || '登录失败次数过多，账号已锁定')
+  } else if (result.code === 'credential' || result.code === 'captcha') {
+    const rec = recordFail(id) // 本地体验层计数（M8 原口径：凭据/验证码失败均计入）
+    if (rec.until) checkLock(id) // 本地锁定达成 → 更新按钮禁用态/倒计时
+    ElMessage.error(result.error || '登录失败')
   } else {
     ElMessage.error(result.error || '登录失败')
   }
