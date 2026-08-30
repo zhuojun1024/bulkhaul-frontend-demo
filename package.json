@@ -7,7 +7,8 @@
     "build": "vue-cli-service build",
     "lint": "vue-cli-service lint",
     "test": "node --import ./scripts/register.mjs scripts/verify-flow.mjs",
-    "test:ui": "npm run build && node scripts/verify-ui.mjs"
+    "test:ui": "npm run build && node scripts/verify-ui.mjs",
+    "test:contract": "node scripts/check-contract.mjs"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",
