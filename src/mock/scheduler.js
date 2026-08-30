@@ -1,5 +1,5 @@
 import { advanceTelemetry, checkFenceEvents, recalcOverdueAll, escalatePendingExceptions, escalateContractApprovals } from './flow'
-import { USE_API, api, refreshDb } from './api'
+import { USE_API, api, refreshDb } from '@/api'
 
 /**
  * 定时任务层（切真实 API）：

@@ -41,7 +41,7 @@
 - `refreshDb()`：GET /api/snapshot → 覆盖 db 各集合（list 用 splice 保响应式，object 清除旧键+合并，logs 时间 ISO→空格归一）。
 - `hydrate()`：启动时 refreshDb（带 token 时）。
 - `afterWrite(fnName, ...args)`：按 W 映射（97 写函数，位置参数 args[i]）POST 后端 → 防抖 200ms refreshDb；失败 console.warn + refreshDb（回退权威态）。node 下 no-op。
-- 文件：src/mock/api.js
+- 文件：src/mock/api.js（第八轮已拆分为 `src/api/index.js`，见 fix-plan 第八轮）
 
 ### A3 [P0] flow.js 写函数挂 afterWrite — done-verified
 - 97 个写函数入口加一行 `afterWrite('fnName', <位置参数>)`（node 下 no-op，浏览器下持久化+刷新）。

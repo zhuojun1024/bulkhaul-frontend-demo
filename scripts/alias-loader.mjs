@@ -1,5 +1,5 @@
 /** 临时测试用：解析 @/ 别名与无扩展名相对导入（Node ESM 兼容 webpack 风格） */
-import { existsSync } from 'node:fs'
+import { existsSync, statSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 const ALIASES = {
@@ -10,12 +10,20 @@ const ALIASES = {
   '@/permission-table': '../src/permission-table.js'
 }
 
-/** @/ 子路径别名：@/mock/flow → src/mock/flow(.js | /index.js) */
+/** @/ 子路径别名：@/mock/flow → src/mock/flow(.js | /index.js)；@/api → src/api/index.js（目录型模块） */
+function isFile(p) {
+  try {
+    return statSync(p).isFile()
+  } catch {
+    return false
+  }
+}
 function resolveAtSubpath(specifier) {
   const rel = '../src/' + specifier.slice(2)
-  for (const cand of [rel, rel + '.js', rel + '/index.js']) {
+  // 文件候选优先：裸路径可能是目录（如 src/api），existsSync 对目录为 true 会导致 EISDIR
+  for (const cand of [rel + '.js', rel + '/index.js', rel]) {
     const u = new URL(cand, import.meta.url).href
-    if (existsSync(fileURLToPath(u))) return u
+    if (isFile(fileURLToPath(u))) return u
   }
   return null
 }

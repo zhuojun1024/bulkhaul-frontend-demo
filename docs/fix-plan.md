@@ -283,6 +283,22 @@
   - DispatchController /probe 为阶段 2 鉴权探针（verify-auth.mjs 已随脚本清理删除，端点保留且带
     @RequireAction，无风险；如需可删）。
 
+## 第八轮：目录拆分 src/mock/api.js → src/api/（接口层与内存引擎分离）— done-verified
+
+- 背景：接口已全量对接（登录/快照/写持久化/定时任务走真实后端），但联调层仍留在 src/mock/ 下，
+  目录语义与"mock 假数据"直觉冲突。拆分为常规前端项目结构：
+  - `src/api/index.js`：真实 API 联调层（USE_API 开关 + api() HTTP client + refreshDb/hydrate + afterWrite + W 映射 97 端点）
+  - `src/mock/`：内存业务引擎（flow.js 95 业务函数 + 种子数据 base/commodity/... + scheduler/persist/dashboard）
+- 改动（纯移动 + 路径更新，零逻辑变化）：
+  1. `git mv src/mock/api.js src/api/index.js`（保留 git 历史）；文件内 `./base` → `../mock/base`
+  2. 引用点 5 处：flow.js `./api`→`@/api`、scheduler.js `./api`→`@/api`、main.js `./mock/api`→`./api`、
+     views/login/index.vue `@/mock/api`→`@/api`
+  3. `scripts/alias-loader.mjs`（node 测试 @/ 别名解析）：候选顺序改为文件优先（`.js` → `/index.js` → 裸路径），
+     修复 `@/api` 命中目录导致 EISDIR 的问题（裸路径 existsSync 对目录为 true）
+- 依赖方向：mock 引擎 → api 层（单向，api 只依赖 mock/base 的 db）；视图/store 直接 import `@/api`。
+- 验证：eslint 0 错；npm test 556 通过 0 失败（node 纯内存态不受影响）；npm run build 干净；verify-ui 82 断言（浏览器真实 API 态）。
+- 遗留：docs/api-integration-plan.md 等历史文档中 `src/mock/api.js` 字样为当时记录，不回改。
+
 ## 压缩后重入协议
 
 1. 重读本文件，找到第一个非 done-verified 的项；

@@ -123,7 +123,7 @@ import { User, Lock, Key } from '@element-plus/icons-vue'
 import { useUserStore } from '@/store'
 import { setOperator } from '@/mock/flow'
 import { db } from '@/mock'
-import { api, hydrate } from '@/mock/api'
+import { api, hydrate } from '@/api'
 import dayjs from 'dayjs'
 
 const router = useRouter()

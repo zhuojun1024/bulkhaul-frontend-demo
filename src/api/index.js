@@ -1,5 +1,5 @@
 /**
- * 真实 API 联调层（阶段 6 收尾）
+ * 真实 API 联调层（阶段 6 收尾；目录拆分：src/api 为接口层，src/mock 为内存业务引擎/种子数据）
  *
  * 架构：内存引擎（flow.js）保持同步 + 响应式（npm test 554 断言不变），
  * 浏览器中每个写操作在内存引擎同步执行后，后台 POST 到后端持久化，
@@ -12,7 +12,7 @@
  * afterWrite(fnName, ...args)：args 为调用方传入的**原始位置参数**（与 flow.js 函数签名一致），
  * W 映射按位置索引 args[0]/args[1]… 构造 path/body。
  */
-import { db } from './base'
+import { db } from '../mock/base'
 
 /** 浏览器环境（有 localStorage）启用真实 API；node 测试态关闭 */
 export const USE_API = typeof window !== 'undefined' && !!window.localStorage

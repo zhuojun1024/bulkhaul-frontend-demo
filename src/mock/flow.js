@@ -2,7 +2,7 @@ import { db, randInt, randomName, ROUTES, MAP_NODES, NOW, tareOf, loadVarianceOf
 import { ROLE_ACTIONS } from '@/permission-table'
 import dayjs from 'dayjs'
 import { round, formatMoney, hashPassword } from '@/utils'
-import { afterWrite } from './api'
+import { afterWrite } from '@/api'
 
 export { tareOf, ROAD_MODES, isRoadMode }
 
