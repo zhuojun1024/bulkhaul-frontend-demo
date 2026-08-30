@@ -233,9 +233,45 @@ const W = {
 
 let refreshTimer = null
 
+/* ===== B3 乐观锁：对 6 核心集合的既有记录写，附带客户端最后看到的 version =====
+ * 后端 commitAll 比对：匹配 → version+1 持久化；不匹配 → 409（数据已变更）。缺省（无 version）→ 不参与（兼容旧行为）。
+ * a[0] 为记录对象（含 version）→ 直接取；a[0] 为 id 字符串 → 在本地 db 对应集合查 version。 */
+const VERSIONED = new Set([
+  /* dispatches（a[0]=调度单记录） */
+  'confirmLoad', 'depart', 'arrive', 'confirmUnload', 'cancelDispatch', 'reassignDispatch',
+  'resumeDispatch', 'acceptDispatch', 'supplementReceipt', 'scanConfirmLoad', 'scanConfirmUnload',
+  /* contracts（a[0]=合同记录） */
+  'changeContract', 'extendContract', 'terminateContract', 'completeContract', 'archiveContract',
+  /* plans（a[0]=计划记录） */
+  'cancelPlan',
+  /* settlements（a[0]=结算单记录） */
+  'startReconcile', 'recalcSettlement', 'confirmSettle', 'recordPayment', 'revertPayment',
+  'dunning', 'customerConfirm', 'customerObjection', 'applyPrepayment',
+  /* weighings（a[0]=磅单 id 字符串） */
+  'correctWeighing',
+  /* invoices（a[0]=发票记录） */
+  'redFlushInvoiceRow'
+])
+const VERSIONED_ID_COLL = { correctWeighing: 'weighings' }
+
+function expectedVersionFor(fnName, args) {
+  if (!VERSIONED.has(fnName)) return undefined
+  const a0 = args[0]
+  if (a0 && typeof a0 === 'object' && typeof a0.version === 'number') return a0.version
+  if (typeof a0 === 'string') {
+    const coll = VERSIONED_ID_COLL[fnName]
+    if (coll) {
+      const rec = (db[coll] || []).find((r) => r.id === a0)
+      if (rec && typeof rec.version === 'number') return rec.version
+    }
+  }
+  return undefined
+}
+
 /**
  * 写操作持久化钩子：内存引擎同步执行成功后调用。
  * node 下 no-op；浏览器下按 W 映射 POST 后端，防抖 200ms 后从快照刷新权威态（合并连续写）。
+ * B3 乐观锁：核心集合既有记录写附带 expectedVersion（不匹配 → 409，经 window 事件提示"数据已变更，请刷新"）。
  * 后端拒绝（RBAC/守卫）或网络失败时 console.warn 并刷新回权威态，不阻塞 UI。
  * @param {string} fnName flow.js 写函数名
  * @param {...*} args 原始位置参数（与 flow.js 函数签名一致）
@@ -254,9 +290,21 @@ export function afterWrite(fnName, ...args) {
     console.warn('[API] 构造请求失败 ' + fnName + '：', e && e.message)
     return
   }
+  // B3 乐观锁：注入 expectedVersion（body 端点进 body；无 body 端点进查询参数）
+  const ev = expectedVersionFor(fnName, args)
+  if (ev !== undefined) {
+    if (body !== undefined) body = { ...body, expectedVersion: ev }
+    else path += (path.includes('?') ? '&' : '?') + 'expectedVersion=' + ev
+  }
   api(method, path, body)
     .then((r) => {
-      if (r && !r.ok) console.warn('[API] 后端拒绝 ' + fnName + '：', r.error, r.code)
+      if (r && !r.ok) {
+        console.warn('[API] 后端拒绝 ' + fnName + '：', r.error, r.code)
+        if (r.code === 'conflict') {
+          // B3 乐观锁冲突（409）：全局事件 → main.js toast"数据已变更，请刷新"；下方 refreshDb 已拉回权威态
+          window.dispatchEvent(new CustomEvent('blms:conflict', { detail: { fnName, error: r.error } }))
+        }
+      }
     })
     .catch((e) => console.warn('[API] 后端调用失败 ' + fnName + '：', e && e.message))
   clearTimeout(refreshTimer)
