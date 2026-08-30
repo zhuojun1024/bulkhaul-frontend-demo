@@ -1569,23 +1569,29 @@ setOperator({ name: '张建国', username: 'admin', role: '平台管理员' })
   const m3d = createDispatches(m3p, 1).created[0]
   check('M3：派车成功（前置：装货场站 T006 → WH007）', !!m3d)
   if (m3d) {
-    const m3batches = db.inventories.filter((i) => i.warehouseId === 'WH007' && i.commodityId === 'CM001' && i.status === 'normal')
-    const m3origQty = m3batches.map((b) => b.quantity)
-    const m3origDate = m3batches.map((b) => b.inDate)
+    // 自造受控批次（不依赖种子随机状态：WH007 的 CM001 批次由 rng 随机生成，
+    // 后续模块新增 rng 消耗会漂移其状态，曾导致本环节 m3batches 为空而崩溃）
+    const m3b1 = { id: 'INV-M3A', warehouseId: 'WH007', commodityId: 'CM001', batch: 'BTEST-M3A', quantity: 100, inDate: '2026-08-01', status: 'normal' }
+    const m3b2 = { id: 'INV-M3B', warehouseId: 'WH007', commodityId: 'CM001', batch: 'BTEST-M3B', quantity: 100, inDate: '2026-08-10', status: 'normal' }
+    db.inventories.push(m3b1, m3b2)
+    // 临时锁定种子 normal 批次（含确定性垫批），保证本环节库存口径完全受控，测完恢复
+    const m3seedLocked = db.inventories
+      .filter((i) => i.warehouseId === 'WH007' && i.commodityId === 'CM001' && i.status === 'normal' && i.id !== m3b1.id && i.id !== m3b2.id)
+      .map((i) => i.id)
+    for (const i of db.inventories) if (m3seedLocked.includes(i.id)) i.status = 'locked'
     m3d.accepted = true
     // a) 可发库存 10 吨 < 35 吨 → 拦截装货，状态不变
-    m3batches.forEach((b, i) => (b.quantity = i === 0 ? 10 : 0))
+    m3b1.quantity = 10
+    m3b2.quantity = 0
     const m3r1 = confirmLoad(m3d)
     check('M3：可发库存不足拦截装货（明确报错 + 状态不变）', /可发库存不足/.test(m3r1?.error || '') && m3d.status === 'pending')
     // b) 充足（20 + 20 两批次）→ 跨批次 FIFO（早批次先扣）
-    m3batches[0].inDate = '2026-08-01'
-    m3batches[0].quantity = 20
-    const m3extra = { id: 'INV-M3T', warehouseId: 'WH007', commodityId: 'CM001', batch: 'BTEST-M3', quantity: 20, inDate: '2026-08-10', status: 'normal' }
-    db.inventories.push(m3extra)
+    m3b1.quantity = 20
+    m3b2.quantity = 20
     const m3r2 = confirmLoad(m3d)
     check(
       'M3：库存充足 → 跨批次 FIFO 扣减（早批次 20→0，次批次 20→5）',
-      !m3r2?.error && m3d.status === 'loading' && m3batches[0].quantity === 0 && m3extra.quantity === 5
+      !m3r2?.error && m3d.status === 'loading' && m3b1.quantity === 0 && m3b2.quantity === 5
     )
     // c) 仓库无该商品批次记录（外采/过路）→ 不出库联动、不拦截
     const m3p2 = { id: 'YH-M3B', contractId: m3c.id, commodityId: 'CM003', quantity: 35, loadTerminalId: 'T007', unloadTerminalId: 'T002', mode: '公路', unitPrice: m3c.unitPrice, status: 'pending', progress: 0 }
@@ -1598,12 +1604,10 @@ setOperator({ name: '张建国', username: 'admin', role: '平台管理员' })
     } else {
       check('M3：仓库无该商品批次（外采/过路）→ 不出库联动、不拦截', false)
     }
-    // 清理：恢复库存、移除测试批次
-    m3batches.forEach((b, i) => {
-      b.quantity = m3origQty[i]
-      b.inDate = m3origDate[i]
-    })
-    db.inventories.splice(db.inventories.indexOf(m3extra), 1)
+    // 清理：移除测试批次，恢复种子批次状态
+    db.inventories.splice(db.inventories.indexOf(m3b1), 1)
+    db.inventories.splice(db.inventories.indexOf(m3b2), 1)
+    for (const i of db.inventories) if (m3seedLocked.includes(i.id)) i.status = 'normal'
   }
 }
 {
@@ -2236,6 +2240,8 @@ setOperator({ name: '张建国', username: 'admin', role: '平台管理员' })
     signReceipt(q13d, '收货方')
     const q13cand = settlementCandidates().find((g) => g.dispatches.some((x) => x.id === q13d.id))
     const q13s = generateSettlements([q13cand.key]).find((x) => x.contractId === q13d.contractId)
+    // confirmSettle 要求组内全部公路车次有签收单：组内其余车次补签（结算前置）
+    for (const x of q13cand.dispatches) if (x.id !== q13d.id && isRoadMode(x.mode) && !x.receipt) signReceipt(x, '收货方')
     startReconcile(q13s)
     customerConfirm(q13s)
     confirmSettle(q13s)

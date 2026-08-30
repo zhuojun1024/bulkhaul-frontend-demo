@@ -67,6 +67,24 @@ for (const wh of warehouses) {
     })
   }
 }
+// 确定性保证（不消耗全局 rng，避免扰动下游种子序列）：WH007×CM001 须有充足可发 normal 批次。
+// 种子计划 YH-0019（T006→WH007，CM001）等装货车次受 M3 出库守卫校验，
+// 批次状态由 rng 随机生成且会随各模块 rng 消耗漂移，垫批使业务闭环测试不依赖随机种子状态。
+const wh007Avail = db.inventories
+  .filter((i) => i.warehouseId === 'WH007' && i.commodityId === 'CM001' && i.status === 'normal')
+  .reduce((s, i) => s + i.quantity, 0)
+if (wh007Avail < 2000) {
+  db.inventories.push({
+    id: 'INV-SEEDWH7',
+    warehouseId: 'WH007',
+    commodityId: 'CM001',
+    batch: 'BSEED-WH7-1',
+    quantity: 2000 - wh007Avail,
+    inDate: '2026-07-15',
+    status: 'normal'
+  })
+}
+
 // 演示口径：强制 1 号煤仓 动力煤 低于安全库存（保证库存预警有展示数据）
 const forcedSq = db.safetyStocks.find((s) => s.warehouseId === 'WH001' && s.commodityId === 'CM001')
 forcedSq.minQty =
