@@ -53,7 +53,7 @@ export async function api(method, path, body) {
   if (res.status === 401) {
     try {
       localStorage.removeItem('blms_token')
-    } catch (e) {}
+    } catch (e) { /* localStorage 不可用时忽略 */ }
     return { ok: false, error: (json && json.error) || '未登录或登录已过期', code: (json && json.code) || 'unauthenticated' }
   }
   return json

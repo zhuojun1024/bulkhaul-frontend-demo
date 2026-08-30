@@ -238,6 +238,7 @@
                 v-for="v in filteredVehicles"
                 :key="v.id"
                 class="track-list__item"
+                :data-dispatch-id="v.dispatchId"
                 :class="{ active: v.id === selectedId }"
                 @click="selectedId = v.id"
               >

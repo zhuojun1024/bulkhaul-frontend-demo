@@ -199,6 +199,16 @@ async function resetDemo() {
   if (!r.ok) console.log('  [reset-demo] 重置失败：', r.error)
   return r.ok
 }
+/** node 侧调后端 API（带 token），供 P2 手动驱动 /api/scheduler/tick 与创建车次（确定性，不受 auto-enabled 限制） */
+async function apiPost(p, body = {}) {
+  await getBackendSnapshot() // 确保 token
+  const res = await fetch(BACKEND + p, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + _backendToken },
+    body: JSON.stringify(body)
+  })
+  return (await res.json())
+}
 
 /** 弹窗内 el-select（按表单项标签定位）：打开下拉 → 输入过滤 → 点击匹配选项 */
 async function pickDialogSelect(page, label, keyword) {
@@ -270,6 +280,13 @@ const browser = await puppeteer.launch({
 })
 
 try {
+  // 脚本起点重置后端内存数据仓库回种子态（等价旧架构"每场景全新种子"）。
+  // 后端 commitAll 会把前次测试/演示的业务写操作回写 biz_*（污染种子：消耗在途车次、
+  // 结算收款等），重启后内存态从污染态加载；脚本开头重置保证场景 1-15（主链路组）
+  // 从干净种子态开始，P2 监控页（在途车次遥测推进）等依赖种子前置数据的场景可复现。
+  await resetDemo()
+  console.log('== 0. 重置后端回种子态（commitAll 污染防护） ==')
+
   /* ===== 场景 1：admin 登录 → 主链路操作（确认装货） ===== */
   console.log('== 1. admin：登录 → 调度 → 确认装货（主链路） ==')
   {
@@ -723,45 +740,53 @@ try {
   /* ===== 场景 13：P2 架构下沉（定时任务驱动数据 + 只读用户无操作按钮） ===== */
   console.log('== 13. P2：在途进度由全局定时任务推进 + 只读用户无操作按钮 ==')
   {
+    // 重置回种子态（场景 1-12 消耗了种子）。
+    await resetDemo()
+    // 种子在途车次的 eta 是 dump 时刻的固定过去时间 → 围栏 delay 分支每次 tick 命中 →
+    // createException 把车次改成 exception（P2 无稳定可观察目标）。故动态创建新在途车次：
+    // depart 生成未来 eta（now + 行驶时长 + 30min），围栏不命中，进度可稳定观察推进。
+    // 后端 auto-enabled=false（验证/演示环境确定性运行，不后台自动 tick），
+    // 故 node 侧手动驱动 /api/scheduler/tick（等价浏览器前端 timer 每 3s 调 tick），UI 只读、无用户操作。
+    const snap0 = await getBackendSnapshot()
+    const pending = (snap0.dispatches || []).find((x) => x.status === 'pending')
+    let targetId = null
+    if (pending) {
+      await apiPost('/dispatch/' + pending.id + '/confirmLoad')
+      await apiPost('/dispatch/' + pending.id + '/depart')
+      targetId = pending.id
+    }
     const { ctx, page } = await newPage(browser)
-    await login(page, 'admin', '123456')
+    await login(page, 'admin', '123456') // login 时 hydrate 后端快照（已含新建在途车次）
     await page.waitForSelector('.page')
     await nav(page, '#/track')
     await page.waitForSelector('.track-list__item')
-    // 等首轮定时任务完成（轨迹偏离超阈值的在途车次已被围栏事件转异常单），
-    // 剩余在途车次不会再被围栏命中，可稳定观察遥测推进（页面已无自研 tick，进度变化只能来自全局定时任务）
-    await new Promise((r) => setTimeout(r, 4000))
-    const target = await page.evaluate(() => {
-      const items = [...document.querySelectorAll('.track-list__item')]
-      const list = items
-        .map((el) => {
-          const tag = el.querySelector('.el-tag')?.textContent || ''
-          const m = el.textContent.match(/进度 (\d+)%/)
-          return m && tag === '在途'
-            ? { plate: el.querySelector('.track-list__plate').textContent.trim(), progress: parseInt(m[1], 10) }
-            : null
-        })
-        .filter((x) => x && x.progress < 95)
-      list.sort((a, b) => a.progress - b.progress)
-      return list[0] || null
-    })
+    // 新在途车次出现在监控页列表（tag 在途/延误，progress<95；dispatchId 从 data-dispatch-id 读，
+    // 铁路车次 vehicleId 为 null 时 plate 映射不可靠）
+    const target = await page.evaluate((id) => {
+      const el = [...document.querySelectorAll('.track-list__item')].find((i) => i.dataset.dispatchId === id)
+      if (!el) return null
+      const tag = el.querySelector('.el-tag')?.textContent || ''
+      const m = el.textContent.match(/进度 (\d+)%/)
+      return m && (tag === '在途' || tag === '延误') ? { dispatchId: id, progress: parseInt(m[1], 10) } : null
+    }, targetId)
     check('P2：监控页存在可观察的在途车次', !!target)
+    // 进度推进用后端快照（float 精度）观察，而非 UI 文本（取整显示）：
+    // 调度器每 tick 随机推进 0~0.9，UI Math.round 取整后窗口内随机增量可能不足 1 → 误报 flaky。
+    // node 侧驱动定时任务 tick（等价全局定时任务），UI 只读、无用户操作；float 比较无取整误差。
     let increased = false
     if (target) {
-      try {
-        await page.waitForFunction(
-          (t) => {
-            const el = [...document.querySelectorAll('.track-list__item')].find((i) => i.querySelector('.track-list__plate')?.textContent.trim() === t.plate)
-            const m = el?.textContent.match(/进度 (\d+)%/)
-            return m ? parseInt(m[1], 10) > t.progress : false
-          },
-          { timeout: 20000 },
-          target
-        )
-        increased = true
-      } catch {
-        increased = false
+      const base = Number((await getBackendSnapshot()).dispatches.find((x) => x.id === target.dispatchId)?.progress)
+      for (let i = 0; i < 4; i++) {
+        await apiPost('/scheduler/tick')
+        await new Promise((r) => setTimeout(r, 300))
       }
+      increased = await waitForBackend(
+        (snap) => {
+          const d = (snap.dispatches || []).find((x) => x.id === target.dispatchId)
+          return d && Number(d.progress) > base
+        },
+        { timeout: 10000 }
+      )
     }
     check('P2：无用户操作进度自动推进（全局定时任务驱动，UI 只读）', increased)
     await ctx.close()
@@ -1064,13 +1089,15 @@ try {
         el.dispatchEvent(new Event('input', { bubbles: true }))
       }
     })
-    // 后端快照：质量扣减账单 + CUS001 已结算/逾期未付清账单（预付款抵扣演示）
+    // 后端快照：质量扣减账单 + 预付款抵扣演示账单（客户既有可用预付款、又有已结算/逾期未付清账单）。
+    // 不写死客户：种子漂移后 CUS001 可能无已结算/逾期未付清账单（当前种子为 CUS003：YF-0002 预付 + JS-0020 逾期未付）。
     const seed = await waitForBackend((snap) => {
         const s1 = (snap.settlements || []).find((x) => x.qualityDeduction > 0 && x.reconciliation)
         const s2 = (snap.settlements || []).find(
-          (x) => x.customerId === 'CUS001' && ['settled', 'overdue'].includes(x.status) && x.totalAmount - x.paidAmount > 0
+          (x) => ['settled', 'overdue'].includes(x.status) && x.totalAmount - x.paidAmount > 0 &&
+            (snap.prepayments || []).some((p) => p.customerId === x.customerId)
         )
-        return s1 && s2 ? { qualitySettleId: s1.id, prepaySettleId: s2.id } : false
+        return s1 && s2 ? { qualitySettleId: s1.id, prepaySettleId: s2.id, prepayCustomerId: s2.customerId } : false
       }, { timeout: 15000 })
     check('环节4：种子含质量扣减账单（结算演示前置）', !!seed)
     if (seed) {
@@ -1082,11 +1109,11 @@ try {
       check('环节4：结算详情费用明细含"质量扣减"项', pageText.includes('质量扣减'))
       check('环节4：对账明细含"质量扣重"列', pageText.includes('质量扣重'))
 
-      // 环节5：结算详情"预付款抵扣"（CUS001 有种子预付 80 万）
+      // 环节5：结算详情"预付款抵扣"（该客户有种子预付，按钮 prepayAvail>0 才显示）
       await nav(page, '#/settlement/' + seed.prepaySettleId)
       await page.waitForSelector('.settlement-detail__name')
       const prepayBtn = await page.evaluate(() => [...document.querySelectorAll('button')].some((b) => b.textContent.replace(/\s/g, '').includes('预付款抵扣')))
-      check('环节5：CUS001 已结算/逾期账单有"预付款抵扣"按钮', prepayBtn)
+      check(`环节5：${seed.prepayCustomerId} 已结算/逾期账单有"预付款抵扣"按钮`, prepayBtn)
       if (prepayBtn) {
         await page.evaluate(() => {
           const btn = [...document.querySelectorAll('button')].find((b) => b.textContent.replace(/\s/g, '').includes('预付款抵扣'))

@@ -187,6 +187,41 @@
   10s 超时——stash 掉本次改动后干净 HEAD 同样失败，属存量问题（后端 hydrate
   架构下种子/后端状态相关），与本次修复无关，未处理。
 
+## 第五轮：UI E2E 存量失败根治（种子污染 + 时间敏感断言）— done-verified
+
+- 现象：test:ui 场景11"银行对账自动核销"10s 超时（第四轮记录为存量问题）。
+- 根因1（DB 种子污染）：后端 commitAll 把业务写操作回写 biz_*（前次 UI 测试自动核销
+  成功写入 SK-0021 收款 → JS-0008 变 settled），重启后 DataStore 从污染态 DB 加载并
+  captureSeed 捕获污染态 → reset-demo 也回不到正确种子 → autoMatchBank 永远匹配不到
+  （JS-0008 未付=0、YH-0008 无账单可匹配）→ 超时。
+- 修复1（bulkhaul-server）：
+  1. V4__seed_snapshot.sql：把 biz_* 种子态固化到只读 seed_* 表（34 张）；
+  2. DataStore.tryLoadSeedFromSnapshot：种子基线优先从 seed_* 加载（不受 commitAll
+     污染影响），seed_* 缺失时回退内存捕获（旧库兼容）；
+  3. 重放 V3 SQL 恢复 DB 种子态（JS-0008 回 overdue、SK-0021 清除）。
+- 根因2（场景11 修复后暴露 3 个被掩盖的失败）：
+  - P2 监控页（2 项）：种子在途车次 eta 是 dump 时刻的固定过去时间 → 前端 isDelayed
+    全为延误（tag≠"在途"过滤不到）；且每次 scheduler tick 围栏 delay 分支命中 →
+    createException 把车次转 exception；后端 auto-enabled=false 不自动 tick，
+    依赖浏览器前端 timer（headless 下脆弱）。种子时间敏感，无法稳定复现。
+  - 环节4（1 项）：断言写死"CUS001 已结算/逾期未付清账单"，种子漂移后 CUS001 只有
+    reconciling/pending（当前种子 CUS003 才有预付+逾期未付）。
+- 修复2（bulkhaul-manage-web）：
+  1. verify-ui.mjs 脚本开头 + 场景13 开头 resetDemo()（等价旧架构"每场景全新种子"，
+     防 commitAll 污染 + 场景 1-12 消耗种子）；
+  2. 环节4/5 断言改动态定位"有预付款 + 有已结算/逾期未付清账单"的客户（不写死 CUS001）；
+  3. P2 重写：动态创建新在途车次（confirmLoad+depart，eta=未来时间围栏不命中），
+     node 侧手动驱动 /api/scheduler/tick（确定性，等价全局定时任务；auto-enabled=false
+     下后端不自动 tick），后端快照 float 比较观察进度推进（UI 取整显示会 flaky）；
+     track/index.vue 列表项加 data-dispatch-id（铁路车次 vehicleId=null 时 plate 映射不可靠）。
+- 验证：npm test 556 通过 0 失败；test:ui 82 通过 0 失败，且**连续两次全绿**
+  （幂等性：reset-demo 回种子态 + seed_* 快照防污染，跑多少次都稳定）。
+- 遗留：src/mock/api.js:56 存量 lint error（no-empty Empty block statement）已修复
+  （catch 块补注释，零行为变化，npx eslint src/mock/api.js 清零）；
+  vue.config.js devServer port:8087 本地改动已还原（工作区与 HEAD 一致）。
+- 经验沉淀：docs/lessons-learned.md（环境拓扑/后端启动/验证基线/种子治理/断言纪律）；
+  一次性脚本清理（server q-*/probe、web smoke-server、V1/V2 冗余 SQL 副本、dump-schema.json）。
+
 ## 压缩后重入协议
 
 1. 重读本文件，找到第一个非 done-verified 的项；
