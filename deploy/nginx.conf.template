@@ -1,0 +1,43 @@
+# bulkhaul-manage-web 生产 Nginx（envsubst 模板）：托管前端 dist + /api 反代后端
+# 官方 nginx 镜像 entrypoint 会对 /etc/nginx/templates/*.template 跑 envsubst，
+# 用容器环境变量 BACKEND_UPSTREAM 替换 ${BACKEND_UPSTREAM}（compose 注入 backend；本地可 localhost）。
+upstream backend {
+    server ${BACKEND_UPSTREAM}:8081;
+}
+
+server {
+    listen 80;
+    server_name _;
+
+    # gzip（前端产物 + API JSON）
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript image/svg+xml;
+    gzip_min_length 1024;
+
+    # 静态资源（Vue CLI 产物，hash 文件名可长缓存）
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # 带 hash 的静态资源长缓存
+    location ~* \.(js|css|png|jpg|jpeg|gif|svg|ico|woff2?)$ {
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+        try_files $uri =404;
+    }
+
+    # /api 反代后端（前端用相对 /api，无 CORS）
+    location /api/ {
+        proxy_pass http://backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 60s;
+    }
+
+    # SPA 路由（hash 模式，仍兜底 index.html）
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
