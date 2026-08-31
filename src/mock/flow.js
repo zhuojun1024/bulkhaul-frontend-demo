@@ -3,6 +3,7 @@ import { ROLE_ACTIONS } from '@/permission-table'
 import dayjs from 'dayjs'
 import { round, formatMoney, hashPassword } from '@/utils'
 import { afterWrite } from '@/api'
+import { isProduction } from '@/mode'
 
 export { tareOf, ROAD_MODES, isRoadMode }
 
@@ -82,7 +83,25 @@ export function operatorCan(action) {
 
 /** 状态变更入口守卫：无权限返回错误（不抛异常，调用方统一处理）
  *  前端按钮权限（usePerm）仅为体验层；本守卫是"后端单点校验"的等价物，改 localStorage 也无法绕过 */
+/**
+ * Phase 4 阶段 6：flow.js 门控（薄客户端化）。
+ * 后端（FlowCtx/DispatchService/ContractService/...）是 flow.js 的 1:1 移植，
+ * 已权威地执行 RBAC（requireAction）+ 状态机守卫 + 资源占用 + 全部联动；
+ * 前端写路径经 afterWrite 同步 POST 后端（薄客户端），本地变更是乐观更新
+ * （200ms 防抖 refreshDb 拉回后端权威态校正）。
+ *
+ * 双模式门控（决策 2：localStorage blms_app_mode > 构建默认 DEFAULT_MODE=production）：
+ *  - 生产模式（浏览器 && isProduction()）：本地 RBAC 守卫（requireAction）为冗余——后端已权威执行，
+ *    故跳过本地拦截，直接走乐观本地变更 + afterWrite 落库（后端拒绝时 refreshDb 回写权威态）。
+ *    注意：node 测试环境（USE_API=false，typeof window==='undefined'）不走此分支，本地守卫生效。
+ *    状态机守卫（doXxx 内的 status 校验）保留为乐观前置（即时反馈 + 避免无效落库）。
+ *  - 演示模式（默认回退）：本地 RBAC 守卫生效（内存引擎自洽，node 测试 USE_API=false 不发 HTTP）。
+ * 本地乐观变更两模式均保留：E2E 主链路依赖其即时 UI 反馈（后端 commitAll ~2.3s，200ms 防抖刷新
+ * 早于落库，须靠乐观变更保证写后状态可见；scheduler 关闭的验证栈下无 tick 兜底）。
+ */
 function requireAction(action) {
+  // 阶段 6 门控：仅浏览器生产模式跳过本地 RBAC（后端权威执行）；node 测试/演示模式守卫生效
+  if (typeof window !== 'undefined' && isProduction()) return null
   if (operatorCan(action)) return null
   return { error: `当前角色「${operator.role || '未登录'}」无此操作权限，操作已被服务层拦截` }
 }
