@@ -13,6 +13,7 @@
  * W 映射按位置索引 args[0]/args[1]… 构造 path/body。
  */
 import { db } from '../mock/base'
+import { invalidateMany, invalidateAllFor } from '../composables/collectionStore'
 
 /** 浏览器环境（有 localStorage）启用真实 API；node 测试态关闭 */
 export const USE_API = typeof window !== 'undefined' && !!window.localStorage
@@ -99,6 +100,8 @@ export async function refreshDb() {
   }
   const logs = (Array.isArray(d.logs) ? d.logs : []).map((l) => ({ ...l, time: normLogTime(l.time) }))
   if (Array.isArray(db.logs)) db.logs.splice(0, db.logs.length, ...logs)
+  // Phase 4 阶段 3：快照刷新成功 → 通知生产模式页面重取权威集合（薄客户端读同步）
+  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('blms:refreshed'))
   return true
 }
 
@@ -231,6 +234,62 @@ const W = {
   markAllMessagesRead: { path: () => '/admin/messages/readAll' }
 }
 
+/* ===== 写后失效（Phase 4 阶段 2）：写函数名 → 受影响的集合（数据层缓存失效，视图重取权威态）=====
+ * 保守口径：写操作可能联动多集合（如 confirmUnload 联动 weighings/settlements/payables/plans），
+ * 故按业务域整域失效，宁可多失效不漏失效（失效仅触发重取，成本低）。 */
+const WRITE_COLL = {
+  dispatches: ['dispatches', 'weighings', 'settlements', 'payables', 'plans', 'exceptions', 'inventories'],
+  contracts: ['contracts', 'plans', 'transportRequests'],
+  plans: ['plans', 'dispatches'],
+  settlements: ['settlements', 'payments', 'prepayments', 'invoices', 'dunnings', 'exceptions', 'dispatches'],
+  weighings: ['weighings', 'settlements'],
+  warehouse: ['warehouses', 'inventories', 'safetyStocks'],
+  exceptions: ['exceptions', 'settlements', 'dispatches'],
+  safety: ['accidents', 'trainings', 'inspections'],
+  insurance: ['insurance'],
+  finance: ['payables', 'bankRecords', 'payments', 'settlements'],
+  admin: ['commodities', 'customers', 'terminals', 'vehicles', 'drivers', 'users', 'roles', 'rateCards', 'dataScopes', 'dnd'],
+  messages: ['messages']
+}
+function invalidateForWrite(fnName) {
+  // 从 W 映射的 path 前缀推断域；兜底按 fnName 关键字
+  const ep = W[fnName]
+  let path = ''
+  try { path = ep && ep.path ? ep.path([]) : '' } catch (e) { path = '' }
+  const p = String(path)
+  let domain = null
+  if (p.includes('/dispatch/')) domain = 'dispatches'
+  else if (p.includes('/weighing')) domain = 'weighings'
+  else if (p.includes('/warehouse')) domain = 'warehouse'
+  else if (p.includes('/exception')) domain = 'exceptions'
+  else if (p.includes('/safety')) domain = 'safety'
+  else if (p.includes('/insurance')) domain = 'insurance'
+  else if (p.includes('/settlement')) domain = 'settlements'
+  else if (p.includes('/finance')) domain = 'finance'
+  else if (p.includes('/contract') || p.includes('/plan')) domain = p.includes('/plan') ? 'plans' : 'contracts'
+  else if (p.includes('/admin/messages')) domain = 'messages'
+  else if (p.includes('/admin')) domain = 'admin'
+  if (!domain) {
+    // 兜底：按 fnName 关键字
+    if (/dispatch|load|depart|arrive|unload|receipt|scan|reassign|resume|accept/i.test(fnName)) domain = 'dispatches'
+    else if (/weigh|correct/i.test(fnName)) domain = 'weighings'
+    else if (/warehouse|inventory|safetyStock|inbound/i.test(fnName)) domain = 'warehouse'
+    else if (/exception/i.test(fnName)) domain = 'exceptions'
+    else if (/accident|training|inspection/i.test(fnName)) domain = 'safety'
+    else if (/insurance|claim/i.test(fnName)) domain = 'insurance'
+    else if (/settle|payment|prepay|invoice|dunning|reconcile/i.test(fnName)) domain = 'settlements'
+    else if (/payable|bank/i.test(fnName)) domain = 'finance'
+    else if (/contract|plan|request/i.test(fnName)) domain = 'contracts'
+    else if (/message/i.test(fnName)) domain = 'messages'
+    else domain = 'admin'
+  }
+  const colls = WRITE_COLL[domain]
+  if (colls) {
+    invalidateMany(colls)
+    for (const c of colls) invalidateAllFor(c) // 复合 key（分页/过滤视图）一并失效
+  }
+}
+
 let refreshTimer = null
 
 /* ===== B3 乐观锁：对 6 核心集合的既有记录写，附带客户端最后看到的 version =====
@@ -296,6 +355,7 @@ export function afterWrite(fnName, ...args) {
     if (body !== undefined) body = { ...body, expectedVersion: ev }
     else path += (path.includes('?') ? '&' : '?') + 'expectedVersion=' + ev
   }
+  invalidateForWrite(fnName) // Phase 4 阶段 2：写后失效数据层缓存（视图重取权威态）
   api(method, path, body)
     .then((r) => {
       if (r && !r.ok) {

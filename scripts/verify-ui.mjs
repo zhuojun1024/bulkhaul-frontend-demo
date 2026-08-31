@@ -1180,6 +1180,24 @@ try {
       })
       await page.evaluate(() => window.__visDialogBtn('免打扰设置', '保存设置').click())
       await page.waitForFunction(() => !window.__visDialog('免打扰设置'), { timeout: 10000 })
+      // 按"系统"类型筛选，把唯一的系统消息拉到第 1 页：
+      // 消息列表按最新在前排序，定时任务生成的异常消息会不断把系统消息挤到后面（第 2/3 页），
+      // 直接查第 1 页行会漏掉系统消息。筛选后列表只剩系统消息，标记断言与排序无关。
+      await page.evaluate(() => {
+        const sel = document.querySelector('.filter-bar .el-select')
+        const wrapper = sel.querySelector('.el-select__wrapper') || sel
+        wrapper.click()
+      })
+      await page.waitForFunction(
+        () => [...document.querySelectorAll('.el-select-dropdown__item')].some((i) => i.offsetParent !== null && i.textContent.includes('系统')),
+        { timeout: 5000 }
+      )
+      await page.evaluate(() => {
+        const item = [...document.querySelectorAll('.el-select-dropdown__item')].find((i) => i.offsetParent !== null && i.textContent.includes('系统'))
+        item.click()
+      })
+      // 标记依赖本地 db.dnd：保存后 200ms 快照刷新可能早于后端 PUT 落库（~2.3s）而回写种子态，
+      // 需等下一轮 3s 定时任务快照刷新把已落库的 dnd 同步回本地，标记才出现（10s 足够覆盖）。
       await page.waitForFunction(
         () => [...document.querySelectorAll('.el-table__row')].some((r) => r.textContent.includes('免打扰')),
         { timeout: 10000 }
@@ -1385,6 +1403,52 @@ try {
         })
     )
     check('环节10：单证下载触发 Blob（text/html 电子单证 HTML）', dlResult.captured && dlResult.type.includes('text/html') && dlResult.hasTable && dlResult.isDoc)
+    await ctx.close()
+  }
+  /* ===== 场景 20：Phase 4 阶段 3 生产模式（薄客户端）合同列表——服务端分页 + 过滤 + 交叉引用 =====
+   * 演示模式（默认）由现有场景 1-19 覆盖；本场景验证生产模式（localStorage blms_app_mode=production）
+   * 下合同列表读服务端权威态：分页总数=后端全量、状态过滤=后端过滤数、交叉引用列（客户名）经 hydrate 本地 db 渲染。 */
+  console.log('== 20. 生产模式：合同列表服务端分页 + 过滤（薄客户端） ==')
+  await resetDemo() // 回种子态
+  {
+    const { ctx, page } = await newPage(browser)
+    // 生产模式：登录前设置 localStorage 覆盖（合同组件 setup 读 isProduction()）
+    await page.goto(BASE + '/#/login', { waitUntil: 'networkidle0' })
+    await page.evaluate(() => localStorage.setItem('blms_app_mode', 'production'))
+    await login(page, 'admin', '123456')
+    // 后端权威值（admin 范围 → 与 UI 同口径；snapshot 与 /api/coll 均按当前操作人数据范围过滤）
+    const snap = await getBackendSnapshot()
+    const totalContracts = (snap.contracts || []).length
+    const statusCount = (s) => (snap.contracts || []).filter((c) => c.status === s).length
+    const statuses = ['executing', 'pending', 'completed', 'terminated', 'archived']
+    const pickStatus = statuses.find((s) => statusCount(s) > 0) || ''
+    const labelOf = { executing: '执行中', pending: '待审批', completed: '已完成', terminated: '已终止', archived: '已归档' }
+
+    await nav(page, '#/contract')
+    await page.waitForSelector('.el-table__row')
+    await page.waitForFunction(
+      (t) => (document.querySelector('.page')?.textContent || '').includes('共 ' + t + ' 条'),
+      { timeout: 15000 }, totalContracts
+    )
+    const listText = await page.evaluate(() => document.querySelector('.page')?.textContent || '')
+    check('阶段3：生产模式合同列表分页总数=后端全量合同数（服务端分页生效）', listText.includes('共 ' + totalContracts + ' 条'))
+    // 交叉引用列（客户名）渲染 → 证明 hydrate 填充本地 db 供 find.* 使用
+    const custNames = (snap.customers || []).map((c) => c.name).filter(Boolean)
+    check('阶段3：生产模式交叉引用列渲染客户名（本地 db 供 find.* 交叉引用）', custNames.some((n) => listText.includes(n)))
+
+    if (pickStatus) {
+      // 点状态统计 chip → 生产模式 watch 触发服务端过滤重取
+      await page.evaluate((label) => {
+        const chip = [...document.querySelectorAll('.stat-chip')].find((c) => (c.textContent || '').includes(label))
+        chip.click()
+      }, labelOf[pickStatus])
+      await page.waitForFunction(
+        (t) => (document.querySelector('.page')?.textContent || '').includes('共 ' + t + ' 条'),
+        { timeout: 15000 }, statusCount(pickStatus)
+      )
+      const filteredText = await page.evaluate(() => document.querySelector('.page')?.textContent || '')
+      check('阶段3：生产模式状态过滤（' + labelOf[pickStatus] + '）总数=后端过滤数（服务端过滤生效）', filteredText.includes('共 ' + statusCount(pickStatus) + ' 条'))
+    }
     await ctx.close()
   }
 } finally {

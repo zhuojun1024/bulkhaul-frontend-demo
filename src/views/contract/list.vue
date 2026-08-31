@@ -135,7 +135,7 @@
           <el-pagination
             v-model:current-page="page"
             v-model:page-size="pageSize"
-            :total="filtered.length"
+            :total="totalRows"
             :page-sizes="[10, 20, 50]"
             layout="total, sizes, prev, pager, next, jumper"
             background
@@ -482,7 +482,7 @@
 <script setup>
 defineOptions({ name: 'Contract' })
 import ActionColumn from '@/components/ActionColumn.vue'
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Plus, Download, Refresh } from '@element-plus/icons-vue'
@@ -508,6 +508,8 @@ import { formatMoney, formatNum } from '@/utils'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
 import { usePerm } from '@/permission'
+import { useCollection } from '@/composables/useCollection'
+import { isProduction } from '@/mode'
 
 const tokens = useTokens()
 const { can } = usePerm()
@@ -627,10 +629,39 @@ const filtered = computed(() => {
   })
 })
 
+/* ===== Phase 4 阶段 3：生产模式（薄客户端）——合同列表走服务端分页 + 过滤（/api/coll/contracts）=====
+ * 演示模式（默认）保持本地内存引擎（filtered/paged 客户端分页，现有断言不变）；
+ * 生产模式：行/总数/过滤/分页全部由后端权威，本地 db 仅用于列内交叉引用（find.*）。 */
+const PROD = isProduction()
+const listCol = useCollection('contracts', () => ({
+  page: page.value,
+  size: pageSize.value,
+  status: filter.status || undefined,
+  mode: filter.mode || undefined,
+  keyword: filter.keyword || undefined,
+  dateFrom: (filter.dateRange && filter.dateRange[0]) || undefined,
+  dateTo: (filter.dateRange && filter.dateRange[1]) || undefined,
+  key: 'contracts:list'
+}))
+
 const paged = computed(() => {
+  if (PROD) return listCol.data.value
   const start = (page.value - 1) * pageSize.value
   return filtered.value.slice(start, start + pageSize.value)
 })
+
+/** 分页总数：生产模式取服务端 total，演示模式取本地过滤长度 */
+const totalRows = computed(() => (PROD ? listCol.total.value : filtered.value.length))
+
+if (PROD) {
+  onMounted(() => { listCol.refresh() })
+  // 筛选/分页变化 → 重取服务端权威页
+  watch([page, pageSize, filter], () => { listCol.refresh() }, { deep: true })
+  // 全局写后快照刷新 → 重取本页（保持权威）
+  const onRefreshed = () => { listCol.refresh() }
+  window.addEventListener('blms:refreshed', onRefreshed)
+  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
+}
 
 function resetFilter() {
   filter.keyword = ''
