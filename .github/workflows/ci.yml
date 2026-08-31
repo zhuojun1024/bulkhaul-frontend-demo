@@ -31,7 +31,8 @@ jobs:
           path: bulkhaul-server
 
       - name: 契约测试（前端 W 映射 vs 后端路由，漂移即红）
-        run: npm run test:contract -- ../bulkhaul-server
+        # 后端检出到本仓库子目录 bulkhaul-server/（CI 布局）；本地兄弟目录则用 ../bulkhaul-server
+        run: npm run test:contract -- ./bulkhaul-server
 
       # 服务层冒烟测试（verify-flow：mock 数据一致性 + 状态机闭环 + RBAC + 各环节校验，纯 Node 无需浏览器）
       - name: 运行冒烟测试

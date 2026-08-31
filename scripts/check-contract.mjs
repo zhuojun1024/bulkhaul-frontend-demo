@@ -16,6 +16,10 @@ import { fileURLToPath } from 'node:url'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const webRoot = path.resolve(__dirname, '..')
 const serverDir = path.resolve(process.argv[2] || path.join(webRoot, '..', 'bulkhaul-server'))
+if (!fs.existsSync(path.join(serverDir, 'src', 'main', 'java'))) {
+  console.error('[红] 后端目录不存在：' + serverDir + '（serverDir 参数/布局不对——CI 为子目录布局 ./bulkhaul-server，本地为兄弟目录 ../bulkhaul-server）')
+  process.exit(2)
+}
 
 function norm(p) { return p.replace(/\$\{[^}]+\}/g, '{x}').replace(/\{[^}]+\}/g, '{x}') }
 
