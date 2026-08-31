@@ -53,11 +53,13 @@
 
 <script setup>
 defineOptions({ name: 'Monitor' })
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import ChartCard from '@/components/ChartCard.vue'
 import { db, dashboard } from '@/mock'
+import { api } from '@/api'
+import { isProduction } from '@/mode'
 import { formatNum, round } from '@/utils'
 import { useTokens } from '@/utils/tokens'
 
@@ -65,7 +67,33 @@ const tokens = useTokens()
 
 const range = ref('12')
 
-const kpi = dashboard.kpi
+/* ===== Phase 4 阶段 5：生产模式读后端聚合端点（薄客户端） =====
+ * db 派生的实时指标（KPI 的 utilization/onTimeRate/safeDays/customerCount + 四图）
+ * 生产模式走 /api/dashboard/kpi + /api/dashboard/charts（后端权威，不依赖本地 db 聚合）；
+ * 演示模式（默认）保持 dashboard.* getter（本地 db 汇总，现有断言不变）。
+ * 历史趋势（volumeTrend/exceptionTrend）为种子随机历史数据，后端无对应口径，两模式均取本地
+ * dashboard（非业务态，属演示历史）；其派生 KPI（totalVolume/totalRevenue/环比）随之取本地。 */
+const PROD = isProduction()
+const apiKpi = ref(null)
+const apiCharts = ref(null)
+async function loadDashboard() {
+  if (!PROD) return
+  const [k, c] = await Promise.all([api('GET', '/dashboard/kpi'), api('GET', '/dashboard/charts')])
+  if (k.ok && k.data) apiKpi.value = k.data
+  if (c.ok && c.data) apiCharts.value = c.data
+}
+onMounted(loadDashboard)
+
+const kpi = computed(() => {
+  if (PROD && apiKpi.value) {
+    return { ...apiKpi.value, totalVolume: dashboard.kpi.totalVolume, totalRevenue: dashboard.kpi.totalRevenue }
+  }
+  return dashboard.kpi
+})
+const commodityData = computed(() => (PROD && apiCharts.value ? apiCharts.value.commodityStructure : dashboard.commodityStructure))
+const modeData = computed(() => (PROD && apiCharts.value ? apiCharts.value.modeShare : dashboard.modeShare))
+const terminalData = computed(() => (PROD && apiCharts.value ? apiCharts.value.terminalThroughput : dashboard.terminalThroughput))
+const vehicleData = computed(() => (PROD && apiCharts.value ? apiCharts.value.vehicleStatus : dashboard.vehicleStatus))
 
 /** 环比（最近 12 月趋势的末月 vs 上月）；无历史口径的指标不显示趋势 */
 function trendPctOf(key) {
@@ -143,7 +171,7 @@ const commodityOption = computed(() => ({
       itemStyle: { borderRadius: 6, borderColor: tokens.card, borderWidth: 2 },
       label: { show: false },
       emphasis: { label: { show: true, fontSize: 14, fontWeight: 'bold' } },
-      data: dashboard.commodityStructure
+      data: commodityData.value
     }
   ]
 }))
@@ -161,7 +189,7 @@ const modeOption = computed(() => ({
       roseType: 'radius',
       itemStyle: { borderRadius: 6, borderColor: tokens.card, borderWidth: 2 },
       label: { formatter: '{b}\n{d}%', fontSize: 11 },
-      data: dashboard.modeShare
+      data: modeData.value
     }
   ]
 }))
@@ -177,7 +205,7 @@ const terminalOption = computed(() => ({
   },
   yAxis: {
     type: 'category',
-    data: dashboard.terminalThroughput.map((t) => t.name).reverse(),
+    data: terminalData.value.map((t) => t.name).reverse(),
     axisLine: { show: false },
     axisTick: { show: false },
     axisLabel: { color: tokens.textRegular, fontSize: 11 }
@@ -185,7 +213,7 @@ const terminalOption = computed(() => ({
   series: [
     {
       type: 'bar',
-      data: dashboard.terminalThroughput.map((t) => t.value).reverse(),
+      data: terminalData.value.map((t) => t.value).reverse(),
       itemStyle: {
         borderRadius: [0, 4, 4, 0],
         color: {
@@ -214,7 +242,7 @@ const vehicleOption = computed(() => ({
       center: ['50%', '45%'],
       itemStyle: { borderRadius: 6, borderColor: tokens.card, borderWidth: 2 },
       label: { formatter: '{b} {c}辆', fontSize: 11 },
-      data: dashboard.vehicleStatus
+      data: vehicleData.value
     }
   ]
 }))

@@ -1486,7 +1486,60 @@ try {
     }
     await ctx.close()
   }
-} finally {
+  /* ===== 场景 22：Phase 4 阶段 5 生产模式（薄客户端）看板/工作台——读后端聚合端点 =====
+   * db 派生指标两模式值相同（同一 DataStore），故用 fetch 监听证明生产模式确实调用
+   * /api/dashboard/kpi、/api/dashboard/charts、/api/workbench/stats、/api/workbench/todos
+   * （薄客户端异步化生效）；并断言工作台"今日调度"卡值=后端 todayDispatches（渲染正确）。
+   * 历史趋势（volumeTrend/exceptionTrend）为种子随机历史数据，后端无对应口径，两模式均取本地。 */
+  console.log('== 22. 生产模式：看板/工作台读后端聚合端点（薄客户端） ==')
+  await resetDemo() // 回种子态
+  {
+    const { ctx, page } = await newPage(browser)
+    await page.goto(BASE + '/#/login', { waitUntil: 'networkidle0' })
+    await page.evaluate(() => localStorage.setItem('blms_app_mode', 'production'))
+    // fetch 监听：记录页面发出的 /api 调用（证明薄客户端走后端聚合端点）
+    await page.evaluate(() => {
+      window.__apiCalls = []
+      const of = window.fetch
+      window.fetch = function (input, init) {
+        try {
+          const u = typeof input === 'string' ? input : (input && input.url) || ''
+          if (u.includes('/api/')) window.__apiCalls.push(u)
+        } catch (e) {}
+        return of.apply(this, arguments)
+      }
+    })
+    await login(page, 'admin', '123456')
+    const snap = await getBackendSnapshot()
+    await getBackendSnapshot() // 确保 token
+    const wbStats = (await (await fetch(BACKEND + '/workbench/stats', { headers: { Authorization: 'Bearer ' + _backendToken } })).json()).data
+    // 工作台：生产模式应调用 /workbench/stats + /workbench/todos
+    await nav(page, '#/workbench')
+    await page.waitForFunction(() => (window.__apiCalls || []).some((u) => u.includes('/workbench/stats')), { timeout: 15000 })
+    await page.waitForFunction(() => (window.__apiCalls || []).some((u) => u.includes('/workbench/todos')), { timeout: 15000 })
+    const wbCalls = await page.evaluate(() => window.__apiCalls || [])
+    check('阶段5：生产模式工作台调用 /workbench/stats（薄客户端异步化）', wbCalls.some((u) => u.includes('/workbench/stats')))
+    check('阶段5：生产模式工作台调用 /workbench/todos（薄客户端异步化）', wbCalls.some((u) => u.includes('/workbench/todos')))
+    // "今日调度"卡值=后端 todayDispatches（渲染正确）
+    const td = String(wbStats.todayDispatches)
+    const cardVal = await page.evaluate(() => {
+      const card = [...document.querySelectorAll('.stat-card')].find((c) => (c.querySelector('.stat-card__title')?.textContent || '').includes('今日调度'))
+      return card ? (card.querySelector('.stat-card__value')?.textContent || '').trim() : ''
+    })
+    check('阶段5：生产模式工作台"今日调度"卡值=后端 todayDispatches（' + td + '）', cardVal.includes(td))
+
+    // 看板：生产模式应调用 /dashboard/kpi + /dashboard/charts
+    await nav(page, '#/monitor')
+    await page.waitForFunction(() => (window.__apiCalls || []).some((u) => u.includes('/dashboard/kpi')), { timeout: 15000 })
+    await page.waitForFunction(() => (window.__apiCalls || []).some((u) => u.includes('/dashboard/charts')), { timeout: 15000 })
+    const monCalls = await page.evaluate(() => window.__apiCalls || [])
+    check('阶段5：生产模式看板调用 /dashboard/kpi（薄客户端异步化）', monCalls.some((u) => u.includes('/dashboard/kpi')))
+    check('阶段5：生产模式看板调用 /dashboard/charts（薄客户端异步化）', monCalls.some((u) => u.includes('/dashboard/charts')))
+    // KPI 卡渲染（准时交付率卡存在 → 看板 KPI 区渲染）
+    const kpiRendered = await page.evaluate(() => (document.querySelector('.kpi-row')?.textContent || '').includes('准时交付率'))
+    check('阶段5：生产模式看板 KPI 区渲染（准时交付率卡）', kpiRendered)
+    await ctx.close()
+  }} finally {
   await browser.close()
   server.close()
 }
