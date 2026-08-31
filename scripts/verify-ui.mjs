@@ -1451,6 +1451,41 @@ try {
     }
     await ctx.close()
   }
+  /* ===== 场景 21：Phase 4 阶段 4 生产模式（薄客户端）调度详情——读聚合端点 GET /api/dispatch/{id}/detail =====
+   * 演示模式（默认）由现有场景覆盖；本场景验证生产模式下调度详情读面（dispatch/commodity/vehicle/
+   * driver/terminals/weighings）来自后端聚合端点（单次往返），磅单行数=后端该单磅单数。 */
+  console.log('== 21. 生产模式：调度详情读聚合端点（薄客户端） ==')
+  await resetDemo() // 回种子态
+  {
+    const { ctx, page } = await newPage(browser)
+    await page.goto(BASE + '/#/login', { waitUntil: 'networkidle0' })
+    await page.evaluate(() => localStorage.setItem('blms_app_mode', 'production'))
+    await login(page, 'admin', '123456')
+    // 后端权威：取一张有磅单的调度单（详情读面非空，磅单表可断言行数）
+    const snap = await getBackendSnapshot()
+    const d = (snap.dispatches || []).find((x) => (snap.weighings || []).some((w) => w.dispatchId === x.id))
+      || (snap.dispatches || [])[0]
+    check('阶段4：种子含可断言调度单（详情端点前置）', !!d)
+    if (d) {
+      const wCount = (snap.weighings || []).filter((w) => w.dispatchId === d.id).length
+      const comm = (snap.commodities || []).find((c) => c.id === d.commodityId)
+      const veh = (snap.vehicles || []).find((v) => v.id === d.vehicleId)
+      await nav(page, '#/dispatch/' + d.id)
+      await page.waitForSelector('.dispatch-detail__name')
+      // 等详情端点渲染完成（商品名出现 → 证明读面来自聚合端点而非本地空态）
+      if (comm && comm.name) {
+        await page.waitForFunction((n) => (document.querySelector('.page')?.textContent || '').includes(n), { timeout: 15000 }, comm.name)
+      }
+      const pageText = await page.evaluate(() => document.querySelector('.page')?.textContent || '')
+      check('阶段4：生产模式详情头部渲染调度单号（读面来自聚合端点）', pageText.includes(d.id))
+      if (comm && comm.name) check('阶段4：生产模式详情商品名来自聚合端点', pageText.includes(comm.name))
+      if (veh && veh.plate) check('阶段4：生产模式详情车牌来自聚合端点', pageText.includes(veh.plate))
+      // 磅单表行数=后端该单磅单数（端点 weighings 与 db.weighings 同源）
+      const rows = await page.evaluate(() => [...document.querySelectorAll('.el-table__row')].length)
+      check('阶段4：生产模式磅单行数=后端该单磅单数（' + wCount + '）', rows === wCount)
+    }
+    await ctx.close()
+  }
 } finally {
   await browser.close()
   server.close()

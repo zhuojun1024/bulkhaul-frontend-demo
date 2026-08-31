@@ -77,8 +77,8 @@
               <el-descriptions-item label="数量">
                 <span class="num">{{ dispatch?.quantity }} 吨</span>
               </el-descriptions-item>
-              <el-descriptions-item label="装货场站">{{ find.terminal(dispatch?.loadTerminalId)?.name }}</el-descriptions-item>
-              <el-descriptions-item label="卸货场站">{{ find.terminal(dispatch?.unloadTerminalId)?.name }}</el-descriptions-item>
+              <el-descriptions-item label="装货场站">{{ loadTerminal?.name }}</el-descriptions-item>
+              <el-descriptions-item label="卸货场站">{{ unloadTerminal?.name }}</el-descriptions-item>
               <el-descriptions-item label="运输距离">
                 <span class="num">{{ dispatch?.distance }} km</span>
               </el-descriptions-item>
@@ -249,12 +249,14 @@
 
 <script setup>
 defineOptions({ name: 'DispatchDetail' })
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, Box, CircleCheck, Warning, Printer, Position, RefreshRight, Cellphone, EditPen } from '@element-plus/icons-vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
+import { api } from '@/api'
+import { isProduction } from '@/mode'
 import {
   confirmLoad as flowConfirmLoad,
   depart as flowDepart,
@@ -276,10 +278,27 @@ const route = useRoute()
 const router = useRouter()
 const { can } = usePerm()
 
-const dispatch = computed(() => find.dispatch(route.params.id))
-const commodity = computed(() => find.commodity(dispatch.value?.commodityId))
-const vehicle = computed(() => find.vehicle(dispatch.value?.vehicleId))
-const driver = computed(() => find.driver(dispatch.value?.driverId))
+/* ===== Phase 4 阶段 4：生产模式读聚合端点（薄客户端，单次往返取详情读面） =====
+ * 演示模式（默认回退）：find/db 本地响应式（现有断言不变）。
+ * 生产模式：onMounted/换单时 GET /api/dispatch/{id}/detail 取权威读面（dispatch/commodity/
+ *   vehicle/driver/loadTerminal/unloadTerminal），写入仍走 flow（乐观改 detail.dispatch +
+ *   afterWrite 落库）；磅单读 db.weighings（flow 乐观 push + refreshDb 同步，与端点同源）。
+ *   不监听 blms:refreshed 重取，避免 200ms 防抖刷新早于 PUT 落库而回写种子态覆盖乐观态
+ *   （与阶段 3 同口径，导航时重取权威态）。 */
+const PROD = isProduction()
+const detail = ref(null)
+async function loadDetail() {
+  if (!PROD) return
+  const r = await api('GET', '/dispatch/' + route.params.id + '/detail')
+  if (r.ok && r.data) detail.value = r.data
+}
+
+const dispatch = computed(() => (PROD && detail.value ? detail.value.dispatch : find.dispatch(route.params.id)))
+const commodity = computed(() => (PROD && detail.value ? detail.value.commodity : find.commodity(dispatch.value?.commodityId)))
+const vehicle = computed(() => (PROD && detail.value ? detail.value.vehicle : find.vehicle(dispatch.value?.vehicleId)))
+const driver = computed(() => (PROD && detail.value ? detail.value.driver : find.driver(dispatch.value?.driverId)))
+const loadTerminal = computed(() => (PROD && detail.value ? detail.value.loadTerminal : find.terminal(dispatch.value?.loadTerminalId)))
+const unloadTerminal = computed(() => (PROD && detail.value ? detail.value.unloadTerminal : find.terminal(dispatch.value?.unloadTerminalId)))
 const weighings = computed(() => db.weighings.filter((w) => w.dispatchId === dispatch.value?.id))
 
 /** 公路口径（公路/多式联运）才有车辆司机与公路磅单 */
@@ -288,6 +307,10 @@ const isRoad = computed(() => isRoadMode(dispatch.value?.mode))
 const qualityDeduct = computed(() => qualityDeductionQty(dispatch.value))
 /** 执行主体：车牌优先，非公路口径取运输单元号 */
 const unitText = computed(() => vehicle.value?.plate || dispatch.value?.unitNo || '—')
+
+// 生产模式：进入/换单时取权威详情
+onMounted(loadDetail)
+watch(() => route.params.id, loadDetail)
 
 /** 司机端视图：携带司机与聚焦单号进入 H5 演示页 */
 function openDriverApp() {
@@ -320,12 +343,12 @@ const timeline = computed(() => {
     {
       title: isRoad.value ? '装货过磅' : '装货确认',
       time: d.loadTime,
-      desc: d.loadTime ? `于${find.terminal(d.loadTerminalId)?.name}完成装货，净重 ${d.quantity} 吨` : isRoad.value ? '车辆到达装货场站排队中' : '运输单元到达装货场站排队中',
+      desc: d.loadTime ? `于${loadTerminal.value?.name}完成装货，净重 ${d.quantity} 吨` : isRoad.value ? '车辆到达装货场站排队中' : '运输单元到达装货场站排队中',
       done: !!d.loadTime,
       type: d.loadTime ? 'primary' : 'info'
     },
     { title: '在途运输', time: d.eta ? `预计 ${d.eta} 到达` : '', desc: d.status === 'intransit' ? `当前进度 ${d.progress}%，实时车速 ${d.speed} km/h` : d.status === 'pending' ? '等待装货' : '运输中', done: d.status === 'intransit' || d.status === 'unloading' || d.status === 'completed', type: 'primary' },
-    { title: '卸货完成', time: d.unloadTime, desc: d.unloadTime ? `于${find.terminal(d.unloadTerminalId)?.name}完成卸货` : '—', done: !!d.unloadTime, type: d.unloadTime ? 'success' : 'info' }
+    { title: '卸货完成', time: d.unloadTime, desc: d.unloadTime ? `于${unloadTerminal.value?.name}完成卸货` : '—', done: !!d.unloadTime, type: d.unloadTime ? 'success' : 'info' }
   ]
   if (d.status === 'exception') {
     steps.splice(3, 0, { title: '异常发生', time: dayjs().format('YYYY-MM-DD HH:mm'), desc: '运输过程中发生异常，已上报处理', done: true, type: 'danger' })
@@ -449,7 +472,7 @@ function printDispatch() {
   <table>
     <tr><th>车辆/单元</th><td>${vehicle.value?.plate || d.unitNo || '—'}</td><th>司机</th><td>${driver.value ? driver.value.name + ' ' + driver.value.phone : '—（按运输单元执行）'}</td></tr>
     <tr><th>商品</th><td>${commodity.value?.name}</td><th>数量</th><td>${d.quantity} 吨</td></tr>
-    <tr><th>装货场站</th><td>${find.terminal(d.loadTerminalId)?.name}</td><th>卸货场站</th><td>${find.terminal(d.unloadTerminalId)?.name}</td></tr>
+    <tr><th>装货场站</th><td>${loadTerminal.value?.name}</td><th>卸货场站</th><td>${unloadTerminal.value?.name}</td></tr>
     <tr><th>装货时间</th><td>${d.loadTime || '待装货'}</td><th>卸货时间</th><td>${d.unloadTime || '—'}</td></tr>
   </table>
   <div class="sign">
