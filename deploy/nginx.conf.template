@@ -1,13 +1,16 @@
 # bulkhaul-manage-web 生产 Nginx（envsubst 模板）：托管前端 dist + /api 反代后端
 # 官方 nginx 镜像 entrypoint 会对 /etc/nginx/templates/*.template 跑 envsubst，
 # 用容器环境变量 BACKEND_UPSTREAM 替换 ${BACKEND_UPSTREAM}（compose 注入 backend；本地可 localhost）。
-upstream backend {
-    server ${BACKEND_UPSTREAM}:8081;
-}
-
+# 注意：用 resolver + 变量 upstream 做运行时解析——Docker/WSL2 下 upstream 块会在 nginx 启动时
+# 用系统 DNS 解析服务名（易超时失败）；改为 resolver 指向 Docker 内嵌 DNS(127.0.0.11) + 变量，
+# nginx 运行时按需解析（localhost 走 /etc/hosts，无需 DNS）。
 server {
     listen 80;
     server_name _;
+
+    # 后端 upstream（compose 注入服务名 backend；本地可 localhost）+ Docker 内嵌 DNS 运行时解析
+    resolver 127.0.0.11 valid=10s ipv6=off;
+    set $backend_upstream ${BACKEND_UPSTREAM}:8081;
 
     # gzip（前端产物 + API JSON）
     gzip on;
@@ -27,7 +30,7 @@ server {
 
     # /api 反代后端（前端用相对 /api，无 CORS）
     location /api/ {
-        proxy_pass http://backend;
+        proxy_pass http://$backend_upstream;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
