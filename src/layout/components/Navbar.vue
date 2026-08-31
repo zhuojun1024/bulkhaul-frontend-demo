@@ -67,7 +67,7 @@
             <el-dropdown-item command="profile">
               <el-icon><User /></el-icon>个人信息
             </el-dropdown-item>
-            <el-dropdown-item command="reset" divided>
+            <el-dropdown-item v-if="canReset" command="reset" divided>
               <el-icon><RefreshRight /></el-icon>重置演示数据
             </el-dropdown-item>
             <el-dropdown-item command="logout">
@@ -87,8 +87,9 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import screenfull from 'screenfull'
 import { useAppStore, useUserStore } from '@/store'
 import { storeToRefs } from 'pinia'
-import { resetDb } from '@/mock/persist'
+import { api, refreshDb } from '@/api'
 import { markMessageRead, visibleMessages, unreadCount as flowUnreadCount, dataScopeOf } from '@/mock/flow'
+import { usePerm } from '@/permission'
 import { useTokens } from '@/utils/tokens'
 
 const tokens = useTokens()
@@ -98,6 +99,9 @@ const router = useRouter()
 const appStore = useAppStore()
 const userStore = useUserStore()
 const { collapsed } = storeToRefs(appStore)
+// Phase 4 决策 2：重置演示数据仅平台管理员可见（RBAC 与后端 requireAction('admin') 同口径；非管理员按钮隐藏，后端 403 兜底）
+const { can: canAction } = usePerm()
+const canReset = computed(() => canAction('admin'))
 
 /** 消息类型 → 图标/颜色（与消息中心页同一口径） */
 const typeIcon = { approval: 'Document', dispatch: 'Van', exception: 'Warning', settlement: 'Wallet', request: 'Shop', system: 'Setting' }
@@ -148,12 +152,23 @@ function onCommand(cmd) {
     )
   } else if (cmd === 'reset') {
     ElMessageBox.confirm(
-      '将清除本地保存的演示数据（localStorage）并恢复初始种子数据，页面将自动刷新。确定继续？',
+      '将把后端数据仓库重置回演示种子数据（持久化，重启不丢失），并刷新当前页面。确定继续？',
       '重置演示数据',
       { type: 'warning', confirmButtonText: '重置', cancelButtonText: '取消' }
     )
-      .then(() => {
-        resetDb()
+      .then(async () => {
+        // Phase 4 决策 2：调后端 reset-demo（限管理员，服务端重置内存 + 回写 biz_* 持久化）
+        const r = await api('POST', '/admin/reset-demo')
+        if (!r.ok) {
+          ElMessage.error(r.error || '重置失败')
+          return
+        }
+        // 清本地遗留快照（旧架构 localStorage 残留，避免下次启动 hydrateDb 覆盖种子态）
+        try { localStorage.removeItem('blms_db_snapshot') } catch (e) { /* 忽略 */ }
+        // 从后端重拉种子态覆盖本地 db（后端为权威），再整页刷新恢复干净会话
+        await refreshDb()
+        ElMessage.success('演示数据已重置')
+        window.location.reload()
       })
       .catch(() => {})
   } else if (cmd === 'logout') {
