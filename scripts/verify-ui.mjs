@@ -29,7 +29,7 @@ import { fileURLToPath } from 'node:url'
 import puppeteer from 'puppeteer-core'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const DIST = path.resolve(__dirname, '../dist')
+const DIST = process.env.E2E_DIST ? path.resolve(process.env.E2E_DIST) : path.resolve(__dirname, '../dist') // E2E_DIST：WSL 内运行时指向原生 fs 副本（/mnt/d drvfs 读盘慢导致导航超时）
 const PORT = 8086
 const BASE = `http://127.0.0.1:${PORT}`
 
@@ -700,7 +700,10 @@ try {
 
     // 生成 CSV（表头 + 1 行新数据 + 1 行重名数据）
     const existingName = await page.evaluate(() => document.querySelector('.customer-cell__name')?.textContent.trim() || '')
-    const csvPath = path.join(os.tmpdir(), `blms_import_test.csv`)
+    // WSL 内 snap Chromium 受 AppArmor 限制读不到 /tmp 上传文件（file.arrayBuffer() 抛 NotFoundError），
+    // 故临时文件目录可用 E2E_TMPDIR 覆盖（WSL 下指向 $HOME）。
+    const tmpDir = process.env.E2E_TMPDIR ? path.resolve(process.env.E2E_TMPDIR) : os.tmpdir()
+    const csvPath = path.join(tmpDir, `blms_import_test.csv`)
     const headers = ['客户名称', '类型(发货方/收货方/双向客户)', '等级(A/B/C)', '区域', '联系人', '电话', '授信额度(元)']
     writeFileSync(
       csvPath,
