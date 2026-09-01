@@ -1,37 +1,17 @@
 /**
- * Mock 数据入口
- * 按依赖顺序导入各业务域，最终统一导出 db 与聚合数据
+ * 数据入口（薄客户端，Phase 4 F3）
+ *
+ * 内存引擎与种子数据已移除：db 由后端 /api/snapshot 填充（refreshDb / hydrate），
+ * 后端为唯一权威态。本入口仅保留 db、看板聚合（dashboard，历史趋势为种子随机、
+ * 实时指标为 getter）与常用查找函数（find，基于后端填充的 db）。
  */
 import { db } from './base'
-import './commodity'
-import './customer'
-import './terminal'
-import './rate' // 线路运价表（依赖 commodities/terminals，确定性派生不消耗 RNG）
-import './vehicle'
-import './driver'
-import './contract'
-import './request' // 客户运输需求（依赖 customers/contracts）
-import './plan'
-import './dispatch'
-import './weighing'
-import './warehouse'
-import './exception'
-import './settlement' // 依赖异常单（异常损失扣减），需在 exception 之后
-import './bank' // 银行流水（依赖 settlements/payments，G8 收款核销）
-import './safety'
-import './system'
-import './message' // 消息中心种子（依赖 contracts/settlements/exceptions/dispatches，G6）
-import './flow' // 业务流转中枢：导入时执行全量校准（计划/合同进度对齐实际执行）
-import { dashboard, workbenchTodos, weatherOf, workbenchStats, workbenchTodoList } from './dashboard'
-import { hydrateDb } from './persist'
+import { dashboard, workbenchTodos, weatherOf, workbenchStats, workbenchTodoList, announcements } from './dashboard'
 
-// 持久化：种子数据加载完成后，若存在同版本快照则恢复（刷新不丢数据）
-hydrateDb()
-
-export { db, dashboard, workbenchTodos, weatherOf, workbenchStats, workbenchTodoList }
+export { db, dashboard, workbenchTodos, weatherOf, workbenchStats, workbenchTodoList, announcements }
 export { MAP_NODES, ROUTES } from './base'
 
-/** 常用查找函数 */
+/** 常用查找函数（基于后端 hydrate 后的 db） */
 export const find = {
   commodity: (id) => db.commodities.find((c) => c.id === id),
   customer: (id) => db.customers.find((c) => c.id === id),

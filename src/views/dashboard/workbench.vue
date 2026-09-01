@@ -82,10 +82,10 @@
         <div class="panel notice-panel">
           <div class="panel__header">
             <span class="panel__title">平台公告</span>
-            <el-tag size="small" type="info" effect="plain">{{ db.announcements.length }} 条</el-tag>
+            <el-tag size="small" type="info" effect="plain">{{ announcements.length }} 条</el-tag>
           </div>
           <div class="panel__body">
-            <div v-for="n in db.announcements" :key="n.id" class="notice-item">
+            <div v-for="n in announcements" :key="n.id" class="notice-item">
               <el-tag size="small" :type="noticeTagType(n.tag)" effect="light" class="notice-item__tag">
                 {{ n.tag }}
               </el-tag>
@@ -143,7 +143,7 @@ import { Plus, Position, MapLocation, ArrowRight } from '@element-plus/icons-vue
 import StatCard from '@/components/StatCard.vue'
 import ChartCard from '@/components/ChartCard.vue'
 import StatusTag from '@/components/StatusTag.vue'
-import { db, find, dashboard, workbenchTodos, workbenchStats, workbenchTodoList, weatherOf } from '@/mock'
+import { db, find, dashboard, workbenchTodos, workbenchStats, workbenchTodoList, weatherOf, announcements } from '@/mock'
 import { api } from '@/api'
 import { useUserStore } from '@/store'
 import { formatMoney, formatNum, round } from '@/utils'

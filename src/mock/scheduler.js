@@ -1,17 +1,16 @@
-import { advanceTelemetry, checkFenceEvents, recalcOverdueAll, escalatePendingExceptions, escalateContractApprovals } from './flow'
 import { USE_API, api, refreshDb } from '@/api'
 
 /**
- * 定时任务层（切真实 API）：
+ * 定时任务层（薄客户端，Phase 4 F3）：
  * 真实系统中围栏事件 / GPS 遥测 / 逾期标记由后端定时任务驱动；
  * 浏览器中前端每 3s 调 POST /api/scheduler/tick（后端执行 5 心跳）+ 快照刷新 db，
  * UI 通过 onSchedulerEvent 订阅"后端推送"事件（等价 WebSocket/长轮询）。
- * node 环境（npm test）USE_API=false：走内存引擎同步执行（保持 verify-flow 同步调用语义）。
+ * 内存引擎已移除（F3）：不再有本地 runTickLocal，全部由后端权威执行。
  */
 
 const listeners = new Set()
 
-/** 订阅定时任务事件：{ type: 'fence', created } 围栏异常单生成 / { type: 'escalate' } 升级 / { type: 'tick' } 每轮完成；返回退订函数 */
+/** 订阅定时任务事件：{ type: 'fence', created } 围栏异常单生成 / { type: 'escalate' } 升级 / { type: 'tick' } 每轮完成；返回取消订阅函数 */
 export function onSchedulerEvent(cb) {
   listeners.add(cb)
   return () => listeners.delete(cb)
@@ -27,26 +26,11 @@ function emit(e) {
   }
 }
 
-/** 内存引擎单轮（node 测试态同步执行；浏览器态不调用） */
-function runTickLocal() {
-  advanceTelemetry()
-  const created = checkFenceEvents()
-  if (created.length) emit({ type: 'fence', created })
-  recalcOverdueAll()
-  const escalated = escalatePendingExceptions()
-  if (escalated.length) emit({ type: 'escalate', created: escalated })
-  escalateContractApprovals()
-  emit({ type: 'tick' })
-}
-
-/** 单轮定时任务（导出供冒烟测试同步调用）：
- * node 态同步走内存引擎；浏览器态异步调后端 /api/scheduler/tick + 快照刷新。 */
+/** 单轮定时任务（导出供冒烟测试调用）：
+ * 浏览器态异步调后端 /api/scheduler/tick + 快照刷新，再发 tick 事件驱动 UI 更新；
+ * node 态（USE_API=false，纯内存无后端）为空操作。 */
 export function runSchedulerTick() {
-  if (!USE_API) {
-    runTickLocal()
-    return
-  }
-  // 浏览器态：后端执行 5 心跳，刷新权威态，再发 tick 事件驱动 UI 更新
+  if (!USE_API) return
   api('POST', '/scheduler/tick')
     .then(() => refreshDb())
     .then(() => emit({ type: 'tick' }))

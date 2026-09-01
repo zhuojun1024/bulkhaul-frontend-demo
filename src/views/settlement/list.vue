@@ -373,7 +373,7 @@ import { Search, Download, Refresh, Postcard, DocumentAdd, MagicStick, Plus } fr
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
-import { settlementCandidates, payableStats as flowPayableStats } from '@/mock/flow'
+import { settlementCandidates, payableStats as flowPayableStats } from '@/mock/derived'
 import { useCollection } from '@/composables/useCollection'
 import { api } from '@/api'
 import { usePerm } from '@/permission'

@@ -9,7 +9,6 @@
     "test": "node --import ./scripts/register.mjs scripts/verify-api.mjs && node --import ./scripts/register.mjs scripts/verify-collection.mjs",
     "test:api": "node --import ./scripts/register.mjs scripts/verify-api.mjs",
     "test:collection": "node --import ./scripts/register.mjs scripts/verify-collection.mjs",
-    "test:engine": "node --import ./scripts/register.mjs scripts/verify-flow.mjs",
     "test:ui": "npm run build && node scripts/verify-ui.mjs",
     "test:contract": "node scripts/check-contract.mjs"
   },

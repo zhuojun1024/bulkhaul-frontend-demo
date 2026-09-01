@@ -256,7 +256,7 @@ import { ArrowLeft, Box, CircleCheck, Warning, Printer, Position, RefreshRight, 
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
 import { api, refreshDb } from '@/api'
-import { isRoadMode, loadCodeOf, unloadCodeOf, qualityDeductionQty } from '@/mock/flow'
+import { isRoadMode, loadCodeOf, unloadCodeOf, qualityDeductionQty } from '@/mock/derived'
 import { formatMoney } from '@/utils'
 import dayjs from 'dayjs'
 import { usePerm } from '@/permission'

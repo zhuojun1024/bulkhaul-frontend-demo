@@ -275,7 +275,7 @@ import { VideoPlay, VideoPause, Close, Warning, CircleCheck, AlarmClock, Aim, Se
 import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import { db, find, MAP_NODES, ROUTES } from '@/mock'
-import { trackPointsOf, maxDeviationOf, hashOffset, dataScopeOf } from '@/mock/flow'
+import { trackPointsOf, maxDeviationOf, hashOffset, dataScopeOf } from '@/mock/derived'
 import { onSchedulerEvent } from '@/mock/scheduler'
 import { useCollection } from '@/composables/useCollection'
 import { api } from '@/api'

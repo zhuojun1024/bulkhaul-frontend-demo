@@ -88,7 +88,7 @@ import screenfull from 'screenfull'
 import { useAppStore, useUserStore } from '@/store'
 import { storeToRefs } from 'pinia'
 import { api, refreshDb } from '@/api'
-import { markMessageRead, visibleMessages, unreadCount as flowUnreadCount, dataScopeOf } from '@/mock/flow'
+import { markMessageRead, visibleMessages, unreadCount as flowUnreadCount, dataScopeOf } from '@/mock/derived'
 import { usePerm } from '@/permission'
 import { useTokens } from '@/utils/tokens'
 
@@ -163,7 +163,7 @@ function onCommand(cmd) {
           ElMessage.error(r.error || '重置失败')
           return
         }
-        // 清本地遗留快照（旧架构 localStorage 残留，避免下次启动 hydrateDb 覆盖种子态）
+        // 清本地遗留快照（旧架构 localStorage 残留，内存引擎已移除，后端为权威态）
         try { localStorage.removeItem('blms_db_snapshot') } catch (e) { /* 忽略 */ }
         // 从后端重拉种子态覆盖本地 db（后端为权威），再整页刷新恢复干净会话
         await refreshDb()

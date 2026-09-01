@@ -133,7 +133,7 @@
         账号 <b>@{{ scopeTarget.username }}</b>（{{ scopeTarget.role }}）
       </div>
       <el-checkbox-group v-model="scopeForm.regions">
-        <el-checkbox v-for="r in DATA_REGIONS" :key="r" :value="r">{{ r }}</el-checkbox>
+        <el-checkbox v-for="r in dataRegions()" :key="r" :value="r">{{ r }}</el-checkbox>
       </el-checkbox-group>
       <div class="scope-tip">不勾选 = 全量数据；勾选后该账号在调度/计划/在途监控等列表仅可见装货侧属于所选区域的数据（多租户行级权限的等价物）。</div>
       <template #footer>
@@ -172,7 +172,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Plus, Refresh } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { db } from '@/mock'
-import { DATA_REGIONS } from '@/mock/flow'
+import { dataRegions } from '@/mock/derived'
 import { useCollection } from '@/composables/useCollection'
 import { usePerm } from '@/permission'
 import { api, refreshDb } from '@/api'

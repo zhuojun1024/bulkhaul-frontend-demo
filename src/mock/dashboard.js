@@ -232,3 +232,13 @@ export function weatherOf(dateStr) {
     tip: cond === '小雨' || cond === '雷阵雨' ? '雨天路滑，注意行车安全' : '适宜运输'
   }
 }
+
+/** 平台公告（静态演示数据，等价后端 FlowCtx.announcements；未入快照，工作台公告面板用）
+ *  内存引擎移除（F3）后由 dashboard.js 统一提供（与 weatherOf 同口径） */
+export const announcements = [
+  { id: 'G001', title: '关于 8 月份煤炭运输旺季运力保障的通知', date: dayjs(NOW).subtract(1, 'day').format('MM-DD'), tag: '重要' },
+  { id: 'G002', title: '秦皇岛港 1 号煤仓 8 月 20 日检修，预计影响 2 天', date: dayjs(NOW).subtract(2, 'day').format('MM-DD'), tag: '场站' },
+  { id: 'G003', title: '新版磅单系统上线，请各场站操作员完成培训', date: dayjs(NOW).subtract(4, 'day').format('MM-DD'), tag: '系统' },
+  { id: 'G004', title: '汛期安全行车提示：关注 G6/G18 沿线雨情预警', date: dayjs(NOW).subtract(6, 'day').format('MM-DD'), tag: '安全' },
+  { id: 'G005', title: '7 月结算单已全部完成对账，请各客户核对', date: dayjs(NOW).subtract(8, 'day').format('MM-DD'), tag: '结算' }
+]
