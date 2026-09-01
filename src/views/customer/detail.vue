@@ -209,9 +209,8 @@ import { ElMessage } from 'element-plus'
 import { ArrowLeft, Money } from '@element-plus/icons-vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
-import { outstandingOf, prepaymentOf, prepaymentAvailable, collectPrepayment } from '@/mock/flow'
+import { outstandingOf, prepaymentOf, prepaymentAvailable } from '@/mock/flow'
 import { api, refreshDb } from '@/api'
-import { isProduction } from '@/mode'
 import { usePerm } from '@/permission'
 import { formatMoney, formatNum } from '@/utils'
 
@@ -219,14 +218,12 @@ const route = useRoute()
 const { can } = usePerm()
 
 /* ===== Phase 4 灰度：生产模式（薄客户端）——客户详情读后端 /api/coll/customers/{id} + contracts/settlements/dispatches ===== */
-const PROD = isProduction()
 const customerRec = ref(null)
 async function loadDetail() {
-  if (!PROD) return
   const r = await api('GET', '/coll/customers/' + route.params.id)
   customerRec.value = r.ok ? r.data : null
 }
-const customer = computed(() => (PROD && customerRec.value ? customerRec.value : find.customer(route.params.id)))
+const customer = computed(() => customerRec.value || find.customer(route.params.id))
 const contracts = computed(() =>
   db.contracts.filter((c) => c.shipperId === customer.value?.id || c.consigneeId === customer.value?.id)
 )
@@ -267,30 +264,20 @@ function openCollect() {
 
 async function submitCollect() {
   // Phase 4 引擎移除：生产模式写操作 = 后端权威（冻结守卫 + RBAC + 审计）
-  if (PROD) {
-    const r = await api('POST', '/settlement/prepayment/collect', {
-      customerId: customer.value.id,
-      amount: collectForm.amount,
-      method: collectForm.method,
-      remark: collectForm.remark
-    })
-    if (!r.ok || (r.data && r.data.error)) {
-      ElMessage.error((r.data && r.data.error) || r.error || '收取预付款失败')
-      return
-    }
-    await refreshDb()
-    await loadDetail()
-    collectDialog.value = false
-    ElMessage.success(`预付款已收取：${(r.data && r.data.id) || ''}`)
+  const r = await api('POST', '/settlement/prepayment/collect', {
+    customerId: customer.value.id,
+    amount: collectForm.amount,
+    method: collectForm.method,
+    remark: collectForm.remark
+  })
+  if (!r.ok || (r.data && r.data.error)) {
+    ElMessage.error((r.data && r.data.error) || r.error || '收取预付款失败')
     return
   }
-  const r = collectPrepayment(customer.value.id, collectForm.amount, collectForm.method, collectForm.remark)
-  if (r && r.error) {
-    ElMessage.error(r.error)
-    return
-  }
+  await refreshDb()
+  await loadDetail()
   collectDialog.value = false
-  ElMessage.success(`预付款已收取：${r.id}`)
+  ElMessage.success(`预付款已收取：${(r.data && r.data.id) || ''}`)
 }
 
 const typeMap = { shipper: '发货方', consignee: '收货方', both: '双向客户' }

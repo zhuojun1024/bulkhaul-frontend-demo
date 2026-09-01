@@ -118,9 +118,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db } from '@/mock'
-import { saveTerminal } from '@/mock/flow'
 import { useCollection } from '@/composables/useCollection'
-import { isProduction } from '@/mode'
 import { api } from '@/api'
 import { formatNum } from '@/utils'
 import { useTokens } from '@/utils/tokens'
@@ -137,9 +135,8 @@ const statusMap = {
 }
 
 /* ===== Phase 4 灰度：生产模式（薄客户端）——场站列表读后端 /api/coll/terminals ===== */
-const PROD = isProduction()
 const listCol = useCollection('terminals', () => ({ key: 'terminals:list' }))
-const terminals = computed(() => PROD ? listCol.data.value : db.terminals)
+const terminals = computed(() => listCol.data.value)
 const operatingCount = computed(() => terminals.value.filter((t) => t.status === 'operating').length)
 const totalThroughput = computed(() => terminals.value.reduce((s, t) => s + t.todayThroughput, 0))
 const totalQueue = computed(() => terminals.value.reduce((s, t) => s + t.queueVehicles, 0))
@@ -148,12 +145,10 @@ const utilization = computed(() => {
   return Math.round((totalThroughput.value / cap) * 1000) / 10
 })
 
-if (PROD) {
-  onMounted(() => { listCol.refresh() })
-  const onRefreshed = () => { listCol.refresh() }
-  window.addEventListener('blms:refreshed', onRefreshed)
-  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
-}
+onMounted(() => { listCol.refresh() })
+const onRefreshed = () => { listCol.refresh() }
+window.addEventListener('blms:refreshed', onRefreshed)
+onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 
 /* ===== Phase 4 引擎移除：生产模式写操作 = 后端权威（POST 落库）+ 列表重取 =====
  * 后端业务错误经 ApiResult.success 包装为 data.error（HTTP 200），须检查 r.data.error。 */
@@ -227,18 +222,8 @@ async function save() {
     return
   }
   // Phase 4 引擎移除：生产模式写操作 = 后端权威（RBAC + 重名守卫 + 审计）
-  if (PROD) {
-    const d = await prodWrite('/admin/terminal', { ...form })
-    if (!d) return
-    dialogVisible.value = false
-    ElMessage.success(form.id ? '场站已更新' : '场站已新增')
-    return
-  }
-  const r = saveTerminal({ ...form })
-  if (r && r.error) {
-    ElMessage.error(r.error)
-    return
-  }
+  const d = await prodWrite('/admin/terminal', { ...form })
+  if (!d) return
   dialogVisible.value = false
   ElMessage.success(form.id ? '场站已更新' : '场站已新增')
 }

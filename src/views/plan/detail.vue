@@ -125,9 +125,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, Position } from '@element-plus/icons-vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
-import { BUSY_STATUSES, createDispatches, creditCheck, isRoadMode, vehicleInspectionExpired } from '@/mock/flow'
+import { BUSY_STATUSES, creditCheck, isRoadMode, vehicleInspectionExpired } from '@/mock/flow'
 import { api, refreshDb } from '@/api'
-import { isProduction } from '@/mode'
 import { formatNum } from '@/utils'
 import { usePerm } from '@/permission'
 
@@ -135,14 +134,12 @@ const route = useRoute()
 const { can } = usePerm()
 
 /* ===== Phase 4 灰度：生产模式（薄客户端）——计划详情读后端 /api/coll/plans/{id} + dispatches + vehicles ===== */
-const PROD = isProduction()
 const planRec = ref(null)
 async function loadDetail() {
-  if (!PROD) return
   const r = await api('GET', '/coll/plans/' + route.params.id)
   planRec.value = r.ok ? r.data : null
 }
-const plan = computed(() => (PROD && planRec.value ? planRec.value : find.plan(route.params.id)))
+const plan = computed(() => planRec.value || find.plan(route.params.id))
 onMounted(loadDetail)
 watch(() => route.params.id, loadDetail)
 const commodity = computed(() => find.commodity(plan.value?.commodityId))
@@ -220,32 +217,18 @@ async function confirmDispatch() {
     return
   }
   // Phase 4 引擎移除：生产模式写操作 = 后端权威（POST /dispatch/create：事务化两阶段派车 + 资源占用）
-  if (PROD) {
-    const r = await api('POST', '/dispatch/create', {
-      planId: plan.value.id,
-      count: dispatchCount.value,
-      vehicleIds: vehicleSource.value === 'manual' ? selectedVehicles.value : []
-    })
-    dispatchVisible.value = false
-    if (!r.ok) { ElMessage.error(r.error || '派车失败'); return }
-    await refreshDb()
-    await loadDetail()
-    const created = (r.data && r.data.created) || []
-    if (r.data && r.data.error) {
-      ElMessage.warning(r.data.error)
-      return
-    }
-    ElMessage.success(`已生成 ${created.length} 张调度单`)
-    return
-  }
-  const { created, error } = createDispatches(
-    plan.value,
-    dispatchCount.value,
-    vehicleSource.value === 'manual' ? selectedVehicles.value : []
-  )
+  const r = await api('POST', '/dispatch/create', {
+    planId: plan.value.id,
+    count: dispatchCount.value,
+    vehicleIds: vehicleSource.value === 'manual' ? selectedVehicles.value : []
+  })
   dispatchVisible.value = false
-  if (error) {
-    ElMessage.warning(error)
+  if (!r.ok) { ElMessage.error(r.error || '派车失败'); return }
+  await refreshDb()
+  await loadDetail()
+  const created = (r.data && r.data.created) || []
+  if (r.data && r.data.error) {
+    ElMessage.warning(r.data.error)
     return
   }
   ElMessage.success(`已生成 ${created.length} 张调度单`)

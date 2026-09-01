@@ -159,9 +159,8 @@ import { Search, Plus, Download, Refresh } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
-import { BUSY_STATUSES, cancelPlan, createDispatches, creditCheck, isRoadMode, vehicleInspectionExpired, visiblePlans, dataScopeOf } from '@/mock/flow'
+import { BUSY_STATUSES, creditCheck, isRoadMode, vehicleInspectionExpired, dataScopeOf } from '@/mock/flow'
 import { useCollection } from '@/composables/useCollection'
-import { isProduction } from '@/mode'
 import { api } from '@/api'
 import { formatNum } from '@/utils'
 import dayjs from 'dayjs'
@@ -187,9 +186,8 @@ const pageSize = ref(10)
 
 // 环节8：数据权限（行级）——列表只展示当前操作人数据范围内的计划（装货侧区域）
 // Phase 4 灰度：生产模式读后端 /api/coll/plans（后端已按当前操作人装货侧区域行级过滤，与 visiblePlans 同口径）
-const PROD = isProduction()
 const listCol = useCollection('plans', () => ({ key: 'plans:list' }))
-const scoped = computed(() => PROD ? listCol.data.value : visiblePlans())
+const scoped = computed(() => listCol.data.value)
 const scopeRegions = computed(() => dataScopeOf().regions)
 
 const statItems = computed(() => {
@@ -231,12 +229,10 @@ function resetFilter() {
   page.value = 1
 }
 
-if (PROD) {
-  onMounted(() => { listCol.refresh() })
-  const onRefreshed = () => { listCol.refresh() }
-  window.addEventListener('blms:refreshed', onRefreshed)
-  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
-}
+onMounted(() => { listCol.refresh() })
+const onRefreshed = () => { listCol.refresh() }
+window.addEventListener('blms:refreshed', onRefreshed)
+onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 
 function goDetail(row) {
   router.push(`/plan/${row.id}`)
@@ -249,19 +245,9 @@ function progressColor(status) {
 function cancel(row) {
   ElMessageBox.confirm(`确认取消计划 ${row.id}？`, '提示', { type: 'warning' }).then(async () => {
     // Phase 4 引擎移除：生产模式写操作 = 后端权威（POST /plan/{id}/cancel：状态守卫 + RBAC + 审计）
-    if (PROD) {
-      const r = await api('POST', '/plan/' + row.id + '/cancel')
-      if (!r.ok) { ElMessage.error(r.error || '操作失败'); return }
-      await listCol.refresh()
-      ElMessage.success('计划已取消')
-      return
-    }
-    // 演示模式：写操作下沉服务层（P2）：状态守卫 + RBAC + 审计
-    const r = cancelPlan(row)
-    if (r && r.error) {
-      ElMessage.error(r.error)
-      return
-    }
+    const r = await api('POST', '/plan/' + row.id + '/cancel')
+    if (!r.ok) { ElMessage.error(r.error || '操作失败'); return }
+    await listCol.refresh()
     ElMessage.success('计划已取消')
   }).catch(() => {})
 }
@@ -317,31 +303,17 @@ async function confirmDispatch() {
     return
   }
   // Phase 4 引擎移除：生产模式写操作 = 后端权威（POST /dispatch/create：事务化两阶段派车 + 资源占用）
-  if (PROD) {
-    const r = await api('POST', '/dispatch/create', {
-      planId: plan.id,
-      count: dispatchCount.value,
-      vehicleIds: vehicleSource.value === 'manual' ? selectedVehicles.value : []
-    })
-    dispatchVisible.value = false
-    if (!r.ok) { ElMessage.error(r.error || '派车失败'); return }
-    await listCol.refresh()
-    const created = (r.data && r.data.created) || []
-    if (r.data && r.data.error) {
-      ElMessage.warning(r.data.error)
-      return
-    }
-    ElMessage.success(`已为计划 ${plan.id} 生成 ${created.length} 张调度单`)
-    return
-  }
-  const { created, error } = createDispatches(
-    plan,
-    dispatchCount.value,
-    vehicleSource.value === 'manual' ? selectedVehicles.value : []
-  )
+  const r = await api('POST', '/dispatch/create', {
+    planId: plan.id,
+    count: dispatchCount.value,
+    vehicleIds: vehicleSource.value === 'manual' ? selectedVehicles.value : []
+  })
   dispatchVisible.value = false
-  if (error) {
-    ElMessage.warning(error)
+  if (!r.ok) { ElMessage.error(r.error || '派车失败'); return }
+  await listCol.refresh()
+  const created = (r.data && r.data.created) || []
+  if (r.data && r.data.error) {
+    ElMessage.warning(r.data.error)
     return
   }
   ElMessage.success(`已为计划 ${plan.id} 生成 ${created.length} 张调度单`)

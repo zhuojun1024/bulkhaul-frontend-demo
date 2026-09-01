@@ -136,10 +136,8 @@ import { Search, Download, Refresh } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import StatusTag from '@/components/StatusTag.vue'
-import { db, find } from '@/mock'
-import { issueInvoiceRow, redFlushInvoiceRow } from '@/mock/flow'
+import { find } from '@/mock'
 import { useCollection } from '@/composables/useCollection'
-import { isProduction } from '@/mode'
 import { api } from '@/api'
 import { usePerm } from '@/permission'
 import { formatMoney, formatNum } from '@/utils'
@@ -160,9 +158,8 @@ const page = ref(1)
 const pageSize = ref(10)
 
 /* ===== Phase 4 灰度：生产模式（薄客户端）——发票列表读后端 /api/coll/invoices ===== */
-const PROD = isProduction()
 const listCol = useCollection('invoices', () => ({ key: 'invoices:list' }))
-const rows = computed(() => PROD ? listCol.data.value : db.invoices)
+const rows = computed(() => listCol.data.value)
 
 const filtered = computed(() =>
   rows.value.filter((i) => {
@@ -189,12 +186,10 @@ function resetFilter() {
   page.value = 1
 }
 
-if (PROD) {
-  onMounted(() => { listCol.refresh() })
-  const onRefreshed = () => { listCol.refresh() }
-  window.addEventListener('blms:refreshed', onRefreshed)
-  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
-}
+onMounted(() => { listCol.refresh() })
+const onRefreshed = () => { listCol.refresh() }
+window.addEventListener('blms:refreshed', onRefreshed)
+onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 
 /* ===== Phase 4 引擎移除：生产模式写操作 = 后端权威（POST 落库）+ 列表重取 =====
  * 不再依赖 flow.js 乐观改本地态；后端为完整状态机（返回 invoiceNo 与 flow 同形）。 */
@@ -220,19 +215,9 @@ function goSettlement(row) {
 }
 
 async function issue(row) {
-  if (PROD) {
-    const d = await prodWrite('/settlement/' + row.settlementId + '/issueInvoice')
-    if (!d) return
-    ElMessage.success(`发票已开具：${d.invoiceNo || ''}`)
-    return
-  }
-  // 演示模式：统一走 flow：状态守卫 + 审计日志；发票号按 结算单ID-发票ID 确定性派生
-  const r = issueInvoiceRow(row)
-  if (r && r.error) {
-    ElMessage.error(r.error)
-    return
-  }
-  ElMessage.success(`发票已开具：${r.invoiceNo}`)
+  const d = await prodWrite('/settlement/' + row.settlementId + '/issueInvoice')
+  if (!d) return
+  ElMessage.success(`发票已开具：${d.invoiceNo || ''}`)
 }
 
 function redFlush(row) {
@@ -240,17 +225,8 @@ function redFlush(row) {
     inputPattern: /.{2,}/,
     inputErrorMessage: '原因至少 2 个字符'
   }).then(async ({ value }) => {
-    if (PROD) {
-      const d = await prodWrite('/settlement/invoice/' + row.id + '/redFlush', { reason: value })
-      if (d) ElMessage.warning('发票已红冲')
-      return
-    }
-    const r = redFlushInvoiceRow(row, value)
-    if (r && r.error) {
-      ElMessage.error(r.error)
-      return
-    }
-    ElMessage.warning('发票已红冲')
+    const d = await prodWrite('/settlement/invoice/' + row.id + '/redFlush', { reason: value })
+    if (d) ElMessage.warning('发票已红冲')
   }).catch(() => {})
 }
 

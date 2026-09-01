@@ -82,9 +82,8 @@ import { ElMessage } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { db, find } from '@/mock'
-import { contractRemaining, createPlan } from '@/mock/flow'
+import { contractRemaining } from '@/mock/flow'
 import { useCollection } from '@/composables/useCollection'
-import { isProduction } from '@/mode'
 import { api } from '@/api'
 import { formatMoney, formatNum } from '@/utils'
 import dayjs from 'dayjs'
@@ -93,9 +92,8 @@ const router = useRouter()
 const formRef = ref()
 
 /* ===== Phase 4 灰度：生产模式（薄客户端）——执行中合同下拉读后端 /api/coll/contracts ===== */
-const PROD = isProduction()
 const contractCol = useCollection('contracts', () => ({ key: 'contracts:form' }))
-const contracts = computed(() => PROD ? contractCol.data.value : db.contracts)
+const contracts = computed(() => contractCol.data.value)
 
 /** 执行中合同（响应式：合同审批通过/状态变化后候选自动刷新） */
 const executableContracts = computed(() => contracts.value.filter((c) => c.status === 'executing'))
@@ -138,45 +136,27 @@ function onContractChange() {
   }
 }
 
-if (PROD) {
-  onMounted(() => { contractCol.refresh() })
-  const onRefreshed = () => { contractCol.refresh() }
-  window.addEventListener('blms:refreshed', onRefreshed)
-  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
-}
+onMounted(() => { contractCol.refresh() })
+const onRefreshed = () => { contractCol.refresh() }
+window.addEventListener('blms:refreshed', onRefreshed)
+onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 
 async function submit() {
   formRef.value.validate(async (valid) => {
     if (!valid) return
     // Phase 4 引擎移除：生产模式写操作 = 后端权威（POST /plan：合同执行中 + 剩余量守卫 + 审计）
-    if (PROD) {
-      const r = await api('POST', '/plan', {
-        contractId: form.contractId,
-        planDate: form.planDate,
-        quantity: form.quantity,
-        remark: form.remark
-      })
-      if (!r.ok) {
-        ElMessage.warning(r.error || '创建失败')
-        return
-      }
-      ElMessage.success(`计划 ${r.data.id} 创建成功`)
-      router.push(`/plan/${r.data.id}`)
-      return
-    }
-    // 演示模式：写操作下沉服务层（P2）：合同执行中 + 剩余量守卫 + 审计
-    const r = createPlan({
+    const r = await api('POST', '/plan', {
       contractId: form.contractId,
       planDate: form.planDate,
       quantity: form.quantity,
       remark: form.remark
     })
-    if (r && r.error) {
-      ElMessage.warning(r.error)
+    if (!r.ok) {
+      ElMessage.warning(r.error || '创建失败')
       return
     }
-    ElMessage.success(`计划 ${r.id} 创建成功`)
-    router.push(`/plan/${r.id}`)
+    ElMessage.success(`计划 ${r.data.id} 创建成功`)
+    router.push(`/plan/${r.data.id}`)
   })
 }
 </script>
