@@ -198,9 +198,8 @@ import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
-import { setInventoryStatus, inventoryAlerts, safetyStockOf, setSafetyStock, manualInbound } from '@/mock/flow'
+import { inventoryAlerts, safetyStockOf } from '@/mock/flow'
 import { useCollection } from '@/composables/useCollection'
-import { isProduction } from '@/mode'
 import { api } from '@/api'
 import { formatNum } from '@/utils'
 import dayjs from 'dayjs'
@@ -225,9 +224,8 @@ const page = ref(1)
 const pageSize = ref(10)
 
 /* ===== Phase 4 灰度：生产模式（薄客户端）——库存列表读后端 /api/coll/inventories ===== */
-const PROD = isProduction()
 const listCol = useCollection('inventories', () => ({ key: 'inventories:list' }))
-const rows = computed(() => PROD ? listCol.data.value : db.inventories)
+const rows = computed(() => listCol.data.value)
 
 const filtered = computed(() =>
   rows.value.filter((inv) => {
@@ -256,12 +254,10 @@ function resetFilter() {
   page.value = 1
 }
 
-if (PROD) {
-  onMounted(() => { listCol.refresh() })
-  const onRefreshed = () => { listCol.refresh() }
-  window.addEventListener('blms:refreshed', onRefreshed)
-  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
-}
+onMounted(() => { listCol.refresh() })
+const onRefreshed = () => { listCol.refresh() }
+window.addEventListener('blms:refreshed', onRefreshed)
+onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 
 /* ===== Phase 4 引擎移除：生产模式写操作 = 后端权威（POST 落库）+ 列表重取 =====
  * 后端业务错误经 ApiResult.success 包装为 data.error（HTTP 200），须检查 r.data.error。 */
@@ -298,18 +294,8 @@ async function saveSq() {
     return
   }
   // Phase 4 引擎移除：生产模式写操作 = 后端权威（RBAC + 数值守卫 + 审计）
-  if (PROD) {
-    const d = await prodWrite('/warehouse/safetyStock', { warehouseId: sqForm.warehouseId, commodityId: sqForm.commodityId, minQty: sqForm.minQty })
-    if (!d) return
-    sqDialog.value = false
-    ElMessage.success('安全库存下限已保存')
-    return
-  }
-  const r = setSafetyStock(sqForm.warehouseId, sqForm.commodityId, sqForm.minQty)
-  if (r && r.error) {
-    ElMessage.error(r.error)
-    return
-  }
+  const d = await prodWrite('/warehouse/safetyStock', { warehouseId: sqForm.warehouseId, commodityId: sqForm.commodityId, minQty: sqForm.minQty })
+  if (!d) return
   sqDialog.value = false
   ElMessage.success('安全库存下限已保存')
 }
@@ -329,20 +315,10 @@ async function saveInbound() {
     return
   }
   // Phase 4 引擎移除：生产模式写操作 = 后端权威（容量守卫 + RBAC + 审计）
-  if (PROD) {
-    const d = await prodWrite('/warehouse/inbound', { warehouseId: inboundForm.warehouseId, commodityId: inboundForm.commodityId, quantity: inboundForm.quantity, batch: inboundForm.batch, remark: inboundForm.remark })
-    if (!d) return
-    inboundDialog.value = false
-    ElMessage.success(`入库成功，批次 ${d.batch || ''}`)
-    return
-  }
-  const r = manualInbound(inboundForm.warehouseId, inboundForm.commodityId, inboundForm.quantity, inboundForm.batch, inboundForm.remark)
-  if (r && r.error) {
-    ElMessage.error(r.error)
-    return
-  }
+  const d = await prodWrite('/warehouse/inbound', { warehouseId: inboundForm.warehouseId, commodityId: inboundForm.commodityId, quantity: inboundForm.quantity, batch: inboundForm.batch, remark: inboundForm.remark })
+  if (!d) return
   inboundDialog.value = false
-  ElMessage.success(`入库成功，批次 ${r.batch}`)
+  ElMessage.success(`入库成功，批次 ${d.batch || ''}`)
 }
 
 function ageDays(inDate) {
@@ -351,45 +327,18 @@ function ageDays(inDate) {
 
 async function lockRow(row) {
   // Phase 4 引擎移除：生产模式写操作 = 后端权威（状态守卫 + RBAC + 审计）
-  if (PROD) {
-    const d = await prodWrite('/warehouse/inventory/' + row.id + '/status', { status: 'locked' })
-    if (d) ElMessage.success(`批次 ${row.batch} 已锁定`)
-    return
-  }
-  const r = setInventoryStatus(row, 'locked')
-  if (r && r.error) {
-    ElMessage.error(r.error)
-    return
-  }
-  ElMessage.success(`批次 ${row.batch} 已锁定`)
+  const d = await prodWrite('/warehouse/inventory/' + row.id + '/status', { status: 'locked' })
+  if (d) ElMessage.success(`批次 ${row.batch} 已锁定`)
 }
 
 async function unlockRow(row) {
-  if (PROD) {
-    const d = await prodWrite('/warehouse/inventory/' + row.id + '/status', { status: 'normal' })
-    if (d) ElMessage.success(`批次 ${row.batch} 已解锁`)
-    return
-  }
-  const r = setInventoryStatus(row, 'normal')
-  if (r && r.error) {
-    ElMessage.error(r.error)
-    return
-  }
-  ElMessage.success(`批次 ${row.batch} 已解锁`)
+  const d = await prodWrite('/warehouse/inventory/' + row.id + '/status', { status: 'normal' })
+  if (d) ElMessage.success(`批次 ${row.batch} 已解锁`)
 }
 
 async function expireRow(row) {
-  if (PROD) {
-    const d = await prodWrite('/warehouse/inventory/' + row.id + '/status', { status: 'near-expiry' })
-    if (d) ElMessage.warning(`批次 ${row.batch} 已标记临期`)
-    return
-  }
-  const r = setInventoryStatus(row, 'near-expiry')
-  if (r && r.error) {
-    ElMessage.error(r.error)
-    return
-  }
-  ElMessage.warning(`批次 ${row.batch} 已标记临期`)
+  const d = await prodWrite('/warehouse/inventory/' + row.id + '/status', { status: 'near-expiry' })
+  if (d) ElMessage.warning(`批次 ${row.batch} 已标记临期`)
 }
 
 function exportCsv() {

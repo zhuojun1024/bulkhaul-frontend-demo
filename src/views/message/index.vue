@@ -108,24 +108,21 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Search, CircleCheck, MuteNotification } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
-import { markMessageRead, markAllMessagesRead, visibleMessages, getDnd, setDnd, isMuted, unreadCount as flowUnreadCount } from '@/mock/flow'
+import { getDnd, isMuted } from '@/mock/flow'
 import { api } from '@/api'
-import { isProduction } from '@/mode'
 import { useTokens } from '@/utils/tokens'
 
 const tokens = useTokens()
 const router = useRouter()
 
 /* ===== Phase 4 灰度：生产模式（薄客户端）——可见消息读后端 /api/admin/messages（角色定向过滤，服务端同源） ===== */
-const PROD = isProduction()
 const msgData = ref([])
 async function loadMessages() {
-  if (!PROD) return
   const r = await api('GET', '/admin/messages')
   if (r.ok) msgData.value = r.data
 }
 /** 当前登录人可见消息（M4：按角色定向过滤；平台管理员可见全部） */
-const myMessages = computed(() => PROD ? msgData.value : visibleMessages())
+const myMessages = computed(() => msgData.value)
 
 const typeMap = {
   approval: { label: '审批', tag: 'primary' },
@@ -141,9 +138,7 @@ const page = ref(1)
 const pageSize = ref(10)
 
 /** 未读：未读且未被免打扰（环节6：DND 消息不打扰，与顶栏角标同口径） */
-const unreadCount = computed(() => PROD
-  ? msgData.value.filter((m) => !m.read && !isMuted(m)).length
-  : flowUnreadCount())
+const unreadCount = computed(() => msgData.value.filter((m) => !m.read && !isMuted(m)).length)
 
 const statItems = computed(() => [
   { key: '', label: '全部消息', count: myMessages.value.length, color: tokens.primary },
@@ -168,39 +163,28 @@ const paged = computed(() => {
 
 async function markRead(row) {
   // Phase 4 引擎移除：生产模式写操作 = 后端权威（POST 落库）+ 消息重取
-  if (PROD) {
-    const r = await api('POST', '/admin/messages/' + row.id + '/read')
-    if (!r.ok || (r.data && r.data.error)) {
-      ElMessage.error((r.data && r.data.error) || r.error || '操作失败')
-      return
-    }
-    await loadMessages()
+  const r = await api('POST', '/admin/messages/' + row.id + '/read')
+  if (!r.ok || (r.data && r.data.error)) {
+    ElMessage.error((r.data && r.data.error) || r.error || '操作失败')
     return
   }
-  markMessageRead(row)
+  await loadMessages()
 }
 
 async function markAll() {
-  if (PROD) {
-    const r = await api('POST', '/admin/messages/readAll')
-    if (!r.ok || (r.data && r.data.error)) {
-      ElMessage.error((r.data && r.data.error) || r.error || '操作失败')
-      return
-    }
-    await loadMessages()
-    ElMessage.success(`已将 ${(r.data && r.data.count) || 0} 条消息标为已读`)
+  const r = await api('POST', '/admin/messages/readAll')
+  if (!r.ok || (r.data && r.data.error)) {
+    ElMessage.error((r.data && r.data.error) || r.error || '操作失败')
     return
   }
-  const n = markAllMessagesRead()
-  ElMessage.success(`已将 ${n} 条消息标为已读`)
+  await loadMessages()
+  ElMessage.success(`已将 ${(r.data && r.data.count) || 0} 条消息标为已读`)
 }
 
-if (PROD) {
-  onMounted(() => { loadMessages() })
-  const onRefreshed = () => { loadMessages() }
-  window.addEventListener('blms:refreshed', onRefreshed)
-  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
-}
+onMounted(() => { loadMessages() })
+const onRefreshed = () => { loadMessages() }
+window.addEventListener('blms:refreshed', onRefreshed)
+onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 
 /* ===== 环节6：免打扰设置（按登录账号保存，免打扰消息不计入未读角标） ===== */
 const dndDialog = ref(false)
@@ -217,19 +201,9 @@ function openDnd() {
 
 async function saveDnd() {
   // Phase 4 引擎移除：生产模式写操作 = 后端权威（按登录账号保存）
-  if (PROD) {
-    const r = await api('PUT', '/admin/dnd', { ...dndForm, mutedTypes: [...dndForm.mutedTypes] })
-    if (!r.ok || (r.data && r.data.error)) {
-      ElMessage.error((r.data && r.data.error) || r.error || '操作失败')
-      return
-    }
-    dndDialog.value = false
-    ElMessage.success('免打扰设置已保存')
-    return
-  }
-  const r = setDnd({ ...dndForm, mutedTypes: [...dndForm.mutedTypes] })
-  if (r && r.error) {
-    ElMessage.error(r.error)
+  const r = await api('PUT', '/admin/dnd', { ...dndForm, mutedTypes: [...dndForm.mutedTypes] })
+  if (!r.ok || (r.data && r.data.error)) {
+    ElMessage.error((r.data && r.data.error) || r.error || '操作失败')
     return
   }
   dndDialog.value = false
@@ -238,13 +212,8 @@ async function saveDnd() {
 
 /** 查看：标记已读并跳转对应模块 */
 async function openMessage(row) {
-  if (PROD) {
-    const r = await api('POST', '/admin/messages/' + row.id + '/read')
-    if (r.ok && !(r.data && r.data.error)) loadMessages()
-    if (row.path) router.push(row.path)
-    return
-  }
-  markMessageRead(row)
+  const r = await api('POST', '/admin/messages/' + row.id + '/read')
+  if (r.ok && !(r.data && r.data.error)) loadMessages()
   if (row.path) router.push(row.path)
 }
 </script>
