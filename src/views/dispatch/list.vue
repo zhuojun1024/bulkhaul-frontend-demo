@@ -224,6 +224,7 @@ import {
   dataScopeOf
 } from '@/mock/flow'
 import { useCollection } from '@/composables/useCollection'
+import { api } from '@/api'
 import { isProduction } from '@/mode'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
@@ -326,6 +327,19 @@ function guardError(r) {
   return false
 }
 
+/* ===== Phase 4 引擎移除：生产模式写操作 = 后端权威（POST 落库）+ 重取列表 =====
+ * 不再依赖 flow.js 乐观改本地态；列表已监听 blms:refreshed 重取，此处显式 refresh 保证即时。 */
+async function prodWrite(path, successMsg, body) {
+  const r = await api('POST', path, body)
+  if (!r.ok) {
+    ElMessage.error(r.error || '操作失败')
+    return false
+  }
+  await listCol.refresh()
+  ElMessage.success(successMsg)
+  return true
+}
+
 function confirmLoad(row) {
   const road = isRoadMode(row.mode)
   ElMessageBox.confirm(
@@ -334,7 +348,8 @@ function confirmLoad(row) {
       : `确认 ${unitLabel(row)} 已完成装货？`,
     '确认装货',
     { dangerouslyUseHTMLString: road, type: 'info', confirmButtonText: '确认装货' }
-  ).then(() => {
+  ).then(async () => {
+    if (PROD) { await prodWrite('/dispatch/' + row.id + '/confirmLoad', road ? '装货确认成功，进磅单已登记' : '装货确认成功'); return }
     if (guardError(flowConfirmLoad(row))) return
     ElMessage.success(road ? '装货确认成功，进磅单已登记' : '装货确认成功')
   }).catch(() => {})
@@ -345,7 +360,8 @@ function depart(row) {
     `确认 ${unitLabel(row)} 发车开始运输？`,
     '发车确认',
     { type: 'info', confirmButtonText: '确认发车' }
-  ).then(() => {
+  ).then(async () => {
+    if (PROD) { await prodWrite('/dispatch/' + row.id + '/depart', '已发车，进入在途状态'); return }
     if (guardError(flowDepart(row))) return
     ElMessage.success('已发车，进入在途状态')
   }).catch(() => {})
@@ -356,7 +372,8 @@ function arrive(row) {
     `确认 ${unitLabel(row)} 已到达卸货场站，开始卸货？`,
     '到达确认',
     { type: 'info', confirmButtonText: '确认到达' }
-  ).then(() => {
+  ).then(async () => {
+    if (PROD) { await prodWrite('/dispatch/' + row.id + '/arrive', '已到达，进入卸货状态'); return }
     if (guardError(flowArrive(row))) return
     ElMessage.success('已到达，进入卸货状态')
   }).catch(() => {})
@@ -370,7 +387,8 @@ function confirmUnload(row) {
       : `确认 ${unitLabel(row)} 已完成卸货？<br/>将按调度量结算运费。`,
     '确认卸货',
     { dangerouslyUseHTMLString: road, type: 'success', confirmButtonText: '确认卸货' }
-  ).then(() => {
+  ).then(async () => {
+    if (PROD) { await prodWrite('/dispatch/' + row.id + '/confirmUnload', '卸货确认成功，本次运输已完成'); return }
     if (guardError(flowConfirmUnload(row))) return
     ElMessage.success('卸货确认成功，本次运输已完成')
   }).catch(() => {})
@@ -383,7 +401,8 @@ function cancel(row) {
     confirmButtonText: '确认取消',
     inputPlaceholder: '取消原因',
     inputValidator: (v) => (v && v.trim() ? true : '请填写取消原因')
-  }).then(({ value }) => {
+  }).then(async ({ value }) => {
+    if (PROD) { await prodWrite('/dispatch/' + row.id + '/cancel', '调度单已取消', { reason: value }); return }
     if (guardError(flowCancelDispatch(row, value))) return
     ElMessage.success('调度单已取消')
   }).catch(() => {})
@@ -414,9 +433,14 @@ function reassign(row) {
   reassignDialog.value = true
 }
 
-function submitReassign() {
+async function submitReassign() {
   if (!reassignVehicle.value || !reassignDriver.value) {
     ElMessage.warning('请选择目标车辆与司机')
+    return
+  }
+  if (PROD) {
+    const ok = await prodWrite('/dispatch/' + reassignTarget.value.id + '/reassign', '改派成功，需司机重新接单', { vehicleId: reassignVehicle.value, driverId: reassignDriver.value })
+    if (ok) reassignDialog.value = false
     return
   }
   if (guardError(flowReassignDispatch(reassignTarget.value, reassignVehicle.value, reassignDriver.value))) return
@@ -429,7 +453,8 @@ function resume(row) {
     `确认调度单 ${row.id} 恢复运输？`,
     '恢复运输',
     { type: 'warning', confirmButtonText: '确认恢复' }
-  ).then(() => {
+  ).then(async () => {
+    if (PROD) { await prodWrite('/dispatch/' + row.id + '/resume', '已恢复运输'); return }
     if (guardError(resumeDispatch(row))) return
     ElMessage.success('已恢复运输')
   }).catch(() => {})
@@ -454,9 +479,14 @@ function openReport(row) {
   excDialog.value = true
 }
 
-function submitException() {
+async function submitException() {
   if (!excForm.description.trim() || excForm.description.trim().length < 2) {
     ElMessage.warning('描述至少 2 个字符')
+    return
+  }
+  if (PROD) {
+    const ok = await prodWrite('/dispatch/' + excTarget.value.id + '/reportException', '异常已上报，请前往异常处理模块跟进', { description: excForm.description.trim(), type: excForm.type, level: excForm.level })
+    if (ok) excDialog.value = false
     return
   }
   const r = flowReportException(excTarget.value, excForm.description.trim(), excForm.type, excForm.level)
