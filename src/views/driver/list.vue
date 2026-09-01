@@ -175,9 +175,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import ImportDialog from '@/components/ImportDialog.vue'
 import { db } from '@/mock'
-import { toggleDriverStatus, saveDriver, importDrivers } from '@/mock/flow'
 import { useCollection } from '@/composables/useCollection'
-import { isProduction } from '@/mode'
 import { api } from '@/api'
 import { formatNum } from '@/utils'
 import dayjs from 'dayjs'
@@ -201,9 +199,8 @@ const page = ref(1)
 const pageSize = ref(10)
 
 /* ===== Phase 4 灰度：生产模式（薄客户端）——司机列表读后端 /api/coll/drivers ===== */
-const PROD = isProduction()
 const listCol = useCollection('drivers', () => ({ key: 'drivers:list' }))
-const rows = computed(() => PROD ? listCol.data.value : db.drivers)
+const rows = computed(() => listCol.data.value)
 
 const expiringSoon = computed(() =>
   rows.value.filter((d) => d.status !== 'disabled' && isExpiring(d.licenseExpire))
@@ -246,12 +243,10 @@ function resetFilter() {
   page.value = 1
 }
 
-if (PROD) {
-  onMounted(() => { listCol.refresh() })
-  const onRefreshed = () => { listCol.refresh() }
-  window.addEventListener('blms:refreshed', onRefreshed)
-  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
-}
+onMounted(() => { listCol.refresh() })
+const onRefreshed = () => { listCol.refresh() }
+window.addEventListener('blms:refreshed', onRefreshed)
+onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 
 /* ===== Phase 4 引擎移除：生产模式写操作 = 后端权威（POST 落库）+ 列表重取 =====
  * 后端业务错误经 ApiResult.success 包装为 data.error（HTTP 200），须检查 r.data.error。 */
@@ -277,33 +272,14 @@ function isExpiring(date) {
 function disable(row) {
   ElMessageBox.confirm(`确认停用司机 ${row.name}？停用后不可派单。`, '停用司机', { type: 'warning' }).then(async () => {
     // Phase 4 引擎移除：生产模式写操作 = 后端权威（执行中车次守卫 + RBAC + 司机账号联动 + 审计）
-    if (PROD) {
-      const d = await prodWrite('/admin/driver/' + row.id + '/toggle')
-      if (d) ElMessage.success(`${row.name} 已停用`)
-      return
-    }
-    // 演示模式：写操作下沉服务层（P2）：执行中车次守卫 + RBAC + 司机账号联动 + 审计
-    const r = toggleDriverStatus(row)
-    if (r && r.error) {
-      ElMessage.error(r.error)
-      return
-    }
-    ElMessage.success(`${row.name} 已停用`)
+    const d = await prodWrite('/admin/driver/' + row.id + '/toggle')
+    if (d) ElMessage.success(`${row.name} 已停用`)
   }).catch(() => {})
 }
 
 async function enable(row) {
-  if (PROD) {
-    const d = await prodWrite('/admin/driver/' + row.id + '/toggle')
-    if (d) ElMessage.success(`${row.name} 已启用`)
-    return
-  }
-  const r = toggleDriverStatus(row)
-  if (r && r.error) {
-    ElMessage.error(r.error)
-    return
-  }
-  ElMessage.success(`${row.name} 已启用`)
+  const d = await prodWrite('/admin/driver/' + row.id + '/toggle')
+  if (d) ElMessage.success(`${row.name} 已启用`)
 }
 
 /* ===== F4b：新增/编辑司机（RBAC driver，服务层守卫 + 审计） ===== */
@@ -351,18 +327,8 @@ async function saveDriverForm() {
     ElMessage.warning('请填写姓名和手机号')
     return
   }
-  if (PROD) {
-    const d = await prodWrite('/admin/driver', { ...driverForm })
-    if (!d) return
-    driverDialog.value = false
-    ElMessage.success(driverForm.id ? '司机信息已更新' : '司机已新增')
-    return
-  }
-  const r = saveDriver({ ...driverForm })
-  if (r && r.error) {
-    ElMessage.error(r.error)
-    return
-  }
+  const d = await prodWrite('/admin/driver', { ...driverForm })
+  if (!d) return
   driverDialog.value = false
   ElMessage.success(driverForm.id ? '司机信息已更新' : '司机已新增')
 }
@@ -386,20 +352,14 @@ function openImport() {
 }
 
 async function doImport(rows) {
-  if (PROD) {
-    const r = await api('POST', '/admin/driver/import', rows)
-    if (!r.ok || (r.data && r.data.error)) {
-      ElMessage.error((r.data && r.data.error) || r.error || '导入失败')
-      return
-    }
-    importResult.value = r.data
-    await listCol.refresh()
-    ElMessage.success(`导入完成：新增 ${(r.data.created || []).length} 条，跳过重复 ${(r.data.skipped || []).length} 条${(r.data.errors || []).length ? `，失败 ${r.data.errors.length} 条` : ''}`)
+  const r = await api('POST', '/admin/driver/import', rows)
+  if (!r.ok || (r.data && r.data.error)) {
+    ElMessage.error((r.data && r.data.error) || r.error || '导入失败')
     return
   }
-  importResult.value = importDrivers(rows)
-  const r = importResult.value
-  ElMessage.success(`导入完成：新增 ${r.created.length} 条，跳过重复 ${r.skipped.length} 条${r.errors.length ? `，失败 ${r.errors.length} 条` : ''}`)
+  importResult.value = r.data
+  await listCol.refresh()
+  ElMessage.success(`导入完成：新增 ${(r.data.created || []).length} 条，跳过重复 ${(r.data.skipped || []).length} 条${(r.data.errors || []).length ? `，失败 ${r.data.errors.length} 条` : ''}`)
 }
 
 function exportCsv() {
