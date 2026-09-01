@@ -7,7 +7,7 @@
     </PageHeader>
 
     <div class="stat-row">
-      <StatCard title="库存批次" :value="db.inventories.length" unit="批" icon="Tickets" color="var(--color-primary)" />
+      <StatCard title="库存批次" :value="rows.length" unit="批" icon="Tickets" color="var(--color-primary)" />
       <StatCard title="库存总量" :value="formatNum(totalQuantity)" unit="吨" icon="Box" color="var(--color-success)" />
       <StatCard title="锁定库存" :value="formatNum(lockedQuantity)" unit="吨" icon="Lock" color="var(--color-warning)" :sub="'已分配未出库'" />
       <StatCard title="临期批次" :value="nearExpiryCount" unit="批" icon="AlarmClock" color="var(--color-danger)" :sub="'入库超 60 天'" />
@@ -190,7 +190,7 @@
 <script setup>
 defineOptions({ name: 'Inventory' })
 import ActionColumn from '@/components/ActionColumn.vue'
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Search, Download, Refresh, Setting, Plus } from '@element-plus/icons-vue'
@@ -199,6 +199,8 @@ import StatCard from '@/components/StatCard.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
 import { setInventoryStatus, inventoryAlerts, safetyStockOf, setSafetyStock, manualInbound } from '@/mock/flow'
+import { useCollection } from '@/composables/useCollection'
+import { isProduction } from '@/mode'
 import { formatNum } from '@/utils'
 import dayjs from 'dayjs'
 import { usePerm } from '@/permission'
@@ -221,8 +223,13 @@ const filter = reactive({
 const page = ref(1)
 const pageSize = ref(10)
 
+/* ===== Phase 4 灰度：生产模式（薄客户端）——库存列表读后端 /api/coll/inventories ===== */
+const PROD = isProduction()
+const listCol = useCollection('inventories', () => ({ key: 'inventories:list' }))
+const rows = computed(() => PROD ? listCol.data.value : db.inventories)
+
 const filtered = computed(() =>
-  db.inventories.filter((inv) => {
+  rows.value.filter((inv) => {
     if (filter.warehouseId && inv.warehouseId !== filter.warehouseId) return false
     if (filter.commodityId && inv.commodityId !== filter.commodityId) return false
     if (filter.status && inv.status !== filter.status) return false
@@ -248,9 +255,16 @@ function resetFilter() {
   page.value = 1
 }
 
-const totalQuantity = computed(() => db.inventories.reduce((s, i) => s + i.quantity, 0))
-const lockedQuantity = computed(() => db.inventories.filter((i) => i.status === 'locked').reduce((s, i) => s + i.quantity, 0))
-const nearExpiryCount = computed(() => db.inventories.filter((i) => i.status === 'near-expiry').length)
+if (PROD) {
+  onMounted(() => { listCol.refresh() })
+  const onRefreshed = () => { listCol.refresh() }
+  window.addEventListener('blms:refreshed', onRefreshed)
+  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
+}
+
+const totalQuantity = computed(() => rows.value.reduce((s, i) => s + i.quantity, 0))
+const lockedQuantity = computed(() => rows.value.filter((i) => i.status === 'locked').reduce((s, i) => s + i.quantity, 0))
+const nearExpiryCount = computed(() => rows.value.filter((i) => i.status === 'near-expiry').length)
 
 /** 环节7：安全库存预警（可发库存 < 下限的仓库×商品）与批次行安全库存 */
 const alerts = computed(() => inventoryAlerts())

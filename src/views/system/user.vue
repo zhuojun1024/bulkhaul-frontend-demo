@@ -167,12 +167,14 @@
 <script setup>
 defineOptions({ name: 'SysUser' })
 import ActionColumn from '@/components/ActionColumn.vue'
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Plus, Refresh } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { db } from '@/mock'
 import { removeUser as flowRemoveUser, saveUser, toggleUserStatus, resetPassword, DATA_REGIONS, setDataScope } from '@/mock/flow'
+import { useCollection } from '@/composables/useCollection'
+import { isProduction } from '@/mode'
 import { usePerm } from '@/permission'
 
 const { can } = usePerm()
@@ -235,8 +237,13 @@ const filter = reactive({ keyword: '', role: '', status: '' })
 const page = ref(1)
 const pageSize = ref(10)
 
+/* ===== Phase 4 灰度：生产模式（薄客户端）——用户列表读后端 /api/coll/users ===== */
+const PROD = isProduction()
+const listCol = useCollection('users', () => ({ key: 'users:list' }))
+const rows = computed(() => PROD ? listCol.data.value : db.users)
+
 const filtered = computed(() =>
-  db.users.filter((u) => {
+  rows.value.filter((u) => {
     if (filter.role && u.role !== filter.role) return false
     if (filter.status && u.status !== filter.status) return false
     if (filter.keyword) {
@@ -256,6 +263,13 @@ function resetFilter() {
   filter.role = ''
   filter.status = ''
   page.value = 1
+}
+
+if (PROD) {
+  onMounted(() => { listCol.refresh() })
+  const onRefreshed = () => { listCol.refresh() }
+  window.addEventListener('blms:refreshed', onRefreshed)
+  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 }
 
 function toggleStatus(row, val) {

@@ -366,7 +366,7 @@
 <script setup>
 defineOptions({ name: 'Settlement' })
 import ActionColumn from '@/components/ActionColumn.vue'
-import { ref, reactive, computed, nextTick } from 'vue'
+import { ref, reactive, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Download, Refresh, Postcard, DocumentAdd, MagicStick, Plus } from '@element-plus/icons-vue'
@@ -374,6 +374,8 @@ import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
 import { settlementCandidates, generateSettlements, startReconcile as flowStartReconcile, confirmSettle, recalcSettlement, autoMatchBank, matchBankRecord, addBankStatement, generatePayables, payPayable, payableStats as flowPayableStats } from '@/mock/flow'
+import { useCollection } from '@/composables/useCollection'
+import { isProduction } from '@/mode'
 import { usePerm } from '@/permission'
 import { formatMoney, formatNum } from '@/utils'
 import dayjs from 'dayjs'
@@ -399,9 +401,9 @@ const pageSize = ref(10)
 
 /* ===== 页签：结算账单 / 银行对账（G8 收款核销） ===== */
 const activeTab = ref('settlement')
-const unmatched = computed(() => db.bankRecords.filter((b) => b.status === 'unmatched'))
+const unmatched = computed(() => bankRecords.value.filter((b) => b.status === 'unmatched'))
 const unmatchedCount = computed(() => unmatched.value.length)
-const matchedRecords = computed(() => db.bankRecords.filter((b) => b.status === 'matched'))
+const matchedRecords = computed(() => bankRecords.value.filter((b) => b.status === 'matched'))
 
 const matchDialog = ref(false)
 const matchTarget = ref(null)
@@ -410,7 +412,7 @@ const matchSettlementId = ref('')
 const matchCandidates = computed(() => {
   if (!matchTarget.value) return []
   const c = db.customers.find((x) => x.name === matchTarget.value.counterparty)
-  return db.settlements.filter(
+  return settlements.value.filter(
     (s) => (s.status === 'settled' || s.status === 'overdue') && s.customerId === c?.id && s.totalAmount - s.paidAmount > 0
   )
 })
@@ -467,7 +469,7 @@ function doBankEntry() {
 }
 
 /* ===== 趟次应付（P1 成本侧闭环） ===== */
-const payables = computed(() => db.payables)
+/* payables 数据源见上方 settlements/bankRecords/payables 三集合（Phase 4 灰度） */
 const payableStats = computed(() => flowPayableStats())
 
 const payDialog = ref(false)
@@ -501,12 +503,21 @@ function genPayables() {
   }).catch(() => {})
 }
 
-const periods = computed(() => [...new Set(db.settlements.map((s) => s.period))].sort().reverse())
+/* ===== Phase 4 灰度：生产模式（薄客户端）——结算账单/银行流水/应付读后端 /api/coll ===== */
+const PROD = isProduction()
+const settleCol = useCollection('settlements', () => ({ key: 'settlements:list' }))
+const bankCol = useCollection('bankRecords', () => ({ key: 'bankRecords:list' }))
+const payableCol = useCollection('payables', () => ({ key: 'payables:list' }))
+const settlements = computed(() => PROD ? settleCol.data.value : db.settlements)
+const bankRecords = computed(() => PROD ? bankCol.data.value : db.bankRecords)
+const payables = computed(() => PROD ? payableCol.data.value : db.payables)
+
+const periods = computed(() => [...new Set(settlements.value.map((s) => s.period))].sort().reverse())
 
 const statItems = computed(() => {
-  const count = (s) => db.settlements.filter((x) => x.status === s).length
+  const count = (s) => settlements.value.filter((x) => x.status === s).length
   return [
-    { key: '', label: '全部账单', count: db.settlements.length, color: tokens.primary },
+    { key: '', label: '全部账单', count: settlements.value.length, color: tokens.primary },
     { key: 'pending', label: '待对账', count: count('pending'), color: tokens.info },
     { key: 'reconciling', label: '对账中', count: count('reconciling'), color: tokens.warning },
     { key: 'settled', label: '已结算', count: count('settled'), color: tokens.success },
@@ -515,7 +526,7 @@ const statItems = computed(() => {
 })
 
 const filtered = computed(() =>
-  db.settlements.filter((s) => {
+  settlements.value.filter((s) => {
     if (filter.status && s.status !== filter.status) return false
     if (filter.period && s.period !== filter.period) return false
     if (filter.keyword) {
@@ -537,6 +548,13 @@ function resetFilter() {
   filter.status = ''
   filter.period = ''
   page.value = 1
+}
+
+if (PROD) {
+  onMounted(() => { settleCol.refresh(); bankCol.refresh(); payableCol.refresh() })
+  const onRefreshed = () => { settleCol.refresh(); bankCol.refresh(); payableCol.refresh() }
+  window.addEventListener('blms:refreshed', onRefreshed)
+  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 }
 
 function goDetail(row) {
