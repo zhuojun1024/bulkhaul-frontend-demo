@@ -259,7 +259,7 @@
               <el-form-item label="商品" required>
                 <el-select v-model="requestForm.commodityId" filterable placeholder="请选择" style="width: 100%">
                   <el-option
-                    v-for="c in db.commodities.filter((x) => x.status === 'active')"
+                    v-for="c in commodities.filter((x) => x.status === 'active')"
                     :key="c.id"
                     :label="c.name + '（' + c.category + '）'"
                     :value="c.id"
@@ -276,7 +276,7 @@
               <el-form-item label="装货场站" required>
                 <el-select v-model="requestForm.loadTerminalId" filterable placeholder="请选择" style="width: 100%">
                   <el-option
-                    v-for="t in db.terminals.filter((x) => x.type !== 'unloading' && x.status === 'operating')"
+                    v-for="t in terminals.filter((x) => x.type !== 'unloading' && x.status === 'operating')"
                     :key="t.id"
                     :label="t.name"
                     :value="t.id"
@@ -288,7 +288,7 @@
               <el-form-item label="卸货场站" required>
                 <el-select v-model="requestForm.unloadTerminalId" filterable placeholder="请选择" style="width: 100%">
                   <el-option
-                    v-for="t in db.terminals.filter((x) => x.type !== 'loading' && x.status === 'operating')"
+                    v-for="t in terminals.filter((x) => x.type !== 'loading' && x.status === 'operating')"
                     :key="t.id"
                     :label="t.name"
                     :value="t.id"
@@ -300,7 +300,7 @@
               <el-form-item label="收货方" required>
                 <el-select v-model="requestForm.consigneeId" filterable placeholder="请选择" style="width: 100%">
                   <el-option
-                    v-for="c in db.customers.filter((x) => (x.type === 'consignee' || x.type === 'both') && x.status === 'active')"
+                    v-for="c in customers.filter((x) => (x.type === 'consignee' || x.type === 'both') && x.status === 'active')"
                     :key="c.id"
                     :label="c.name"
                     :value="c.id"
@@ -371,13 +371,15 @@
 
 <script setup>
 defineOptions({ name: 'Portal' })
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
+import { useCollection } from '@/composables/useCollection'
+import { isProduction } from '@/mode'
 import { customerConfirm, customerObjection, outstandingOf, prepaymentAvailable, submitTransportRequest } from '@/mock/flow'
 import { useUserStore } from '@/store'
 import { usePerm } from '@/permission'
@@ -386,6 +388,21 @@ import dayjs from 'dayjs'
 
 const userStore = useUserStore()
 const { can } = usePerm()
+
+/* ===== Phase 4 灰度：生产模式（薄客户端）——发起运输需求表单的商品/场站/收货方下拉为只读引用，读后端集合；本方合同/需求/账单保留本地 db（确认对账/异议/发起需求写后断言依赖乐观态） ===== */
+const PROD = isProduction()
+const commoditiesCol = useCollection('commodities', () => ({ key: 'portal:commodities' }))
+const terminalsCol = useCollection('terminals', () => ({ key: 'portal:terminals' }))
+const customersCol = useCollection('customers', () => ({ key: 'portal:customers' }))
+const commodities = computed(() => PROD ? commoditiesCol.data.value : db.commodities)
+const terminals = computed(() => PROD ? terminalsCol.data.value : db.terminals)
+const customers = computed(() => PROD ? customersCol.data.value : db.customers)
+if (PROD) {
+  onMounted(() => { commoditiesCol.refresh(); terminalsCol.refresh(); customersCol.refresh() })
+  const onRefreshed = () => { commoditiesCol.refresh(); terminalsCol.refresh(); customersCol.refresh() }
+  window.addEventListener('blms:refreshed', onRefreshed)
+  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
+}
 
 /** 当前登录账号绑定的客户（客户角色账号携带 customerId） */
 const user = computed(() => db.users.find((u) => u.username === userStore.userInfo.username))
