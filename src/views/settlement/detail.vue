@@ -428,20 +428,30 @@
 <script setup>
 defineOptions({ name: 'SettlementDetail' })
 import ActionColumn from '@/components/ActionColumn.vue'
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, DocumentChecked, CircleCheck, Printer, Money, Refresh } from '@element-plus/icons-vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
 import { startReconcile as flowStartReconcile, confirmSettle, recordPayment, revertPayment, issueInvoice as flowIssueInvoice, recalcSettlement, supplementReceipt, prepaymentAvailable, applyPrepayment, dunning as flowDunning } from '@/mock/flow'
+import { api } from '@/api'
+import { isProduction } from '@/mode'
 import { usePerm } from '@/permission'
 import { formatMoney, formatNum } from '@/utils'
 
 const route = useRoute()
 const { can } = usePerm()
 
-const settlement = computed(() => find.settlement(route.params.id))
+/* ===== Phase 4 灰度：生产模式（薄客户端）——结算详情读后端 /api/coll/settlements/{id} + invoices/payments/dunnings ===== */
+const PROD = isProduction()
+const settlementRec = ref(null)
+async function loadDetail() {
+  if (!PROD) return
+  const r = await api('GET', '/coll/settlements/' + route.params.id)
+  settlementRec.value = r.ok ? r.data : null
+}
+const settlement = computed(() => (PROD && settlementRec.value ? settlementRec.value : find.settlement(route.params.id)))
 const customer = computed(() => find.customer(settlement.value?.customerId))
 /** 发票：优先取最新一张非红冲发票（红冲后重开时不展示旧红冲票） */
 const invoice = computed(() => {
@@ -449,6 +459,8 @@ const invoice = computed(() => {
   if (!list.length) return null
   return list.find((i) => i.status !== 'red-flushed') || list[list.length - 1]
 })
+onMounted(loadDetail)
+watch(() => route.params.id, loadDetail)
 
 const statusMap = {
   pending: { label: '待对账', type: 'info' },

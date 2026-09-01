@@ -375,7 +375,7 @@
 <script setup>
 defineOptions({ name: 'ContractDetail' })
 import ActionColumn from '@/components/ActionColumn.vue'
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, Check, CircleCheck, CircleClose, Printer, EditPen, Calendar, FolderChecked } from '@element-plus/icons-vue'
@@ -392,6 +392,8 @@ import {
   terminateContract,
   archiveContract
 } from '@/mock/flow'
+import { api } from '@/api'
+import { isProduction } from '@/mode'
 import { formatMoney, formatNum } from '@/utils'
 import { usePerm } from '@/permission'
 
@@ -399,7 +401,15 @@ const { can } = usePerm()
 const route = useRoute()
 const activeTab = ref('base')
 
-const contract = computed(() => find.contract(route.params.id))
+/* ===== Phase 4 灰度：生产模式（薄客户端）——合同详情读后端 /api/coll/contracts/{id} + plans/dispatches/settlements ===== */
+const PROD = isProduction()
+const contractRec = ref(null)
+async function loadDetail() {
+  if (!PROD) return
+  const r = await api('GET', '/coll/contracts/' + route.params.id)
+  contractRec.value = r.ok ? r.data : null
+}
+const contract = computed(() => (PROD && contractRec.value ? contractRec.value : find.contract(route.params.id)))
 const shipper = computed(() => find.customer(contract.value?.shipperId))
 const consignee = computed(() => find.customer(contract.value?.consigneeId))
 const commodity = computed(() => find.commodity(contract.value?.commodityId))
@@ -420,6 +430,8 @@ const canComplete = computed(() => {
   if (!c || c.status !== 'executing') return false
   return !db.plans.some((p) => p.contractId === c.id && p.status !== 'cancelled' && p.status !== 'completed')
 })
+onMounted(loadDetail)
+watch(() => route.params.id, loadDetail)
 
 function complete() {
   ElMessageBox.confirm(

@@ -127,7 +127,6 @@ import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
 import { BUSY_STATUSES, createDispatches, creditCheck, isRoadMode, vehicleInspectionExpired } from '@/mock/flow'
 import { api } from '@/api'
-import { useCollection } from '@/composables/useCollection'
 import { isProduction } from '@/mode'
 import { formatNum } from '@/utils'
 import { usePerm } from '@/permission'
@@ -138,23 +137,16 @@ const { can } = usePerm()
 /* ===== Phase 4 灰度：生产模式（薄客户端）——计划详情读后端 /api/coll/plans/{id} + dispatches + vehicles ===== */
 const PROD = isProduction()
 const planRec = ref(null)
-const dispCol = useCollection('dispatches', () => ({ key: 'dispatches:planDetail' }))
-const vehCol = useCollection('vehicles', () => ({ key: 'vehicles:planDetail' }))
 async function loadDetail() {
   if (!PROD) return
   const r = await api('GET', '/coll/plans/' + route.params.id)
   planRec.value = r.ok ? r.data : null
-  dispCol.refresh()
-  vehCol.refresh()
 }
 const plan = computed(() => (PROD && planRec.value ? planRec.value : find.plan(route.params.id)))
 onMounted(loadDetail)
 watch(() => route.params.id, loadDetail)
 const commodity = computed(() => find.commodity(plan.value?.commodityId))
-const dispatches = computed(() => {
-  const all = PROD ? dispCol.data.value : db.dispatches
-  return all.filter((d) => d.planId === plan.value?.id)
-})
+const dispatches = computed(() => db.dispatches.filter((d) => d.planId === plan.value?.id))
 const loadedCount = computed(() => dispatches.value.filter((d) => d.loadTime).length)
 const intransitCount = computed(() => dispatches.value.filter((d) => d.status === 'intransit').length)
 const completedCount = computed(() => dispatches.value.filter((d) => d.status === 'completed').length)
@@ -191,14 +183,10 @@ const dispatchCount = ref(3)
 const vehicleSource = ref('auto')
 const selectedVehicles = ref([])
 /** 已有未完结车次（全部非终态）的车辆不可再被指定，与 createDispatches 互斥口径一致（N-2：含在途/卸货中） */
-const busyVehicleIds = computed(() => {
-  const all = PROD ? dispCol.data.value : db.dispatches
-  return new Set(all.filter((d) => BUSY_STATUSES.includes(d.status)).map((d) => d.vehicleId))
-})
+const busyVehicleIds = computed(() => new Set(db.dispatches.filter((d) => BUSY_STATUSES.includes(d.status)).map((d) => d.vehicleId)))
 /** 可选车辆：空闲 + 非铁路/水运车型 + 无未完结车次 + 年检未过期（与 createDispatches 守卫同口径） */
-const idleVehicles = computed(() => {
-  const allVeh = PROD ? vehCol.data.value : db.vehicles
-  return allVeh.filter(
+const idleVehicles = computed(() =>
+  db.vehicles.filter(
     (v) =>
       v.status === 'idle' &&
       v.type !== '铁路敞车' &&
@@ -206,7 +194,7 @@ const idleVehicles = computed(() => {
       !vehicleInspectionExpired(v) &&
       !busyVehicleIds.value.has(v.id)
   )
-})
+)
 const isRoad = computed(() => isRoadMode(plan.value?.mode))
 const perTripQuantity = computed(() => {
   if (!plan.value || !dispatchCount.value) return 0

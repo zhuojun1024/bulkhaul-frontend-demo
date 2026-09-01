@@ -203,20 +203,30 @@
 <script setup>
 defineOptions({ name: 'CustomerDetail' })
 import ActionColumn from '@/components/ActionColumn.vue'
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, Money } from '@element-plus/icons-vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
 import { outstandingOf, prepaymentOf, prepaymentAvailable, collectPrepayment } from '@/mock/flow'
+import { api } from '@/api'
+import { isProduction } from '@/mode'
 import { usePerm } from '@/permission'
 import { formatMoney, formatNum } from '@/utils'
 
 const route = useRoute()
 const { can } = usePerm()
 
-const customer = computed(() => find.customer(route.params.id))
+/* ===== Phase 4 灰度：生产模式（薄客户端）——客户详情读后端 /api/coll/customers/{id} + contracts/settlements/dispatches ===== */
+const PROD = isProduction()
+const customerRec = ref(null)
+async function loadDetail() {
+  if (!PROD) return
+  const r = await api('GET', '/coll/customers/' + route.params.id)
+  customerRec.value = r.ok ? r.data : null
+}
+const customer = computed(() => (PROD && customerRec.value ? customerRec.value : find.customer(route.params.id)))
 const contracts = computed(() =>
   db.contracts.filter((c) => c.shipperId === customer.value?.id || c.consigneeId === customer.value?.id)
 )
@@ -227,6 +237,8 @@ const totalVolume = computed(() => {
   const ids = new Set(contracts.value.map((c) => c.id))
   return db.dispatches.filter((d) => d.status === 'completed' && ids.has(d.contractId)).reduce((s, d) => s + d.quantity, 0)
 })
+onMounted(loadDetail)
+watch(() => route.params.id, loadDetail)
 const pendingAmount = computed(() =>
   settlements.value.filter((s) => s.status !== 'settled').reduce((s, x) => s + (x.totalAmount - x.paidAmount), 0)
 )
