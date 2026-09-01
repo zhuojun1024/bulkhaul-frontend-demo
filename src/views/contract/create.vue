@@ -69,7 +69,7 @@
               <el-form-item label="商品" prop="commodityId">
                 <el-select v-model="form.commodityId" placeholder="请选择商品" filterable style="width: 100%">
                   <el-option
-                    v-for="c in db.commodities.filter((x) => x.status === 'active')"
+                    v-for="c in commodities.filter((x) => x.status === 'active')"
                     :key="c.id"
                     :label="c.name + '（' + c.category + '）'"
                     :value="c.id"
@@ -88,7 +88,7 @@
               <el-form-item label="装货场站" prop="loadTerminalId">
                 <el-select v-model="form.loadTerminalId" placeholder="请选择" filterable style="width: 100%">
                   <el-option
-                    v-for="t in db.terminals.filter((x) => x.type !== 'unloading' && x.status === 'operating')"
+                    v-for="t in terminals.filter((x) => x.type !== 'unloading' && x.status === 'operating')"
                     :key="t.id"
                     :label="t.name"
                     :value="t.id"
@@ -100,7 +100,7 @@
               <el-form-item label="卸货场站" prop="unloadTerminalId">
                 <el-select v-model="form.unloadTerminalId" placeholder="请选择" filterable style="width: 100%">
                   <el-option
-                    v-for="t in db.terminals.filter((x) => x.type !== 'loading' && x.status === 'operating')"
+                    v-for="t in terminals.filter((x) => x.type !== 'loading' && x.status === 'operating')"
                     :key="t.id"
                     :label="t.name"
                     :value="t.id"
@@ -172,22 +172,33 @@
 
 <script setup>
 defineOptions({ name: 'ContractCreate' })
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { db } from '@/mock'
 import { createContract, rateOf } from '@/mock/flow'
+import { useCollection } from '@/composables/useCollection'
+import { isProduction } from '@/mode'
 import { formatMoney } from '@/utils'
 import dayjs from 'dayjs'
 
 const router = useRouter()
 const formRef = ref()
 
+/* ===== Phase 4 灰度：生产模式（薄客户端）——创建表单下拉集合读后端 /api/coll ===== */
+const PROD = isProduction()
+const custCol = useCollection('customers', () => ({ key: 'customers:form' }))
+const commCol = useCollection('commodities', () => ({ key: 'commodities:form' }))
+const termCol = useCollection('terminals', () => ({ key: 'terminals:form' }))
+const customers = computed(() => PROD ? custCol.data.value : db.customers)
+const commodities = computed(() => PROD ? commCol.data.value : db.commodities)
+const terminals = computed(() => PROD ? termCol.data.value : db.terminals)
+
 /** 候选客户（响应式：客户冻结/解冻后候选自动刷新） */
-const shippers = computed(() => db.customers.filter((c) => (c.type === 'shipper' || c.type === 'both') && c.status === 'active'))
-const consignees = computed(() => db.customers.filter((c) => (c.type === 'consignee' || c.type === 'both') && c.status === 'active'))
+const shippers = computed(() => customers.value.filter((c) => (c.type === 'shipper' || c.type === 'both') && c.status === 'active'))
+const consignees = computed(() => customers.value.filter((c) => (c.type === 'consignee' || c.type === 'both') && c.status === 'active'))
 const modes = ['公路', '铁路', '水运', '多式联运', '管道']
 
 const form = reactive({
@@ -222,7 +233,7 @@ const rules = {
   unitPrice: [{ required: true, message: '请输入合同单价', trigger: 'blur' }]
 }
 
-const shipper = computed(() => db.customers.find((c) => c.id === form.shipperId))
+const shipper = computed(() => customers.value.find((c) => c.id === form.shipperId))
 const amount = computed(() => Math.round(form.quantity * form.unitPrice))
 
 function levelType(level) {
@@ -242,6 +253,13 @@ function fillFromRate() {
   }
   form.unitPrice = rc.unitPrice
   ElMessage.success(`已按运价卡 ${rc.id} 取价：${rc.unitPrice} 元/吨`)
+}
+
+if (PROD) {
+  onMounted(() => { custCol.refresh(); commCol.refresh(); termCol.refresh() })
+  const onRefreshed = () => { custCol.refresh(); commCol.refresh(); termCol.refresh() }
+  window.addEventListener('blms:refreshed', onRefreshed)
+  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 }
 
 function submit(status) {

@@ -76,21 +76,28 @@
 
 <script setup>
 defineOptions({ name: 'PlanCreate' })
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { db, find } from '@/mock'
 import { contractRemaining, createPlan } from '@/mock/flow'
+import { useCollection } from '@/composables/useCollection'
+import { isProduction } from '@/mode'
 import { formatMoney, formatNum } from '@/utils'
 import dayjs from 'dayjs'
 
 const router = useRouter()
 const formRef = ref()
 
+/* ===== Phase 4 灰度：生产模式（薄客户端）——执行中合同下拉读后端 /api/coll/contracts ===== */
+const PROD = isProduction()
+const contractCol = useCollection('contracts', () => ({ key: 'contracts:form' }))
+const contracts = computed(() => PROD ? contractCol.data.value : db.contracts)
+
 /** 执行中合同（响应式：合同审批通过/状态变化后候选自动刷新） */
-const executableContracts = computed(() => db.contracts.filter((c) => c.status === 'executing'))
+const executableContracts = computed(() => contracts.value.filter((c) => c.status === 'executing'))
 
 const form = reactive({
   contractId: '',
@@ -128,6 +135,13 @@ function onContractChange() {
   if (remaining.value > 0 && form.quantity > remaining.value) {
     form.quantity = remaining.value
   }
+}
+
+if (PROD) {
+  onMounted(() => { contractCol.refresh() })
+  const onRefreshed = () => { contractCol.refresh() }
+  window.addEventListener('blms:refreshed', onRefreshed)
+  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 }
 
 function submit() {
