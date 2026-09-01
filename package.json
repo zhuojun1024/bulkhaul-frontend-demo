@@ -7,6 +7,7 @@
     "build": "vue-cli-service build",
     "lint": "vue-cli-service lint",
     "test": "node --import ./scripts/register.mjs scripts/verify-flow.mjs",
+    "test:api": "node --import ./scripts/register.mjs scripts/verify-api.mjs",
     "test:collection": "node --import ./scripts/register.mjs scripts/verify-collection.mjs",
     "test:ui": "npm run build && node scripts/verify-ui.mjs",
     "test:contract": "node scripts/check-contract.mjs"

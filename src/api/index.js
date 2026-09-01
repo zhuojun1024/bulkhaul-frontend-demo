@@ -234,6 +234,9 @@ const W = {
   markAllMessagesRead: { path: () => '/admin/messages/readAll' }
 }
 
+// 导出 W 端点契约供单元测试（verify-api.mjs）：前端↔后端 API 契约（method/path/body）是薄客户端核心资产
+export { W }
+
 /* ===== 写后失效（Phase 4 阶段 2）：写函数名 → 受影响的集合（数据层缓存失效，视图重取权威态）=====
  * 保守口径：写操作可能联动多集合（如 confirmUnload 联动 weighings/settlements/payables/plans），
  * 故按业务域整域失效，宁可多失效不漏失效（失效仅触发重取，成本低）。 */
