@@ -118,7 +118,7 @@
 <script setup>
 defineOptions({ name: 'Vehicle' })
 import ActionColumn from '@/components/ActionColumn.vue'
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Download, Refresh, Upload } from '@element-plus/icons-vue'
@@ -127,6 +127,8 @@ import StatusTag from '@/components/StatusTag.vue'
 import ImportDialog from '@/components/ImportDialog.vue'
 import { db } from '@/mock'
 import { importVehicles, resumeVehicle, sendVehicleRepair } from '@/mock/flow'
+import { useCollection } from '@/composables/useCollection'
+import { isProduction } from '@/mode'
 import { formatNum } from '@/utils'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
@@ -150,10 +152,15 @@ const filter = reactive({ keyword: '', type: '', owner: '', status: '' })
 const page = ref(1)
 const pageSize = ref(10)
 
+/* ===== Phase 4 灰度：生产模式（薄客户端）——车辆列表读后端 /api/coll/vehicles ===== */
+const PROD = isProduction()
+const listCol = useCollection('vehicles', () => ({ key: 'vehicles:list' }))
+const rows = computed(() => PROD ? listCol.data.value : db.vehicles)
+
 const statItems = computed(() => {
-  const count = (s) => db.vehicles.filter((v) => v.status === s).length
+  const count = (s) => rows.value.filter((v) => v.status === s).length
   return [
-    { key: '', label: '全部车辆', count: db.vehicles.length, color: tokens.primary },
+    { key: '', label: '全部车辆', count: rows.value.length, color: tokens.primary },
     { key: 'inuse', label: '运输中', count: count('inuse'), color: tokens.primary },
     { key: 'idle', label: '空闲', count: count('idle'), color: tokens.success },
     { key: 'maintenance', label: '维修中', count: count('maintenance'), color: tokens.warning },
@@ -162,7 +169,7 @@ const statItems = computed(() => {
 })
 
 const filtered = computed(() =>
-  db.vehicles.filter((v) => {
+  rows.value.filter((v) => {
     if (filter.status && v.status !== filter.status) return false
     if (filter.type && v.type !== filter.type) return false
     if (filter.owner && v.owner !== filter.owner) return false
@@ -185,6 +192,13 @@ function resetFilter() {
   filter.owner = ''
   filter.status = ''
   page.value = 1
+}
+
+if (PROD) {
+  onMounted(() => { listCol.refresh() })
+  const onRefreshed = () => { listCol.refresh() }
+  window.addEventListener('blms:refreshed', onRefreshed)
+  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 }
 
 function goDetail(row) {

@@ -5,7 +5,7 @@
     </PageHeader>
 
     <div class="stat-row">
-      <StatCard title="发票总数" :value="db.invoices.length" unit="张" icon="Postcard" color="var(--color-primary)" />
+      <StatCard title="发票总数" :value="rows.length" unit="张" icon="Postcard" color="var(--color-primary)" />
       <StatCard title="已开具" :value="issuedCount" unit="张" icon="CircleCheck" color="var(--color-success)" :sub="'金额 ' + formatMoney(issuedAmount) + (staleCount ? ' · 金额陈旧 ' + staleCount + ' 张' : '')" />
       <StatCard title="待开具" :value="pendingCount" unit="张" icon="Clock" color="var(--color-warning)" />
       <StatCard title="已红冲" :value="redFlushedCount" unit="张" icon="RefreshLeft" color="var(--color-danger)" />
@@ -129,7 +129,7 @@
 <script setup>
 defineOptions({ name: 'Invoice' })
 import ActionColumn from '@/components/ActionColumn.vue'
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Download, Refresh } from '@element-plus/icons-vue'
@@ -138,6 +138,8 @@ import StatCard from '@/components/StatCard.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
 import { issueInvoiceRow, redFlushInvoiceRow } from '@/mock/flow'
+import { useCollection } from '@/composables/useCollection'
+import { isProduction } from '@/mode'
 import { usePerm } from '@/permission'
 import { formatMoney, formatNum } from '@/utils'
 import dayjs from 'dayjs'
@@ -156,8 +158,13 @@ const filter = reactive({ keyword: '', status: '', type: '' })
 const page = ref(1)
 const pageSize = ref(10)
 
+/* ===== Phase 4 灰度：生产模式（薄客户端）——发票列表读后端 /api/coll/invoices ===== */
+const PROD = isProduction()
+const listCol = useCollection('invoices', () => ({ key: 'invoices:list' }))
+const rows = computed(() => PROD ? listCol.data.value : db.invoices)
+
 const filtered = computed(() =>
-  db.invoices.filter((i) => {
+  rows.value.filter((i) => {
     if (filter.status && i.status !== filter.status) return false
     if (filter.type && i.type !== filter.type) return false
     if (filter.keyword) {
@@ -181,12 +188,19 @@ function resetFilter() {
   page.value = 1
 }
 
-const issuedCount = computed(() => db.invoices.filter((i) => i.status === 'issued').length)
-const issuedAmount = computed(() => db.invoices.filter((i) => i.status === 'issued').reduce((s, i) => s + i.amount, 0))
+if (PROD) {
+  onMounted(() => { listCol.refresh() })
+  const onRefreshed = () => { listCol.refresh() }
+  window.addEventListener('blms:refreshed', onRefreshed)
+  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
+}
+
+const issuedCount = computed(() => rows.value.filter((i) => i.status === 'issued').length)
+const issuedAmount = computed(() => rows.value.filter((i) => i.status === 'issued').reduce((s, i) => s + i.amount, 0))
 /** M5：金额陈旧发票数（已开具但账单额已变化，需红冲重开） */
-const staleCount = computed(() => db.invoices.filter((i) => i.status === 'issued' && i.stale).length)
-const pendingCount = computed(() => db.invoices.filter((i) => i.status === 'pending').length)
-const redFlushedCount = computed(() => db.invoices.filter((i) => i.status === 'red-flushed').length)
+const staleCount = computed(() => rows.value.filter((i) => i.status === 'issued' && i.stale).length)
+const pendingCount = computed(() => rows.value.filter((i) => i.status === 'pending').length)
+const redFlushedCount = computed(() => rows.value.filter((i) => i.status === 'red-flushed').length)
 
 function goSettlement(row) {
   router.push(`/settlement/${row.settlementId}`)

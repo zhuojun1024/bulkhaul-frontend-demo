@@ -167,7 +167,7 @@
 <script setup>
 defineOptions({ name: 'Driver' })
 import ActionColumn from '@/components/ActionColumn.vue'
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Download, Refresh, Plus, Upload } from '@element-plus/icons-vue'
@@ -176,6 +176,8 @@ import StatusTag from '@/components/StatusTag.vue'
 import ImportDialog from '@/components/ImportDialog.vue'
 import { db } from '@/mock'
 import { toggleDriverStatus, saveDriver, importDrivers } from '@/mock/flow'
+import { useCollection } from '@/composables/useCollection'
+import { isProduction } from '@/mode'
 import { formatNum } from '@/utils'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
@@ -197,14 +199,19 @@ const filter = reactive({ keyword: '', licenseType: '', status: '', onlyExpiring
 const page = ref(1)
 const pageSize = ref(10)
 
+/* ===== Phase 4 灰度：生产模式（薄客户端）——司机列表读后端 /api/coll/drivers ===== */
+const PROD = isProduction()
+const listCol = useCollection('drivers', () => ({ key: 'drivers:list' }))
+const rows = computed(() => PROD ? listCol.data.value : db.drivers)
+
 const expiringSoon = computed(() =>
-  db.drivers.filter((d) => d.status !== 'disabled' && isExpiring(d.licenseExpire))
+  rows.value.filter((d) => d.status !== 'disabled' && isExpiring(d.licenseExpire))
 )
 
 const statItems = computed(() => {
-  const count = (s) => db.drivers.filter((d) => d.status === s).length
+  const count = (s) => rows.value.filter((d) => d.status === s).length
   return [
-    { key: '', label: '全部司机', count: db.drivers.length, color: tokens.primary },
+    { key: '', label: '全部司机', count: rows.value.length, color: tokens.primary },
     { key: 'onduty', label: '出勤中', count: count('onduty'), color: tokens.primary },
     { key: 'available', label: '可派单', count: count('available'), color: tokens.success },
     { key: 'rest', label: '休息中', count: count('rest'), color: tokens.info },
@@ -213,7 +220,7 @@ const statItems = computed(() => {
 })
 
 const filtered = computed(() =>
-  db.drivers.filter((d) => {
+  rows.value.filter((d) => {
     if (filter.status && d.status !== filter.status) return false
     if (filter.licenseType && d.licenseType !== filter.licenseType) return false
     if (filter.onlyExpiring && !isExpiring(d.licenseExpire)) return false
@@ -236,6 +243,13 @@ function resetFilter() {
   filter.status = ''
   filter.onlyExpiring = false
   page.value = 1
+}
+
+if (PROD) {
+  onMounted(() => { listCol.refresh() })
+  const onRefreshed = () => { listCol.refresh() }
+  window.addEventListener('blms:refreshed', onRefreshed)
+  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 }
 
 function goDetail(row) {

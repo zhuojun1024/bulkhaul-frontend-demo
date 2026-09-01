@@ -136,7 +136,7 @@
 <script setup>
 defineOptions({ name: 'Commodity' })
 import ActionColumn from '@/components/ActionColumn.vue'
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, Plus, Refresh, Upload } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
@@ -144,6 +144,8 @@ import StatusTag from '@/components/StatusTag.vue'
 import ImportDialog from '@/components/ImportDialog.vue'
 import { db } from '@/mock'
 import { importCommodities, saveCommodity, toggleCommodityStatus } from '@/mock/flow'
+import { useCollection } from '@/composables/useCollection'
+import { isProduction } from '@/mode'
 import { usePerm } from '@/permission'
 
 const { can } = usePerm()
@@ -153,12 +155,19 @@ const statusMap = {
   inactive: { label: '停用', type: 'info' }
 }
 
-const categories = computed(() => [...new Set(db.commodities.map((c) => c.category))])
+/* ===== Phase 4 灰度：生产模式（薄客户端）——商品列表读后端 /api/coll/commodities =====
+ * 演示模式（默认）保持本地内存引擎（db.commodities，现有断言不变）；
+ * 生产模式：数据源切后端权威（useCollection 全量取），过滤逻辑两模式一致。 */
+const PROD = isProduction()
+const listCol = useCollection('commodities', () => ({ key: 'commodities:list' }))
+const rows = computed(() => PROD ? listCol.data.value : db.commodities)
+
+const categories = computed(() => [...new Set(rows.value.map((c) => c.category))])
 
 const filter = reactive({ keyword: '', category: '' })
 
 const filtered = computed(() =>
-  db.commodities.filter((c) => {
+  rows.value.filter((c) => {
     if (filter.category && c.category !== filter.category) return false
     if (filter.keyword) {
       const kw = filter.keyword.toLowerCase()
@@ -171,6 +180,13 @@ const filtered = computed(() =>
 function resetFilter() {
   filter.keyword = ''
   filter.category = ''
+}
+
+if (PROD) {
+  onMounted(() => { listCol.refresh() })
+  const onRefreshed = () => { listCol.refresh() }
+  window.addEventListener('blms:refreshed', onRefreshed)
+  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 }
 
 function categoryType(category) {

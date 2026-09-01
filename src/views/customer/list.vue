@@ -122,7 +122,7 @@
 <script setup>
 defineOptions({ name: 'Customer' })
 import ActionColumn from '@/components/ActionColumn.vue'
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Download, Refresh, Upload } from '@element-plus/icons-vue'
@@ -131,6 +131,8 @@ import StatusTag from '@/components/StatusTag.vue'
 import ImportDialog from '@/components/ImportDialog.vue'
 import { db } from '@/mock'
 import { importCustomers, toggleCustomerStatus } from '@/mock/flow'
+import { useCollection } from '@/composables/useCollection'
+import { isProduction } from '@/mode'
 import { formatMoney } from '@/utils'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
@@ -151,12 +153,17 @@ const filter = reactive({ keyword: '', type: '', region: '', level: '' })
 const page = ref(1)
 const pageSize = ref(10)
 
-const regions = computed(() => [...new Set(db.customers.map((c) => c.region))])
+/* ===== Phase 4 灰度：生产模式（薄客户端）——客户列表读后端 /api/coll/customers ===== */
+const PROD = isProduction()
+const listCol = useCollection('customers', () => ({ key: 'customers:list' }))
+const rows = computed(() => PROD ? listCol.data.value : db.customers)
+
+const regions = computed(() => [...new Set(rows.value.map((c) => c.region))])
 
 const statItems = computed(() => {
-  const count = (l) => db.customers.filter((c) => c.level === l).length
+  const count = (l) => rows.value.filter((c) => c.level === l).length
   return [
-    { key: '', label: '全部客户', count: db.customers.length, color: tokens.primary },
+    { key: '', label: '全部客户', count: rows.value.length, color: tokens.primary },
     { key: 'A', label: 'A 级战略客户', count: count('A'), color: tokens.danger },
     { key: 'B', label: 'B 级重点客户', count: count('B'), color: tokens.warning },
     { key: 'C', label: 'C 级普通客户', count: count('C'), color: tokens.info }
@@ -164,7 +171,7 @@ const statItems = computed(() => {
 })
 
 const filtered = computed(() =>
-  db.customers.filter((c) => {
+  rows.value.filter((c) => {
     if (filter.type && c.type !== filter.type) return false
     if (filter.region && c.region !== filter.region) return false
     if (filter.level && c.level !== filter.level) return false
@@ -186,6 +193,13 @@ function resetFilter() {
   filter.region = ''
   filter.level = ''
   page.value = 1
+}
+
+if (PROD) {
+  onMounted(() => { listCol.refresh() })
+  const onRefreshed = () => { listCol.refresh() }
+  window.addEventListener('blms:refreshed', onRefreshed)
+  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 }
 
 function goDetail(row) {

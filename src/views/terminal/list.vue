@@ -8,7 +8,7 @@
     </PageHeader>
 
     <div class="stat-row">
-      <StatCard title="场站总数" :value="db.terminals.length" unit="个" icon="OfficeBuilding" color="var(--color-primary)" :sub="'运营中 ' + operatingCount + ' 个'" />
+      <StatCard title="场站总数" :value="terminals.length" unit="个" icon="OfficeBuilding" color="var(--color-primary)" :sub="'运营中 ' + operatingCount + ' 个'" />
       <StatCard title="今日总吞吐" :value="formatNum(totalThroughput)" unit="吨" icon="DataLine" color="var(--color-success)" :trend="8.6" trend-label="较昨日" />
       <StatCard title="排队车辆" :value="totalQueue" unit="辆" icon="Van" color="var(--color-warning)" :sub="'全部场站合计'" />
       <StatCard title="场站利用率" :value="utilization" unit="%" icon="PieChart" color="var(--color-info)" :trend="3.2" trend-label="较昨日" />
@@ -111,7 +111,7 @@
 
 <script setup>
 defineOptions({ name: 'Terminal' })
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { ScaleToOriginal, Location, Phone, Plus } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
@@ -119,6 +119,8 @@ import StatCard from '@/components/StatCard.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db } from '@/mock'
 import { saveTerminal } from '@/mock/flow'
+import { useCollection } from '@/composables/useCollection'
+import { isProduction } from '@/mode'
 import { formatNum } from '@/utils'
 import { useTokens } from '@/utils/tokens'
 import { usePerm } from '@/permission'
@@ -133,14 +135,24 @@ const statusMap = {
   maintenance: { label: '检修中', type: 'warning' }
 }
 
-const terminals = computed(() => db.terminals)
-const operatingCount = computed(() => db.terminals.filter((t) => t.status === 'operating').length)
-const totalThroughput = computed(() => db.terminals.reduce((s, t) => s + t.todayThroughput, 0))
-const totalQueue = computed(() => db.terminals.reduce((s, t) => s + t.queueVehicles, 0))
+/* ===== Phase 4 灰度：生产模式（薄客户端）——场站列表读后端 /api/coll/terminals ===== */
+const PROD = isProduction()
+const listCol = useCollection('terminals', () => ({ key: 'terminals:list' }))
+const terminals = computed(() => PROD ? listCol.data.value : db.terminals)
+const operatingCount = computed(() => terminals.value.filter((t) => t.status === 'operating').length)
+const totalThroughput = computed(() => terminals.value.reduce((s, t) => s + t.todayThroughput, 0))
+const totalQueue = computed(() => terminals.value.reduce((s, t) => s + t.queueVehicles, 0))
 const utilization = computed(() => {
-  const cap = db.terminals.reduce((s, t) => s + t.capacity, 0)
+  const cap = terminals.value.reduce((s, t) => s + t.capacity, 0)
   return Math.round((totalThroughput.value / cap) * 1000) / 10
 })
+
+if (PROD) {
+  onMounted(() => { listCol.refresh() })
+  const onRefreshed = () => { listCol.refresh() }
+  window.addEventListener('blms:refreshed', onRefreshed)
+  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
+}
 
 function progressColor(t) {
   const ratio = t.todayThroughput / t.capacity
@@ -163,7 +175,7 @@ const form = reactive({
   phone: '',
   remark: ''
 })
-const regionOptions = computed(() => [...new Set(db.terminals.map((t) => t.region))])
+const regionOptions = computed(() => [...new Set(terminals.value.map((t) => t.region))])
 
 function openDialog(t) {
   if (t) {

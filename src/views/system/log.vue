@@ -76,11 +76,13 @@
 
 <script setup>
 defineOptions({ name: 'SysLog' })
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, Download, Refresh } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { db } from '@/mock'
+import { useCollection } from '@/composables/useCollection'
+import { isProduction } from '@/mode'
 import dayjs from 'dayjs'
 
 
@@ -88,10 +90,15 @@ const filter = reactive({ keyword: '', module: '', result: '', dateRange: [] })
 const page = ref(1)
 const pageSize = ref(20)
 
-const modules = computed(() => [...new Set(db.logs.map((l) => l.module))])
+/* ===== Phase 4 灰度：生产模式（薄客户端）——操作日志读后端 /api/coll/logs（审计日志特例） ===== */
+const PROD = isProduction()
+const listCol = useCollection('logs', () => ({ key: 'logs:list' }))
+const rows = computed(() => PROD ? listCol.data.value : db.logs)
+
+const modules = computed(() => [...new Set(rows.value.map((l) => l.module))])
 
 const filtered = computed(() =>
-  db.logs.filter((l) => {
+  rows.value.filter((l) => {
     if (filter.module && l.module !== filter.module) return false
     if (filter.result && l.result !== filter.result) return false
     if (filter.keyword) {
@@ -116,6 +123,13 @@ function resetFilter() {
   filter.result = ''
   filter.dateRange = []
   page.value = 1
+}
+
+if (PROD) {
+  onMounted(() => { listCol.refresh() })
+  const onRefreshed = () => { listCol.refresh() }
+  window.addEventListener('blms:refreshed', onRefreshed)
+  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 }
 
 function exportCsv() {

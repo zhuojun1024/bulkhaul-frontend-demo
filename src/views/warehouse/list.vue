@@ -8,14 +8,14 @@
     </PageHeader>
 
     <div class="stat-row">
-      <StatCard title="仓库总数" :value="db.warehouses.length" unit="个" icon="House" color="var(--color-primary)" :sub="'运营中 ' + operatingCount + ' 个'" />
+      <StatCard title="仓库总数" :value="warehouses.length" unit="个" icon="House" color="var(--color-primary)" :sub="'运营中 ' + operatingCount + ' 个'" />
       <StatCard title="总容量" :value="formatNum(totalCapacity / 10000, 1)" unit="万吨" icon="Box" color="var(--color-success)" />
       <StatCard title="当前库存" :value="formatNum(totalUsed / 10000, 1)" unit="万吨" icon="DataLine" color="var(--color-warning)" :sub="'总库容利用率 ' + utilization + '%'" />
       <StatCard title="高水位仓库" :value="highLevelCount" unit="个" icon="Warning" color="var(--color-danger)" :sub="'利用率超过 85%'" />
     </div>
 
     <div class="warehouse-grid">
-      <div v-for="w in db.warehouses" :key="w.id" class="warehouse-card panel">
+      <div v-for="w in warehouses" :key="w.id" class="warehouse-card panel">
         <div class="warehouse-card__head">
           <div class="warehouse-card__icon" :class="'icon--' + w.type">
             <el-icon :size="22"><House /></el-icon>
@@ -97,7 +97,7 @@
 
 <script setup>
 defineOptions({ name: 'Warehouse' })
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { House, Tickets, Location, Plus } from '@element-plus/icons-vue'
@@ -106,6 +106,8 @@ import StatCard from '@/components/StatCard.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db } from '@/mock'
 import { saveWarehouse } from '@/mock/flow'
+import { useCollection } from '@/composables/useCollection'
+import { isProduction } from '@/mode'
 import { formatNum } from '@/utils'
 import { useTokens } from '@/utils/tokens'
 import { usePerm } from '@/permission'
@@ -121,11 +123,22 @@ const statusMap = {
   maintenance: { label: '检修中', type: 'warning' }
 }
 
-const operatingCount = computed(() => db.warehouses.filter((w) => w.status === 'operating').length)
-const totalCapacity = computed(() => db.warehouses.reduce((s, w) => s + w.capacity, 0))
-const totalUsed = computed(() => db.warehouses.reduce((s, w) => s + w.used, 0))
+/* ===== Phase 4 灰度：生产模式（薄客户端）——仓库列表读后端 /api/coll/warehouses ===== */
+const PROD = isProduction()
+const listCol = useCollection('warehouses', () => ({ key: 'warehouses:list' }))
+const warehouses = computed(() => PROD ? listCol.data.value : db.warehouses)
+const operatingCount = computed(() => warehouses.value.filter((w) => w.status === 'operating').length)
+const totalCapacity = computed(() => warehouses.value.reduce((s, w) => s + w.capacity, 0))
+const totalUsed = computed(() => warehouses.value.reduce((s, w) => s + w.used, 0))
 const utilization = computed(() => Math.round((totalUsed.value / totalCapacity.value) * 1000) / 10)
-const highLevelCount = computed(() => db.warehouses.filter((w) => levelPercent(w) > 85).length)
+const highLevelCount = computed(() => warehouses.value.filter((w) => levelPercent(w) > 85).length)
+
+if (PROD) {
+  onMounted(() => { listCol.refresh() })
+  const onRefreshed = () => { listCol.refresh() }
+  window.addEventListener('blms:refreshed', onRefreshed)
+  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
+}
 
 function levelPercent(w) {
   return Math.round((w.used / w.capacity) * 100)

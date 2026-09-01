@@ -152,7 +152,7 @@
 <script setup>
 defineOptions({ name: 'Plan' })
 import ActionColumn from '@/components/ActionColumn.vue'
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Plus, Download, Refresh } from '@element-plus/icons-vue'
@@ -160,6 +160,8 @@ import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
 import { BUSY_STATUSES, cancelPlan, createDispatches, creditCheck, isRoadMode, vehicleInspectionExpired, visiblePlans, dataScopeOf } from '@/mock/flow'
+import { useCollection } from '@/composables/useCollection'
+import { isProduction } from '@/mode'
 import { formatNum } from '@/utils'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
@@ -183,7 +185,10 @@ const page = ref(1)
 const pageSize = ref(10)
 
 // 环节8：数据权限（行级）——列表只展示当前操作人数据范围内的计划（装货侧区域）
-const scoped = computed(() => visiblePlans())
+// Phase 4 灰度：生产模式读后端 /api/coll/plans（后端已按当前操作人装货侧区域行级过滤，与 visiblePlans 同口径）
+const PROD = isProduction()
+const listCol = useCollection('plans', () => ({ key: 'plans:list' }))
+const scoped = computed(() => PROD ? listCol.data.value : visiblePlans())
 const scopeRegions = computed(() => dataScopeOf().regions)
 
 const statItems = computed(() => {
@@ -223,6 +228,13 @@ function resetFilter() {
   filter.commodityId = ''
   filter.dateRange = []
   page.value = 1
+}
+
+if (PROD) {
+  onMounted(() => { listCol.refresh() })
+  const onRefreshed = () => { listCol.refresh() }
+  window.addEventListener('blms:refreshed', onRefreshed)
+  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 }
 
 function goDetail(row) {

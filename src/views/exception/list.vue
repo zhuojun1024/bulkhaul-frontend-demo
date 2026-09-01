@@ -179,13 +179,15 @@
 <script setup>
 defineOptions({ name: 'Exception' })
 import ActionColumn from '@/components/ActionColumn.vue'
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Refresh } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db } from '@/mock'
 import { resumeDispatch, acceptException, finishException, closeException as flowCloseException } from '@/mock/flow'
+import { useCollection } from '@/composables/useCollection'
+import { isProduction } from '@/mode'
 import { formatNum } from '@/utils'
 import { useTokens } from '@/utils/tokens'
 import { usePerm } from '@/permission'
@@ -210,10 +212,15 @@ const filter = reactive({ keyword: '', type: '', level: '', status: '', dateRang
 const page = ref(1)
 const pageSize = ref(10)
 
+/* ===== Phase 4 灰度：生产模式（薄客户端）——异常列表读后端 /api/coll/exceptions ===== */
+const PROD = isProduction()
+const listCol = useCollection('exceptions', () => ({ key: 'exceptions:list' }))
+const rows = computed(() => PROD ? listCol.data.value : db.exceptions)
+
 const statItems = computed(() => {
-  const count = (s) => db.exceptions.filter((e) => e.status === s).length
+  const count = (s) => rows.value.filter((e) => e.status === s).length
   return [
-    { key: '', label: '全部异常', count: db.exceptions.length, color: tokens.primary },
+    { key: '', label: '全部异常', count: rows.value.length, color: tokens.primary },
     { key: 'pending', label: '待处理', count: count('pending'), color: tokens.warning },
     { key: 'handling', label: '处理中', count: count('handling'), color: tokens.primary },
     { key: 'closed', label: '已关闭', count: count('closed'), color: tokens.success }
@@ -221,7 +228,7 @@ const statItems = computed(() => {
 })
 
 const filtered = computed(() =>
-  db.exceptions.filter((e) => {
+  rows.value.filter((e) => {
     if (filter.status && e.status !== filter.status) return false
     if (filter.type && e.type !== filter.type) return false
     if (filter.level && e.level !== filter.level) return false
@@ -249,6 +256,13 @@ function resetFilter() {
   filter.status = ''
   filter.dateRange = []
   page.value = 1
+}
+
+if (PROD) {
+  onMounted(() => { listCol.refresh() })
+  const onRefreshed = () => { listCol.refresh() }
+  window.addEventListener('blms:refreshed', onRefreshed)
+  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 }
 
 /* ===== 抽屉 ===== */

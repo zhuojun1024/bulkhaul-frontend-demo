@@ -203,7 +203,7 @@
 <script setup>
 defineOptions({ name: 'Dispatch' })
 import ActionColumn from '@/components/ActionColumn.vue'
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Download, Refresh } from '@element-plus/icons-vue'
@@ -223,6 +223,8 @@ import {
   visibleDispatches,
   dataScopeOf
 } from '@/mock/flow'
+import { useCollection } from '@/composables/useCollection'
+import { isProduction } from '@/mode'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
 import { usePerm } from '@/permission'
@@ -247,7 +249,10 @@ const page = ref(1)
 const pageSize = ref(10)
 
 // 环节8：数据权限（行级）——列表只展示当前操作人数据范围内的调度单（装货侧区域）
-const scoped = computed(() => visibleDispatches())
+// Phase 4 灰度：生产模式读后端 /api/coll/dispatches（后端已按当前操作人装货侧区域行级过滤，与 visibleDispatches 同口径）
+const PROD = isProduction()
+const listCol = useCollection('dispatches', () => ({ key: 'dispatches:list' }))
+const scoped = computed(() => PROD ? listCol.data.value : visibleDispatches())
 const scopeRegions = computed(() => dataScopeOf().regions)
 
 const statItems = computed(() => {
@@ -285,6 +290,13 @@ const paged = computed(() => {
   const start = (page.value - 1) * pageSize.value
   return filtered.value.slice(start, start + pageSize.value)
 })
+
+if (PROD) {
+  onMounted(() => { listCol.refresh() })
+  const onRefreshed = () => { listCol.refresh() }
+  window.addEventListener('blms:refreshed', onRefreshed)
+  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
+}
 
 function resetFilter() {
   filter.keyword = ''
