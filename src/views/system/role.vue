@@ -5,7 +5,7 @@
     </PageHeader>
 
     <div class="role-grid">
-      <div v-for="r in db.roles" :key="r.id" class="role-card panel">
+      <div v-for="r in roles" :key="r.id" class="role-card panel">
         <div class="role-card__head">
           <div class="role-card__icon" :class="{ builtin: r.builtIn }">
             <el-icon :size="22"><Lock /></el-icon>
@@ -105,17 +105,30 @@
 
 <script setup>
 defineOptions({ name: 'SysRole' })
-import { ref, reactive } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Lock, User } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { db } from '@/mock'
 import { saveRole as flowSaveRole, removeRole as flowRemoveRole, updateRolePerms } from '@/mock/flow'
+import { useCollection } from '@/composables/useCollection'
+import { isProduction } from '@/mode'
 import { MENU_OPTIONS, ACTION_OPTIONS } from '@/permission'
 import { usePerm } from '@/permission'
 
 const { can } = usePerm()
 
+/* ===== Phase 4 灰度：生产模式（薄客户端）——角色列表读后端 /api/coll/roles（users/rolePerms 交叉引用保留本地） ===== */
+const PROD = isProduction()
+const rolesCol = useCollection('roles', () => ({ key: 'roles:list' }))
+const roles = computed(() => PROD ? rolesCol.data.value : db.roles)
+
+if (PROD) {
+  onMounted(() => { rolesCol.refresh() })
+  const onRefreshed = () => { rolesCol.refresh() }
+  window.addEventListener('blms:refreshed', onRefreshed)
+  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
+}
 
 /** 角色下实际用户数（按用户表实时统计，避免种子 userCount 过期） */
 function userCountOf(roleName) {
