@@ -181,6 +181,7 @@ import { db } from '@/mock'
 import { createContract, rateOf } from '@/mock/flow'
 import { useCollection } from '@/composables/useCollection'
 import { isProduction } from '@/mode'
+import { api } from '@/api'
 import { formatMoney } from '@/utils'
 import dayjs from 'dayjs'
 
@@ -262,13 +263,24 @@ if (PROD) {
   onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 }
 
-function submit(status) {
-  formRef.value.validate((valid) => {
+async function submit(status) {
+  formRef.value.validate(async (valid) => {
     if (!valid) {
       ElMessage.warning('请完善必填信息')
       return
     }
-    // 写操作下沉服务层（P2）：守卫 + 信用校验（提交审批时）+ 审批链生成 + 审计
+    // Phase 4 引擎移除：生产模式写操作 = 后端权威（POST /contract 落库：守卫 + 信用校验 + 审批链 + 审计）
+    if (PROD) {
+      const r = await api('POST', '/contract', { ...form, status })
+      if (!r.ok) {
+        ElMessageBox.alert(r.error, status === 'pending' ? '提交失败' : '创建失败', { type: 'warning', confirmButtonText: '知道了' })
+        return
+      }
+      ElMessage.success(status === 'draft' ? '草稿已保存' : `合同 ${r.data.id} 已提交审批（部门审批 → 公司审批）`)
+      router.push('/contract')
+      return
+    }
+    // 演示模式：写操作下沉服务层（P2）：守卫 + 信用校验（提交审批时）+ 审批链生成 + 审计
     const r = createContract({ ...form }, status)
     if (r && r.error) {
       ElMessageBox.alert(r.error, status === 'pending' ? '提交失败' : '创建失败', { type: 'warning', confirmButtonText: '知道了' })

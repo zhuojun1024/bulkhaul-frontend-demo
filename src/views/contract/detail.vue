@@ -392,7 +392,7 @@ import {
   terminateContract,
   archiveContract
 } from '@/mock/flow'
-import { api } from '@/api'
+import { api, refreshDb } from '@/api'
 import { isProduction } from '@/mode'
 import { formatMoney, formatNum } from '@/utils'
 import { usePerm } from '@/permission'
@@ -433,13 +433,32 @@ const canComplete = computed(() => {
 onMounted(loadDetail)
 watch(() => route.params.id, loadDetail)
 
+/* ===== Phase 4 引擎移除：生产模式写操作 = 后端权威（POST 落库）+ 快照重取 + 重取主记录 =====
+ * 不再依赖 flow.js 乐观改本地态；后端为完整状态机（返回 final/step/changed/pending/billNo 与 flow 同形）。
+ * 成功返回 r.data，失败 ElMessage.error 返回 null。refreshDb 联动计划/车次/结算集合，loadDetail 重取权威合同。 */
+async function prodWrite(path, body) {
+  const r = await api('POST', path, body)
+  if (!r.ok) {
+    ElMessage.error(r.error || '操作失败')
+    return null
+  }
+  await refreshDb()
+  await loadDetail()
+  return r.data
+}
+
 function complete() {
   ElMessageBox.confirm(
     `确认完结合同 ${contract.value.id}？完结后合同转为"已完成"（进度置 100%），可继续归档。`,
     '合同完结',
     { type: 'warning', confirmButtonText: '确认完结' }
   )
-    .then(() => {
+    .then(async () => {
+      if (PROD) {
+        const d = await prodWrite('/contract/' + contract.value.id + '/complete')
+        if (d) ElMessage.success('合同已完结')
+        return
+      }
       const r = completeContract(contract.value)
       if (r && r.error) {
         ElMessage.error(r.error)
@@ -512,7 +531,14 @@ function openApprove() {
   approveDialog.value = true
 }
 
-function doApprove() {
+async function doApprove() {
+  if (PROD) {
+    const d = await prodWrite('/contract/' + contract.value.id + '/approve', { comment: approveComment.value.trim() })
+    if (!d) return
+    approveDialog.value = false
+    ElMessage.success(d.final ? `合同 ${contract.value.id} 全级审批通过，已进入执行状态` : `合同 ${contract.value.id} ${d.step}通过，进入下一级审批`)
+    return
+  }
   const r = approveContract(contract.value, approveComment.value.trim())
   if (r && r.error) {
     ElMessage.error(r.error)
@@ -522,9 +548,16 @@ function doApprove() {
   ElMessage.success(r.final ? `合同 ${contract.value.id} 全级审批通过，已进入执行状态` : `合同 ${contract.value.id} ${r.step}通过，进入下一级审批`)
 }
 
-function doReject() {
+async function doReject() {
   if (!approveComment.value.trim()) {
     ElMessage.warning('驳回必须填写审批意见（原因）')
+    return
+  }
+  if (PROD) {
+    const d = await prodWrite('/contract/' + contract.value.id + '/reject', { reason: approveComment.value.trim() })
+    if (!d) return
+    approveDialog.value = false
+    ElMessage.success(`合同 ${contract.value.id} ${d.step}驳回，回到草稿（重新提交后重走审批链）`)
     return
   }
   const r = rejectContract(contract.value, approveComment.value.trim())
@@ -548,9 +581,27 @@ function openChange() {
   changeDialog.value = true
 }
 
-function doChange() {
+async function doChange() {
   if (!changeForm.reason.trim()) {
     ElMessage.warning('请填写变更原因')
+    return
+  }
+  if (PROD) {
+    const d = await prodWrite('/contract/' + contract.value.id + '/change', {
+      fields: { quantity: changeForm.quantity, unitPrice: changeForm.unitPrice, endDate: changeForm.endDate },
+      reason: changeForm.reason.trim()
+    })
+    if (!d) return
+    changeDialog.value = false
+    if (d.pending) {
+      ElMessage.success('改价已提交审批（部门审批 → 公司审批），全级通过后生效；仅影响未派车批次')
+      return
+    }
+    if (!d.changed) {
+      ElMessage.info('合同要素未发生变化')
+      return
+    }
+    ElMessage.success('合同变更成功，金额已重算')
     return
   }
   const r = changeContract(
@@ -596,7 +647,14 @@ function openChangeApprove() {
   changeApproveDialog.value = true
 }
 
-function doApproveChange() {
+async function doApproveChange() {
+  if (PROD) {
+    const d = await prodWrite('/contract/' + contract.value.id + '/approveChange', { comment: changeApproveComment.value.trim() })
+    if (!d) return
+    changeApproveDialog.value = false
+    ElMessage.success(d.final ? `合同 ${contract.value.id} 变更全级审批通过，已生效` : `合同 ${contract.value.id} 变更${d.step}通过，进入下一级审批`)
+    return
+  }
   const r = approveContractChange(contract.value, changeApproveComment.value.trim())
   if (r && r.error) {
     ElMessage.error(r.error)
@@ -606,9 +664,16 @@ function doApproveChange() {
   ElMessage.success(r.final ? `合同 ${contract.value.id} 变更全级审批通过，已生效` : `合同 ${contract.value.id} 变更${r.step}通过，进入下一级审批`)
 }
 
-function doRejectChange() {
+async function doRejectChange() {
   if (!changeApproveComment.value.trim()) {
     ElMessage.warning('驳回必须填写审批意见（原因）')
+    return
+  }
+  if (PROD) {
+    const d = await prodWrite('/contract/' + contract.value.id + '/rejectChange', { reason: changeApproveComment.value.trim() })
+    if (!d) return
+    changeApproveDialog.value = false
+    ElMessage.success(`合同 ${contract.value.id} 变更${d.step}驳回，变更申请已作废（单价维持不变）`)
     return
   }
   const r = rejectContractChange(contract.value, changeApproveComment.value.trim())
@@ -630,7 +695,7 @@ function openExtend() {
   extendDialog.value = true
 }
 
-function doExtend() {
+async function doExtend() {
   if (!extendForm.newDate) {
     ElMessage.warning('请选择延期截止日期')
     return
@@ -641,6 +706,13 @@ function doExtend() {
   }
   if (!extendForm.reason.trim()) {
     ElMessage.warning('请填写延期原因')
+    return
+  }
+  if (PROD) {
+    const d = await prodWrite('/contract/' + contract.value.id + '/extend', { newDate: extendForm.newDate, reason: extendForm.reason.trim() })
+    if (!d) return
+    extendDialog.value = false
+    ElMessage.success(`合同已延期至 ${extendForm.newDate}`)
     return
   }
   extendContract(contract.value, extendForm.newDate, extendForm.reason.trim())
@@ -658,9 +730,16 @@ function openTerminate() {
   terminateDialog.value = true
 }
 
-function doTerminate() {
+async function doTerminate() {
   if (!terminateForm.reason.trim()) {
     ElMessage.warning('请填写终止原因')
+    return
+  }
+  if (PROD) {
+    const d = await prodWrite('/contract/' + contract.value.id + '/terminate', { reason: terminateForm.reason.trim(), settleNow: terminateForm.settleNow })
+    if (!d) return
+    terminateDialog.value = false
+    ElMessage.success(d.billNo ? `合同已终止，已完成车次生成提前结算单 ${d.billNo}` : '合同已终止')
     return
   }
   const billNo = terminateContract(contract.value, terminateForm.reason.trim(), terminateForm.settleNow)
@@ -670,7 +749,12 @@ function doTerminate() {
 
 /* ===== 归档 ===== */
 function archive() {
-  ElMessageBox.confirm('确认归档该合同？归档后为只读存档。', '合同归档', { type: 'info' }).then(() => {
+  ElMessageBox.confirm('确认归档该合同？归档后为只读存档。', '合同归档', { type: 'info' }).then(async () => {
+    if (PROD) {
+      const d = await prodWrite('/contract/' + contract.value.id + '/archive')
+      if (d) ElMessage.success('合同已归档')
+      return
+    }
     archiveContract(contract.value)
     ElMessage.success('合同已归档')
   }).catch(() => {})
