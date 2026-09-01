@@ -94,19 +94,42 @@
 
 <script setup>
 defineOptions({ name: 'VehicleDetail' })
-import { computed } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
+import { api } from '@/api'
+import { useCollection } from '@/composables/useCollection'
+import { isProduction } from '@/mode'
 import { formatMoney, formatNum } from '@/utils'
 import dayjs from 'dayjs'
 
 const route = useRoute()
 
-const vehicle = computed(() => find.vehicle(route.params.id))
-const inspections = computed(() => db.inspections.filter((i) => i.vehicleId === vehicle.value?.id))
-const dispatches = computed(() => db.dispatches.filter((d) => d.vehicleId === vehicle.value?.id))
+/* ===== Phase 4 灰度：生产模式（薄客户端）——车辆详情读后端 /api/coll/vehicles/{id} + inspections + dispatches ===== */
+const PROD = isProduction()
+const vehicleRec = ref(null)
+const inspCol = useCollection('inspections', () => ({ key: 'inspections:vehicleDetail' }))
+const dispCol = useCollection('dispatches', () => ({ key: 'dispatches:vehicleDetail' }))
+async function loadDetail() {
+  if (!PROD) return
+  const r = await api('GET', '/coll/vehicles/' + route.params.id)
+  vehicleRec.value = r.ok ? r.data : null
+  inspCol.refresh()
+  dispCol.refresh()
+}
+const vehicle = computed(() => (PROD && vehicleRec.value ? vehicleRec.value : find.vehicle(route.params.id)))
+const inspections = computed(() => {
+  const all = PROD ? inspCol.data.value : db.inspections
+  return all.filter((i) => i.vehicleId === vehicle.value?.id)
+})
+const dispatches = computed(() => {
+  const all = PROD ? dispCol.data.value : db.dispatches
+  return all.filter((d) => d.vehicleId === vehicle.value?.id)
+})
+onMounted(loadDetail)
+watch(() => route.params.id, loadDetail)
 
 const statusMap = {
   inuse: { label: '运输中', type: 'primary' },
