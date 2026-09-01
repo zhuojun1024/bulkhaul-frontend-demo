@@ -8,22 +8,22 @@
       <el-tag v-if="scopeRegions.length" type="warning" effect="plain">数据范围：{{ scopeRegions.join('、') }}（装货侧）</el-tag>
       <el-popover title="电子围栏参数" :width="300" trigger="click">
         <template #reference>
-          <el-button size="small" :icon="Setting" :type="db.fenceConfig?.enabled ? 'primary' : 'info'" plain>
+          <el-button size="small" :icon="Setting" :type="fence?.enabled ? 'primary' : 'info'" plain>
             围栏参数
           </el-button>
         </template>
         <div class="fence-config">
           <div class="fence-config__row">
             <span>启用围栏事件</span>
-            <el-switch v-model="db.fenceConfig.enabled" />
+            <el-switch v-model="fence.enabled" />
           </div>
           <div class="fence-config__row">
             <span>偏离阈值（地图单位）</span>
-            <el-input-number v-model="db.fenceConfig.deviateLimit" :min="5" :max="50" :step="1" size="small" controls-position="right" style="width: 100px" />
+            <el-input-number v-model="fence.deviateLimit" :min="5" :max="50" :step="1" size="small" controls-position="right" style="width: 100px" />
           </div>
           <div class="fence-config__row">
             <span>超时阈值（分钟）</span>
-            <el-input-number v-model="db.fenceConfig.delayMinutes" :min="5" :max="240" :step="5" size="small" controls-position="right" style="width: 100px" />
+            <el-input-number v-model="fence.delayMinutes" :min="5" :max="240" :step="5" size="small" controls-position="right" style="width: 100px" />
           </div>
           <div class="fence-config__tip">在途车次轨迹偏离或超预计到达时间超过阈值时，自动写入异常单（每车次每类一次），到异常处理模块跟进。</div>
         </div>
@@ -269,7 +269,7 @@
 
 <script setup>
 defineOptions({ name: 'Track' })
-import { ref, reactive, computed, watch, onBeforeUnmount } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onUnmounted, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
 import { VideoPlay, VideoPause, Close, Warning, CircleCheck, AlarmClock, Aim, Setting } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
@@ -277,6 +277,9 @@ import StatCard from '@/components/StatCard.vue'
 import { db, find, MAP_NODES, ROUTES } from '@/mock'
 import { trackPointsOf, maxDeviationOf, hashOffset, visibleDispatches, dataScopeOf } from '@/mock/flow'
 import { onSchedulerEvent } from '@/mock/scheduler'
+import { useCollection } from '@/composables/useCollection'
+import { api } from '@/api'
+import { isProduction } from '@/mode'
 import { round } from '@/utils'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
@@ -287,8 +290,64 @@ const selectedId = ref(null)
 const listFilter = ref('')
 
 // 环节8：数据权限（行级）——在途监控只展示当前操作人数据范围内的车次（装货侧区域）
-const scopedDispatches = computed(() => visibleDispatches())
+/* ===== Phase 4 灰度：生产模式（薄客户端）——车次/异常读后端集合（CollReadController 已按装货侧区域数据权限过滤，与 visibleDispatches 同口径）；
+   围栏参数经本地 fenceForm 编辑 + 防抖 PUT /admin/fenceConfig 落库（待确认前抑制快照回写，避免 3s 定时刷新早于后端 commit 而回退乐观态） ===== */
+const PROD = isProduction()
+const dispatchesCol = useCollection('dispatches', () => ({ key: 'track:dispatches' }))
+const exceptionsCol = useCollection('exceptions', () => ({ key: 'track:exceptions' }))
+const allDispatches = computed(() => PROD ? dispatchesCol.data.value : db.dispatches)
+const scopedDispatches = computed(() => PROD ? dispatchesCol.data.value : visibleDispatches())
 const scopeRegions = computed(() => dataScopeOf().regions)
+
+/* 围栏参数（生产模式本地编辑态；演示模式直写 db.fenceConfig 保持原行为） */
+const fenceForm = reactive({ enabled: false, deviateLimit: 15, delayMinutes: 30 })
+let fencePending = null
+let fencePutTimer = null
+function initFenceForm() {
+  const c = db.fenceConfig || {}
+  fenceForm.enabled = !!c.enabled
+  fenceForm.deviateLimit = c.deviateLimit ?? 15
+  fenceForm.delayMinutes = c.delayMinutes ?? 30
+}
+watch(fenceForm, () => {
+  if (!PROD) return
+  fencePending = { ...fenceForm }
+  clearTimeout(fencePutTimer)
+  fencePutTimer = setTimeout(async () => {
+    const r = await api('PUT', '/admin/fenceConfig', { ...fenceForm })
+    if (r && !r.ok) console.warn('[track] 围栏参数保存失败：', r.error)
+  }, 500)
+}, { deep: true })
+function syncFenceFromSnapshot() {
+  // 快照已确认（与待确认值一致）→ 清除待确认；未确认（commit 未落库）→ 保留乐观态；无待确认 → 同步外部变更
+  const c = db.fenceConfig || {}
+  if (fencePending) {
+    if (c.enabled === fencePending.enabled && c.deviateLimit === fencePending.deviateLimit && c.delayMinutes === fencePending.delayMinutes) {
+      fencePending = null
+    }
+    return
+  }
+  fenceForm.enabled = !!c.enabled
+  fenceForm.deviateLimit = c.deviateLimit ?? 15
+  fenceForm.delayMinutes = c.delayMinutes ?? 30
+}
+/** 围栏参数统一读口（生产模式本地编辑态 / 演示模式 db.fenceConfig） */
+const fence = computed(() => (PROD ? fenceForm : db.fenceConfig))
+
+if (PROD) {
+  onMounted(() => {
+    dispatchesCol.refresh()
+    exceptionsCol.refresh()
+    initFenceForm()
+  })
+  const onRefreshed = () => {
+    dispatchesCol.refresh()
+    exceptionsCol.refresh()
+    syncFenceFromSnapshot()
+  }
+  window.addEventListener('blms:refreshed', onRefreshed)
+  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
+}
 
 /* ===== 线路与场站 ===== */
 const terminals = computed(() =>
@@ -381,18 +440,18 @@ const filteredVehicles = computed(() => {
 })
 
 const selected = computed(() => vehicleList.value.find((v) => v.id === selectedId.value) || null)
-const selectedDispatch = computed(() => db.dispatches.find((d) => d.id === selectedId.value) || null)
+const selectedDispatch = computed(() => allDispatches.value.find((d) => d.id === selectedId.value) || null)
 
 /* ===== 轨迹回放 + 电子围栏 ===== */
 /** 电子围栏半径（地图坐标单位，仅视觉）；偏离阈值取自 db.fenceConfig（可配置，围栏事件同源） */
 const FENCE_RADIUS = 36
-const deviateLimit = computed(() => db.fenceConfig?.deviateLimit ?? 15)
+const deviateLimit = computed(() => fence.value?.deviateLimit ?? 15)
 
 const play = reactive({ index: 0, playing: false, speed: 1 })
 let playTimer = null
 
 watch(selectedId, (id) => {
-  const d = db.dispatches.find((x) => x.id === id)
+  const d = allDispatches.value.find((x) => x.id === id)
   // 回放游标初始对齐当前实时进度
   play.index = d ? Math.round((d.progress / 100) * 20) : 0
   play.playing = false
@@ -465,7 +524,7 @@ const yesterdayDone = computed(() =>
 const doneTrend = computed(() =>
   yesterdayDone.value ? round(((todayDone.value - yesterdayDone.value) / yesterdayDone.value) * 100, 1) : null
 )
-const activeExceptions = computed(() => db.exceptions.filter((e) => e.status !== 'closed'))
+const activeExceptions = computed(() => (PROD ? exceptionsCol.data.value : db.exceptions).filter((e) => e.status !== 'closed'))
 
 /* ===== 数据刷新（P2 架构下沉：GPS 遥测/围栏事件/逾期校准由全局定时任务驱动，
  *  本页只读展示 + 订阅"后端推送"的围栏预警，不再直接修改业务数据） ===== */
