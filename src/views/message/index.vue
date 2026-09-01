@@ -103,19 +103,29 @@
 <script setup>
 defineOptions({ name: 'MessageCenter' })
 import ActionColumn from '@/components/ActionColumn.vue'
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Search, CircleCheck, MuteNotification } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { markMessageRead, markAllMessagesRead, visibleMessages, getDnd, setDnd, isMuted, unreadCount as flowUnreadCount } from '@/mock/flow'
+import { api } from '@/api'
+import { isProduction } from '@/mode'
 import { useTokens } from '@/utils/tokens'
 
 const tokens = useTokens()
 const router = useRouter()
 
+/* ===== Phase 4 灰度：生产模式（薄客户端）——可见消息读后端 /api/admin/messages（角色定向过滤，服务端同源） ===== */
+const PROD = isProduction()
+const msgData = ref([])
+async function loadMessages() {
+  if (!PROD) return
+  const r = await api('GET', '/admin/messages')
+  if (r.ok) msgData.value = r.data
+}
 /** 当前登录人可见消息（M4：按角色定向过滤；平台管理员可见全部） */
-const myMessages = computed(() => visibleMessages())
+const myMessages = computed(() => PROD ? msgData.value : visibleMessages())
 
 const typeMap = {
   approval: { label: '审批', tag: 'primary' },
@@ -131,7 +141,9 @@ const page = ref(1)
 const pageSize = ref(10)
 
 /** 未读：未读且未被免打扰（环节6：DND 消息不打扰，与顶栏角标同口径） */
-const unreadCount = computed(() => flowUnreadCount())
+const unreadCount = computed(() => PROD
+  ? msgData.value.filter((m) => !m.read && !isMuted(m)).length
+  : flowUnreadCount())
 
 const statItems = computed(() => [
   { key: '', label: '全部消息', count: myMessages.value.length, color: tokens.primary },
@@ -161,6 +173,14 @@ function markRead(row) {
 function markAll() {
   const n = markAllMessagesRead()
   ElMessage.success(`已将 ${n} 条消息标为已读`)
+  if (PROD) loadMessages()
+}
+
+if (PROD) {
+  onMounted(() => { loadMessages() })
+  const onRefreshed = () => { loadMessages() }
+  window.addEventListener('blms:refreshed', onRefreshed)
+  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 }
 
 /* ===== 环节6：免打扰设置（按登录账号保存，免打扰消息不计入未读角标） ===== */
