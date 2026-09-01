@@ -140,6 +140,7 @@ import { db, find } from '@/mock'
 import { issueInvoiceRow, redFlushInvoiceRow } from '@/mock/flow'
 import { useCollection } from '@/composables/useCollection'
 import { isProduction } from '@/mode'
+import { api } from '@/api'
 import { usePerm } from '@/permission'
 import { formatMoney, formatNum } from '@/utils'
 import dayjs from 'dayjs'
@@ -195,6 +196,18 @@ if (PROD) {
   onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 }
 
+/* ===== Phase 4 引擎移除：生产模式写操作 = 后端权威（POST 落库）+ 列表重取 =====
+ * 不再依赖 flow.js 乐观改本地态；后端为完整状态机（返回 invoiceNo 与 flow 同形）。 */
+async function prodWrite(path, body) {
+  const r = await api('POST', path, body)
+  if (!r.ok) {
+    ElMessage.error(r.error || '操作失败')
+    return null
+  }
+  await listCol.refresh()
+  return r.data
+}
+
 const issuedCount = computed(() => rows.value.filter((i) => i.status === 'issued').length)
 const issuedAmount = computed(() => rows.value.filter((i) => i.status === 'issued').reduce((s, i) => s + i.amount, 0))
 /** M5：金额陈旧发票数（已开具但账单额已变化，需红冲重开） */
@@ -206,8 +219,14 @@ function goSettlement(row) {
   router.push(`/settlement/${row.settlementId}`)
 }
 
-function issue(row) {
-  // 统一走 flow：状态守卫 + 审计日志；发票号按 结算单ID-发票ID 确定性派生
+async function issue(row) {
+  if (PROD) {
+    const d = await prodWrite('/settlement/' + row.settlementId + '/issueInvoice')
+    if (!d) return
+    ElMessage.success(`发票已开具：${d.invoiceNo || ''}`)
+    return
+  }
+  // 演示模式：统一走 flow：状态守卫 + 审计日志；发票号按 结算单ID-发票ID 确定性派生
   const r = issueInvoiceRow(row)
   if (r && r.error) {
     ElMessage.error(r.error)
@@ -220,7 +239,12 @@ function redFlush(row) {
   ElMessageBox.prompt('请输入红冲原因', `红冲发票 ${row.invoiceNo}`, {
     inputPattern: /.{2,}/,
     inputErrorMessage: '原因至少 2 个字符'
-  }).then(({ value }) => {
+  }).then(async ({ value }) => {
+    if (PROD) {
+      const d = await prodWrite('/settlement/invoice/' + row.id + '/redFlush', { reason: value })
+      if (d) ElMessage.warning('发票已红冲')
+      return
+    }
     const r = redFlushInvoiceRow(row, value)
     if (r && r.error) {
       ElMessage.error(r.error)

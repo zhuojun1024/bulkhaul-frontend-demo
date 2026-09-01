@@ -435,7 +435,7 @@ import { ArrowLeft, DocumentChecked, CircleCheck, Printer, Money, Refresh } from
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
 import { startReconcile as flowStartReconcile, confirmSettle, recordPayment, revertPayment, issueInvoice as flowIssueInvoice, recalcSettlement, supplementReceipt, prepaymentAvailable, applyPrepayment, dunning as flowDunning } from '@/mock/flow'
-import { api } from '@/api'
+import { api, refreshDb } from '@/api'
 import { isProduction } from '@/mode'
 import { usePerm } from '@/permission'
 import { formatMoney, formatNum } from '@/utils'
@@ -461,6 +461,20 @@ const invoice = computed(() => {
 })
 onMounted(loadDetail)
 watch(() => route.params.id, loadDetail)
+
+/* ===== Phase 4 引擎移除：生产模式写操作 = 后端权威（POST 落库）+ 快照重取 + 重取主记录 =====
+ * 不再依赖 flow.js 乐观改本地态；后端为完整状态机（返回 real/amount/round/diffCount/delta/invoiceNo/code 与 flow 同形）。
+ * 成功返回 r.data，失败 ElMessage.error 返回 null。refreshDb 联动收款/催收/发票集合，loadDetail 重取权威账单。 */
+async function prodWrite(path, body) {
+  const r = await api('POST', path, body)
+  if (!r.ok) {
+    ElMessage.error(r.error || '操作失败')
+    return null
+  }
+  await refreshDb()
+  await loadDetail()
+  return r.data
+}
 
 const statusMap = {
   pending: { label: '待对账', type: 'info' },
@@ -522,7 +536,14 @@ function openPayDialog() {
   payDialog.value = true
 }
 
-function confirmPay() {
+async function confirmPay() {
+  if (PROD) {
+    const d = await prodWrite('/settlement/' + settlement.value.id + '/recordPayment', { amount: payAmount.value, method: payMethod.value })
+    if (!d) return
+    payDialog.value = false
+    ElMessage.success(`已登记收款 ${formatMoney(d.real != null ? d.real : payAmount.value)}`)
+    return
+  }
   const real = recordPayment(settlement.value, payAmount.value, payMethod.value)
   payDialog.value = false
   ElMessage.success(`已登记收款 ${formatMoney(real)}`)
@@ -538,7 +559,14 @@ function openPrepayDialog() {
   prepayDialog.value = true
 }
 
-function confirmPrepay() {
+async function confirmPrepay() {
+  if (PROD) {
+    const d = await prodWrite('/settlement/' + settlement.value.id + '/applyPrepayment', { amount: prepayAmount.value })
+    if (!d) return
+    prepayDialog.value = false
+    ElMessage.success(`预付款抵扣 ${formatMoney(d.amount != null ? d.amount : prepayAmount.value)}，剩余未付 ${formatMoney(unpaid.value)}`)
+    return
+  }
   const r = applyPrepayment(settlement.value, prepayAmount.value)
   if (r && r.error) {
     ElMessage.error(r.error)
@@ -559,9 +587,16 @@ function openRevert(row) {
   revertDialog.value = true
 }
 
-function confirmRevert() {
+async function confirmRevert() {
   if (!revertReason.value.trim()) {
     ElMessage.warning('请填写冲正原因')
+    return
+  }
+  if (PROD) {
+    const d = await prodWrite('/settlement/' + settlement.value.id + '/revertPayment/' + revertTarget.value.id, { reason: revertReason.value.trim() })
+    if (!d) return
+    revertDialog.value = false
+    ElMessage.success(`已冲正 ${formatMoney(d.amount != null ? d.amount : 0)}，剩余未付 ${formatMoney(unpaid.value)}`)
     return
   }
   const r = revertPayment(settlement.value, revertTarget.value.id, revertReason.value)
@@ -592,7 +627,14 @@ function openDunning() {
   dunningDialog.value = true
 }
 
-function confirmDunning() {
+async function confirmDunning() {
+  if (PROD) {
+    const d = await prodWrite('/settlement/' + settlement.value.id + '/dunning', { level: dunningLevel.value })
+    if (!d) return
+    dunningDialog.value = false
+    ElMessage.success(`已发起第 ${d.round != null ? d.round : 1} 轮催收，已提醒客户`)
+    return
+  }
   const r = flowDunning(settlement.value, dunningLevel.value)
   if (r && r.error) {
     ElMessage.error(r.error)
@@ -633,9 +675,16 @@ function openSupplement(dispatchId) {
   supDialog.value = true
 }
 
-function submitSupplement() {
+async function submitSupplement() {
   if (!supForm.signer.trim()) {
     ElMessage.warning('请填写签收人')
+    return
+  }
+  if (PROD) {
+    const d = await prodWrite('/dispatch/' + supTarget.value + '/supplementReceipt', { signer: supForm.signer.trim(), reason: supForm.reason.trim() })
+    if (!d) return
+    supDialog.value = false
+    ElMessage.success(`补签成功：${d.code || ''}（签收人 ${supForm.signer.trim()}），对账结果已刷新`)
     return
   }
   const d = find.dispatch(supTarget.value)
@@ -653,7 +702,13 @@ function invoiceType(status) {
 }
 
 function startReconcile() {
-  ElMessageBox.confirm('确认发起对账？将执行调度量 vs 磅单净重 vs 结算量三方比对。', '发起对账', { type: 'info' }).then(() => {
+  ElMessageBox.confirm('确认发起对账？将执行调度量 vs 磅单净重 vs 结算量三方比对。', '发起对账', { type: 'info' }).then(async () => {
+    if (PROD) {
+      const d = await prodWrite('/settlement/' + settlement.value.id + '/startReconcile')
+      if (!d) return
+      ElMessage.success(d.diffCount ? `对账完成：${d.diffCount} 车次存在差异` : '对账完成：无差异')
+      return
+    }
     const r = flowStartReconcile(settlement.value)
     ElMessage.success(r.diffCount ? `对账完成：${r.diffCount} 车次存在差异` : '对账完成：无差异')
   }).catch(() => {})
@@ -664,7 +719,13 @@ function recalc() {
     '重算将按当前磅单净重与已关闭异常损失刷新结算金额（适用于生成账单后磅单补录、异常损失变化），差异记入调整记录。',
     '重算结算',
     { type: 'info', confirmButtonText: '确认重算' }
-  ).then(() => {
+  ).then(async () => {
+    if (PROD) {
+      const d = await prodWrite('/settlement/' + settlement.value.id + '/recalc')
+      if (!d) return
+      ElMessage.success(d.delta ? `重算完成：结算金额调整 ${d.delta > 0 ? '+' : ''}${formatMoney(d.delta)}` : '重算完成：金额无变化')
+      return
+    }
     const r = recalcSettlement(settlement.value)
     if (r && r.error) {
       ElMessage.error(r.error)
@@ -700,7 +761,12 @@ function settle() {
     `确认结算 ${s.billNo}？结算金额 ${formatMoney(s.totalAmount)}，账期 ${paymentDays.value || 30} 天，到期未付清将标记逾期。${lossWarn}${qualityWarn}${diffWarn}${receiptWarn}${confirmWarn}`,
     '确认结算',
     { dangerouslyUseHTMLString: true, type: 'success', confirmButtonText: '确认结算' }
-  ).then(() => {
+  ).then(async () => {
+    if (PROD) {
+      const d = await prodWrite('/settlement/' + s.id + '/confirmSettle')
+      if (d) ElMessage.success('结算完成，进入收款')
+      return
+    }
     const r = confirmSettle(s)
     if (r && r.error) {
       ElMessage.error(r.error)
@@ -710,7 +776,13 @@ function settle() {
   }).catch(() => {})
 }
 
-function issueInvoice() {
+async function issueInvoice() {
+  if (PROD) {
+    const d = await prodWrite('/settlement/' + settlement.value.id + '/issueInvoice')
+    if (!d) return
+    ElMessage.success(`发票已开具：${d.invoiceNo || ''}`)
+    return
+  }
   const r = flowIssueInvoice(settlement.value)
   if (r && r.error) {
     ElMessage.error(r.error)

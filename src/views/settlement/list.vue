@@ -376,6 +376,7 @@ import { db, find } from '@/mock'
 import { settlementCandidates, generateSettlements, startReconcile as flowStartReconcile, confirmSettle, recalcSettlement, autoMatchBank, matchBankRecord, addBankStatement, generatePayables, payPayable, payableStats as flowPayableStats } from '@/mock/flow'
 import { useCollection } from '@/composables/useCollection'
 import { isProduction } from '@/mode'
+import { api } from '@/api'
 import { usePerm } from '@/permission'
 import { formatMoney, formatNum } from '@/utils'
 import dayjs from 'dayjs'
@@ -423,8 +424,15 @@ function openMatch(row) {
   matchDialog.value = true
 }
 
-function doMatch() {
+async function doMatch() {
   const s = find.settlement(matchSettlementId.value)
+  if (PROD) {
+    const d = await prodWrite('/finance/bank/' + matchTarget.value.id + '/match', { settlementId: matchSettlementId.value })
+    if (!d) return
+    matchDialog.value = false
+    ElMessage.success(`核销完成：${formatMoney(d.real)} 已核销至账单 ${s?.billNo || ''}`)
+    return
+  }
   const r = matchBankRecord(matchTarget.value, s)
   if (r && r.error) {
     ElMessage.error(r.error)
@@ -439,7 +447,14 @@ function autoMatch() {
     '自动核销将匹配「对手方 + 金额与账单未付余额精确一致」的流水并登记收款，其余流水保留待人工处理。确定执行？',
     '自动核销',
     { type: 'info', confirmButtonText: '确认核销' }
-  ).then(() => {
+  ).then(async () => {
+    if (PROD) {
+      const d = await prodWrite('/finance/bank/autoMatch')
+      if (!d) return
+      const n = Array.isArray(d) ? d.length : (d.matched || 0)
+      ElMessage.success(n ? `自动核销完成：${n} 笔银行流水已核销` : '暂无满足自动核销条件的流水')
+      return
+    }
     const matched = autoMatchBank()
     ElMessage.success(matched.length ? `自动核销完成：${matched.length} 笔银行流水已核销` : '暂无满足自动核销条件的流水')
   }).catch(() => {})
@@ -454,9 +469,16 @@ function openBankEntry() {
   bankEntryDialog.value = true
 }
 
-function doBankEntry() {
+async function doBankEntry() {
   if (!bankEntryForm.counterparty) {
     ElMessage.warning('请选择或输入对手方')
+    return
+  }
+  if (PROD) {
+    const d = await prodWrite('/finance/bank/statement', { ...bankEntryForm })
+    if (!d) return
+    bankEntryDialog.value = false
+    ElMessage.success(`银行流水 ${d.id} 已录入，进入待核销`)
     return
   }
   const r = addBankStatement({ ...bankEntryForm })
@@ -482,7 +504,14 @@ function openPay(row) {
   payDialog.value = true
 }
 
-function doPay() {
+async function doPay() {
+  if (PROD) {
+    const d = await prodWrite('/finance/payables/' + payTarget.value.id + '/pay', { method: payMethod.value })
+    if (!d) return
+    payDialog.value = false
+    ElMessage.success(`付款完成：${formatMoney(d.amount)} 已核销`)
+    return
+  }
   const r = payPayable(payTarget.value, payMethod.value)
   if (r && r.error) {
     ElMessage.error(r.error)
@@ -493,7 +522,13 @@ function doPay() {
 }
 
 function genPayables() {
-  ElMessageBox.confirm('为所有已完成且尚无应付的公路车次批量生成趟次应付？', '生成趟次应付', { type: 'info', confirmButtonText: '生成' }).then(() => {
+  ElMessageBox.confirm('为所有已完成且尚无应付的公路车次批量生成趟次应付？', '生成趟次应付', { type: 'info', confirmButtonText: '生成' }).then(async () => {
+    if (PROD) {
+      const d = await prodWrite('/finance/payables/generate')
+      if (!d) return
+      ElMessage.success(d.created ? `已生成 ${d.created} 笔趟次应付` : '暂无需生成的趟次应付')
+      return
+    }
     const r = generatePayables()
     if (r && r.error) {
       ElMessage.error(r.error)
@@ -557,6 +592,19 @@ if (PROD) {
   onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 }
 
+/* ===== Phase 4 引擎移除：生产模式写操作 = 后端权威（POST 落库）+ 三集合重取 =====
+ * 不再依赖 flow.js 乐观改本地态；后端为完整状态机（返回 diffCount/delta/created/real/amount/id 与 flow 同形）。
+ * 成功返回 r.data，失败 ElMessage.error 返回 null。结算/银行流水/应付三联动集合全部重取。 */
+async function prodWrite(path, body) {
+  const r = await api('POST', path, body)
+  if (!r.ok) {
+    ElMessage.error(r.error || '操作失败')
+    return null
+  }
+  await Promise.all([settleCol.refresh(), bankCol.refresh(), payableCol.refresh()])
+  return r.data
+}
+
 function goDetail(row) {
   router.push(`/settlement/${row.id}`)
 }
@@ -566,7 +614,13 @@ function invoiceType(status) {
 }
 
 function startReconcile(row) {
-  ElMessageBox.confirm(`开始对账 ${row.billNo}？将执行调度量 vs 磅单净重 vs 结算量三方比对。`, '发起对账', { type: 'info' }).then(() => {
+  ElMessageBox.confirm(`开始对账 ${row.billNo}？将执行调度量 vs 磅单净重 vs 结算量三方比对。`, '发起对账', { type: 'info' }).then(async () => {
+    if (PROD) {
+      const d = await prodWrite('/settlement/' + row.id + '/startReconcile')
+      if (!d) return
+      ElMessage.success(d.diffCount ? `对账完成：${d.diffCount} 车次存在差异` : '对账完成：无差异')
+      return
+    }
     const r = flowStartReconcile(row)
     ElMessage.success(r.diffCount ? `对账完成：${r.diffCount} 车次存在差异` : '对账完成：无差异')
   }).catch(() => {})
@@ -578,7 +632,13 @@ function recalc(row) {
     `重算 ${row.billNo}？将按当前磅单净重与已关闭异常损失刷新结算金额（适用于生成账单后磅单补录、异常损失变化）。`,
     '重算结算',
     { type: 'info', confirmButtonText: '确认重算' }
-  ).then(() => {
+  ).then(async () => {
+    if (PROD) {
+      const d = await prodWrite('/settlement/' + row.id + '/recalc')
+      if (!d) return
+      ElMessage.success(d.delta ? `重算完成：结算金额调整 ${d.delta > 0 ? '+' : ''}${formatMoney(d.delta)}` : '重算完成：金额无变化')
+      return
+    }
     const r = recalcSettlement(row)
     if (r && r.error) {
       ElMessage.error(r.error)
@@ -609,7 +669,12 @@ function settle(row) {
     `确认结算 ${row.billNo}？<br/>结算金额 ${formatMoney(row.totalAmount)}，结算后进入收款。${lossWarn}${diffWarn}${receiptWarn}${confirmWarn}`,
     '确认结算',
     { dangerouslyUseHTMLString: true, type: 'success', confirmButtonText: '确认结算' }
-  ).then(() => {
+  ).then(async () => {
+    if (PROD) {
+      const d = await prodWrite('/settlement/' + row.id + '/confirmSettle')
+      if (d) ElMessage.success('结算完成，进入收款')
+      return
+    }
     const r = confirmSettle(row)
     if (r && r.error) {
       ElMessage.error(r.error)
@@ -642,7 +707,15 @@ function onGenSelect(rows) {
   selectedGroups.value = rows
 }
 
-function confirmGenerate() {
+async function confirmGenerate() {
+  if (PROD) {
+    const d = await prodWrite('/settlement/generate', { keys: selectedGroups.value.map((g) => g.key) })
+    if (!d) return
+    const n = Array.isArray(d.created) ? d.created.length : (d.created || 0)
+    genDialog.value = false
+    ElMessage.success(`已生成 ${n} 张结算单，可发起对账`)
+    return
+  }
   const created = generateSettlements(selectedGroups.value.map((g) => g.key))
   genDialog.value = false
   ElMessage.success(`已生成 ${created.length} 张结算单，可发起对账`)
