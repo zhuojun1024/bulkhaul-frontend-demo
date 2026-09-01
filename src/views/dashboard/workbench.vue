@@ -145,7 +145,6 @@ import ChartCard from '@/components/ChartCard.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find, dashboard, workbenchTodos, workbenchStats, workbenchTodoList, weatherOf } from '@/mock'
 import { api } from '@/api'
-import { isProduction } from '@/mode'
 import { useUserStore } from '@/store'
 import { formatMoney, formatNum, round } from '@/utils'
 import dayjs from 'dayjs'
@@ -172,21 +171,19 @@ const weatherIcon = computed(() => (['小雨', '雷阵雨'].includes(weather.val
 
 /* ===== 指标（聚合下沉服务层 P2：workbenchStats 一次返回本期+基期） ===== */
 /* ===== Phase 4 阶段 5：生产模式读后端聚合端点（薄客户端） =====
- * 工作台指标/待办生产模式走 /api/workbench/stats + /api/workbench/todos（后端权威）；
- * 演示模式（默认）保持 workbenchStats()/workbenchTodoList() 本地 db 汇总（现有断言不变）。
- * 天气/问候为按日期确定性派生的演示数据源，两模式均取本地（非业务态）。 */
-const PROD = isProduction()
+ * 工作台指标/待办走 /api/workbench/stats + /api/workbench/todos（后端权威）；
+ * 后端不可用时回退 workbenchStats()/workbenchTodoList() 本地 db 汇总。
+ * 天气/问候为按日期确定性派生的演示数据源，取本地（非业务态）。 */
 const apiStats = ref(null)
 const apiTodos = ref(null)
 async function loadWorkbench() {
-  if (!PROD) return
   const [s, t] = await Promise.all([api('GET', '/workbench/stats'), api('GET', '/workbench/todos')])
   if (s.ok && s.data) apiStats.value = s.data
   if (t.ok && t.data) apiTodos.value = t.data
 }
 onMounted(loadWorkbench)
 
-const stats = computed(() => (PROD && apiStats.value ? apiStats.value : workbenchStats()))
+const stats = computed(() => (apiStats.value ? apiStats.value : workbenchStats()))
 const todayDispatches = computed(() => stats.value.todayDispatches)
 const todayLoad = computed(() => stats.value.todayLoad)
 const todayUnload = computed(() => stats.value.todayUnload)
@@ -208,7 +205,7 @@ const TODO_META = {
   overdue: { icon: 'AlarmClock', color: tokens.danger, bg: 'rgba(245,63,63,0.1)' }
 }
 const todoList = computed(() =>
-  (PROD && apiTodos.value ? apiTodos.value : workbenchTodoList()).map((t) => ({
+  (apiTodos.value ? apiTodos.value : workbenchTodoList()).map((t) => ({
     id: `todo-${t.key}`,
     title: t.title,
     desc: t.desc,

@@ -256,20 +256,7 @@ import { ArrowLeft, Box, CircleCheck, Warning, Printer, Position, RefreshRight, 
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
 import { api, refreshDb } from '@/api'
-import { isProduction } from '@/mode'
-import {
-  confirmLoad as flowConfirmLoad,
-  depart as flowDepart,
-  arrive as flowArrive,
-  confirmUnload as flowConfirmUnload,
-  reportException as flowReportException,
-  resumeDispatch,
-  supplementReceipt,
-  isRoadMode,
-  loadCodeOf,
-  unloadCodeOf,
-  qualityDeductionQty
-} from '@/mock/flow'
+import { isRoadMode, loadCodeOf, unloadCodeOf, qualityDeductionQty } from '@/mock/flow'
 import { formatMoney } from '@/utils'
 import dayjs from 'dayjs'
 import { usePerm } from '@/permission'
@@ -285,20 +272,18 @@ const { can } = usePerm()
  *   afterWrite 落库）；磅单读 db.weighings（flow 乐观 push + refreshDb 同步，与端点同源）。
  *   不监听 blms:refreshed 重取，避免 200ms 防抖刷新早于 PUT 落库而回写种子态覆盖乐观态
  *   （与阶段 3 同口径，导航时重取权威态）。 */
-const PROD = isProduction()
 const detail = ref(null)
 async function loadDetail() {
-  if (!PROD) return
   const r = await api('GET', '/dispatch/' + route.params.id + '/detail')
   if (r.ok && r.data) detail.value = r.data
 }
 
-const dispatch = computed(() => (PROD && detail.value ? detail.value.dispatch : find.dispatch(route.params.id)))
-const commodity = computed(() => (PROD && detail.value ? detail.value.commodity : find.commodity(dispatch.value?.commodityId)))
-const vehicle = computed(() => (PROD && detail.value ? detail.value.vehicle : find.vehicle(dispatch.value?.vehicleId)))
-const driver = computed(() => (PROD && detail.value ? detail.value.driver : find.driver(dispatch.value?.driverId)))
-const loadTerminal = computed(() => (PROD && detail.value ? detail.value.loadTerminal : find.terminal(dispatch.value?.loadTerminalId)))
-const unloadTerminal = computed(() => (PROD && detail.value ? detail.value.unloadTerminal : find.terminal(dispatch.value?.unloadTerminalId)))
+const dispatch = computed(() => (detail.value ? detail.value.dispatch : find.dispatch(route.params.id)))
+const commodity = computed(() => (detail.value ? detail.value.commodity : find.commodity(dispatch.value?.commodityId)))
+const vehicle = computed(() => (detail.value ? detail.value.vehicle : find.vehicle(dispatch.value?.vehicleId)))
+const driver = computed(() => (detail.value ? detail.value.driver : find.driver(dispatch.value?.driverId)))
+const loadTerminal = computed(() => (detail.value ? detail.value.loadTerminal : find.terminal(dispatch.value?.loadTerminalId)))
+const unloadTerminal = computed(() => (detail.value ? detail.value.unloadTerminal : find.terminal(dispatch.value?.unloadTerminalId)))
 const weighings = computed(() => db.weighings.filter((w) => w.dispatchId === dispatch.value?.id))
 
 /** 公路口径（公路/多式联运）才有车辆司机与公路磅单 */
@@ -356,15 +341,6 @@ const timeline = computed(() => {
   return steps
 })
 
-/** 状态机守卫拦截提示（flow 返回 { error } 时） */
-function guardError(r) {
-  if (r && r.error) {
-    ElMessage.error(r.error)
-    return true
-  }
-  return false
-}
-
 /* ===== Phase 4 引擎移除：生产模式写操作 = 后端权威（POST 落库）+ 重取权威详情 =====
  * 不再依赖 flow.js 乐观改本地态（内存引擎移除后写路径纯后端）；演示模式保留 flow 乐观态。
  * 后端为完整状态机（doConfirmLoad 等价前端，联动磅单/计划/结算），重取后 UI 与后端同源。 */
@@ -383,41 +359,31 @@ async function prodWrite(path, successMsg, body) {
 
 function confirmLoad() {
   ElMessageBox.confirm('确认已完成装货并登记进磅单？', '确认装货', { type: 'info' }).then(async () => {
-    if (PROD) { await prodWrite('/dispatch/' + dispatch.value.id + '/confirmLoad', '装货确认成功'); return }
-    if (guardError(flowConfirmLoad(dispatch.value))) return
-    ElMessage.success('装货确认成功')
+    await prodWrite('/dispatch/' + dispatch.value.id + '/confirmLoad', '装货确认成功')
   }).catch(() => {})
 }
 
 function depart() {
   ElMessageBox.confirm(`确认 ${unitText.value} 发车开始运输？`, '发车确认', { type: 'info' }).then(async () => {
-    if (PROD) { await prodWrite('/dispatch/' + dispatch.value.id + '/depart', '已发车，进入在途状态'); return }
-    if (guardError(flowDepart(dispatch.value))) return
-    ElMessage.success('已发车，进入在途状态')
+    await prodWrite('/dispatch/' + dispatch.value.id + '/depart', '已发车，进入在途状态')
   }).catch(() => {})
 }
 
 function arrive() {
   ElMessageBox.confirm(`确认 ${unitText.value} 已到达卸货场站，开始卸货？`, '到达确认', { type: 'info' }).then(async () => {
-    if (PROD) { await prodWrite('/dispatch/' + dispatch.value.id + '/arrive', '已到达，进入卸货状态'); return }
-    if (guardError(flowArrive(dispatch.value))) return
-    ElMessage.success('已到达，进入卸货状态')
+    await prodWrite('/dispatch/' + dispatch.value.id + '/arrive', '已到达，进入卸货状态')
   }).catch(() => {})
 }
 
 function confirmUnload() {
   ElMessageBox.confirm('确认已完成卸货？', '确认卸货', { type: 'success' }).then(async () => {
-    if (PROD) { await prodWrite('/dispatch/' + dispatch.value.id + '/confirmUnload', '卸货确认成功，本次运输完成'); return }
-    if (guardError(flowConfirmUnload(dispatch.value))) return
-    ElMessage.success('卸货确认成功，本次运输完成')
+    await prodWrite('/dispatch/' + dispatch.value.id + '/confirmUnload', '卸货确认成功，本次运输完成')
   }).catch(() => {})
 }
 
 function resume() {
   ElMessageBox.confirm(`确认调度单 ${dispatch.value.id} 恢复运输？`, '恢复运输', { type: 'warning' }).then(async () => {
-    if (PROD) { await prodWrite('/dispatch/' + dispatch.value.id + '/resume', '已恢复运输'); return }
-    if (guardError(resumeDispatch(dispatch.value))) return
-    ElMessage.success('已恢复运输')
+    await prodWrite('/dispatch/' + dispatch.value.id + '/resume', '已恢复运输')
   }).catch(() => {})
 }
 
@@ -443,18 +409,8 @@ async function submitException() {
     ElMessage.warning('描述至少 2 个字符')
     return
   }
-  if (PROD) {
-    const ok = await prodWrite('/dispatch/' + dispatch.value.id + '/reportException', '异常已上报，请前往异常处理模块跟进', { description: excForm.description.trim(), type: excForm.type, level: excForm.level })
-    if (ok) excDialog.value = false
-    return
-  }
-  const r = flowReportException(dispatch.value, excForm.description.trim(), excForm.type, excForm.level)
-  if (r && r.error) {
-    ElMessage.error(r.error)
-    return
-  }
-  excDialog.value = false
-  ElMessage.warning('异常已上报，请前往异常处理模块跟进')
+  const ok = await prodWrite('/dispatch/' + dispatch.value.id + '/reportException', '异常已上报，请前往异常处理模块跟进', { description: excForm.description.trim(), type: excForm.type, level: excForm.level })
+  if (ok) excDialog.value = false
 }
 
 /* ===== 补签（环节1：已完成公路车次缺失签收凭证，与收货方核实后补开） ===== */
@@ -472,21 +428,11 @@ async function submitSupplement() {
     ElMessage.warning('请填写签收人')
     return
   }
-  if (PROD) {
-    const r = await api('POST', '/dispatch/' + dispatch.value.id + '/supplementReceipt', { signer: supForm.signer.trim(), reason: supForm.reason.trim() })
-    if (!r.ok || (r.data && r.data.error)) { ElMessage.error((r.data && r.data.error) || r.error || '补签失败'); return }
-    await loadDetail()
-    supDialog.value = false
-    ElMessage.success(`补签成功：${(r.data && r.data.receipt && r.data.receipt.code) || ''}（签收人 ${supForm.signer.trim()}）`)
-    return
-  }
-  const r = supplementReceipt(dispatch.value, supForm.signer.trim(), supForm.reason.trim())
-  if (r && r.error) {
-    ElMessage.error(r.error)
-    return
-  }
+  const r = await api('POST', '/dispatch/' + dispatch.value.id + '/supplementReceipt', { signer: supForm.signer.trim(), reason: supForm.reason.trim() })
+  if (!r.ok || (r.data && r.data.error)) { ElMessage.error((r.data && r.data.error) || r.error || '补签失败'); return }
+  await loadDetail()
   supDialog.value = false
-  ElMessage.success(`补签成功：${r.code}（签收人 ${r.signer}）`)
+  ElMessage.success(`补签成功：${(r.data && r.data.receipt && r.data.receipt.code) || ''}（签收人 ${supForm.signer.trim()}）`)
 }
 
 function printDispatch() {

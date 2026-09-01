@@ -210,22 +210,9 @@ import { Search, Download, Refresh } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
-import {
-  confirmLoad as flowConfirmLoad,
-  depart as flowDepart,
-  arrive as flowArrive,
-  confirmUnload as flowConfirmUnload,
-  reportException as flowReportException,
-  resumeDispatch,
-  cancelDispatch as flowCancelDispatch,
-  reassignDispatch as flowReassignDispatch,
-  isRoadMode,
-  visibleDispatches,
-  dataScopeOf
-} from '@/mock/flow'
+import { isRoadMode, dataScopeOf } from '@/mock/flow'
 import { useCollection } from '@/composables/useCollection'
 import { api } from '@/api'
-import { isProduction } from '@/mode'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
 import { usePerm } from '@/permission'
@@ -250,10 +237,9 @@ const page = ref(1)
 const pageSize = ref(10)
 
 // 环节8：数据权限（行级）——列表只展示当前操作人数据范围内的调度单（装货侧区域）
-// Phase 4 灰度：生产模式读后端 /api/coll/dispatches（后端已按当前操作人装货侧区域行级过滤，与 visibleDispatches 同口径）
-const PROD = isProduction()
+// 薄客户端：读后端 /api/coll/dispatches（后端已按当前操作人装货侧区域行级过滤）
 const listCol = useCollection('dispatches', () => ({ key: 'dispatches:list' }))
-const scoped = computed(() => PROD ? listCol.data.value : visibleDispatches())
+const scoped = computed(() => listCol.data.value)
 const scopeRegions = computed(() => dataScopeOf().regions)
 
 const statItems = computed(() => {
@@ -292,12 +278,10 @@ const paged = computed(() => {
   return filtered.value.slice(start, start + pageSize.value)
 })
 
-if (PROD) {
-  onMounted(() => { listCol.refresh() })
-  const onRefreshed = () => { listCol.refresh() }
-  window.addEventListener('blms:refreshed', onRefreshed)
-  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
-}
+onMounted(() => { listCol.refresh() })
+const onRefreshed = () => { listCol.refresh() }
+window.addEventListener('blms:refreshed', onRefreshed)
+onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 
 function resetFilter() {
   filter.keyword = ''
@@ -317,15 +301,6 @@ function progressColor(status) {
 
 /** 执行主体展示：公路口径取车牌，非公路口径取运输单元号 */
 const unitLabel = (d) => find.vehicle(d.vehicleId)?.plate || d.unitNo || d.id
-
-/** 状态机守卫拦截提示（flow 返回 { error } 时） */
-function guardError(r) {
-  if (r && r.error) {
-    ElMessage.error(r.error)
-    return true
-  }
-  return false
-}
 
 /* ===== Phase 4 引擎移除：生产模式写操作 = 后端权威（POST 落库）+ 重取列表 =====
  * 不再依赖 flow.js 乐观改本地态；列表已监听 blms:refreshed 重取，此处显式 refresh 保证即时。 */
@@ -349,9 +324,7 @@ function confirmLoad(row) {
     '确认装货',
     { dangerouslyUseHTMLString: road, type: 'info', confirmButtonText: '确认装货' }
   ).then(async () => {
-    if (PROD) { await prodWrite('/dispatch/' + row.id + '/confirmLoad', road ? '装货确认成功，进磅单已登记' : '装货确认成功'); return }
-    if (guardError(flowConfirmLoad(row))) return
-    ElMessage.success(road ? '装货确认成功，进磅单已登记' : '装货确认成功')
+    await prodWrite('/dispatch/' + row.id + '/confirmLoad', road ? '装货确认成功，进磅单已登记' : '装货确认成功')
   }).catch(() => {})
 }
 
@@ -361,9 +334,7 @@ function depart(row) {
     '发车确认',
     { type: 'info', confirmButtonText: '确认发车' }
   ).then(async () => {
-    if (PROD) { await prodWrite('/dispatch/' + row.id + '/depart', '已发车，进入在途状态'); return }
-    if (guardError(flowDepart(row))) return
-    ElMessage.success('已发车，进入在途状态')
+    await prodWrite('/dispatch/' + row.id + '/depart', '已发车，进入在途状态')
   }).catch(() => {})
 }
 
@@ -373,9 +344,7 @@ function arrive(row) {
     '到达确认',
     { type: 'info', confirmButtonText: '确认到达' }
   ).then(async () => {
-    if (PROD) { await prodWrite('/dispatch/' + row.id + '/arrive', '已到达，进入卸货状态'); return }
-    if (guardError(flowArrive(row))) return
-    ElMessage.success('已到达，进入卸货状态')
+    await prodWrite('/dispatch/' + row.id + '/arrive', '已到达，进入卸货状态')
   }).catch(() => {})
 }
 
@@ -388,9 +357,7 @@ function confirmUnload(row) {
     '确认卸货',
     { dangerouslyUseHTMLString: road, type: 'success', confirmButtonText: '确认卸货' }
   ).then(async () => {
-    if (PROD) { await prodWrite('/dispatch/' + row.id + '/confirmUnload', '卸货确认成功，本次运输已完成'); return }
-    if (guardError(flowConfirmUnload(row))) return
-    ElMessage.success('卸货确认成功，本次运输已完成')
+    await prodWrite('/dispatch/' + row.id + '/confirmUnload', '卸货确认成功，本次运输已完成')
   }).catch(() => {})
 }
 
@@ -402,9 +369,7 @@ function cancel(row) {
     inputPlaceholder: '取消原因',
     inputValidator: (v) => (v && v.trim() ? true : '请填写取消原因')
   }).then(async ({ value }) => {
-    if (PROD) { await prodWrite('/dispatch/' + row.id + '/cancel', '调度单已取消', { reason: value }); return }
-    if (guardError(flowCancelDispatch(row, value))) return
-    ElMessage.success('调度单已取消')
+    await prodWrite('/dispatch/' + row.id + '/cancel', '调度单已取消', { reason: value })
   }).catch(() => {})
 }
 
@@ -438,14 +403,8 @@ async function submitReassign() {
     ElMessage.warning('请选择目标车辆与司机')
     return
   }
-  if (PROD) {
-    const ok = await prodWrite('/dispatch/' + reassignTarget.value.id + '/reassign', '改派成功，需司机重新接单', { vehicleId: reassignVehicle.value, driverId: reassignDriver.value })
-    if (ok) reassignDialog.value = false
-    return
-  }
-  if (guardError(flowReassignDispatch(reassignTarget.value, reassignVehicle.value, reassignDriver.value))) return
-  reassignDialog.value = false
-  ElMessage.success('改派成功，需司机重新接单')
+  const ok = await prodWrite('/dispatch/' + reassignTarget.value.id + '/reassign', '改派成功，需司机重新接单', { vehicleId: reassignVehicle.value, driverId: reassignDriver.value })
+  if (ok) reassignDialog.value = false
 }
 
 function resume(row) {
@@ -454,9 +413,7 @@ function resume(row) {
     '恢复运输',
     { type: 'warning', confirmButtonText: '确认恢复' }
   ).then(async () => {
-    if (PROD) { await prodWrite('/dispatch/' + row.id + '/resume', '已恢复运输'); return }
-    if (guardError(resumeDispatch(row))) return
-    ElMessage.success('已恢复运输')
+    await prodWrite('/dispatch/' + row.id + '/resume', '已恢复运输')
   }).catch(() => {})
 }
 
@@ -484,18 +441,8 @@ async function submitException() {
     ElMessage.warning('描述至少 2 个字符')
     return
   }
-  if (PROD) {
-    const ok = await prodWrite('/dispatch/' + excTarget.value.id + '/reportException', '异常已上报，请前往异常处理模块跟进', { description: excForm.description.trim(), type: excForm.type, level: excForm.level })
-    if (ok) excDialog.value = false
-    return
-  }
-  const r = flowReportException(excTarget.value, excForm.description.trim(), excForm.type, excForm.level)
-  if (r && r.error) {
-    ElMessage.error(r.error)
-    return
-  }
-  excDialog.value = false
-  ElMessage.warning('异常已上报，请前往异常处理模块跟进')
+  const ok = await prodWrite('/dispatch/' + excTarget.value.id + '/reportException', '异常已上报，请前往异常处理模块跟进', { description: excForm.description.trim(), type: excForm.type, level: excForm.level })
+  if (ok) excDialog.value = false
 }
 
 function exportCsv() {

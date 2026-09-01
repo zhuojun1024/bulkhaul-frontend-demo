@@ -59,7 +59,6 @@ import StatCard from '@/components/StatCard.vue'
 import ChartCard from '@/components/ChartCard.vue'
 import { db, dashboard } from '@/mock'
 import { api } from '@/api'
-import { isProduction } from '@/mode'
 import { formatNum, round } from '@/utils'
 import { useTokens } from '@/utils/tokens'
 
@@ -69,15 +68,13 @@ const range = ref('12')
 
 /* ===== Phase 4 阶段 5：生产模式读后端聚合端点（薄客户端） =====
  * db 派生的实时指标（KPI 的 utilization/onTimeRate/safeDays/customerCount + 四图）
- * 生产模式走 /api/dashboard/kpi + /api/dashboard/charts（后端权威，不依赖本地 db 聚合）；
- * 演示模式（默认）保持 dashboard.* getter（本地 db 汇总，现有断言不变）。
- * 历史趋势（volumeTrend/exceptionTrend）为种子随机历史数据，后端无对应口径，两模式均取本地
- * dashboard（非业务态，属演示历史）；其派生 KPI（totalVolume/totalRevenue/环比）随之取本地。 */
-const PROD = isProduction()
+ * 走 /api/dashboard/kpi + /api/dashboard/charts（后端权威，不依赖本地 db 聚合）；
+ * 后端不可用时回退 dashboard.* getter（本地 db 汇总）。
+ * 历史趋势（volumeTrend/exceptionTrend）为种子随机历史数据，后端无对应口径，取本地
+ * dashboard（非业务态）；其派生 KPI（totalVolume/totalRevenue/环比）随之取本地。 */
 const apiKpi = ref(null)
 const apiCharts = ref(null)
 async function loadDashboard() {
-  if (!PROD) return
   const [k, c] = await Promise.all([api('GET', '/dashboard/kpi'), api('GET', '/dashboard/charts')])
   if (k.ok && k.data) apiKpi.value = k.data
   if (c.ok && c.data) apiCharts.value = c.data
@@ -85,15 +82,15 @@ async function loadDashboard() {
 onMounted(loadDashboard)
 
 const kpi = computed(() => {
-  if (PROD && apiKpi.value) {
+  if (apiKpi.value) {
     return { ...apiKpi.value, totalVolume: dashboard.kpi.totalVolume, totalRevenue: dashboard.kpi.totalRevenue }
   }
   return dashboard.kpi
 })
-const commodityData = computed(() => (PROD && apiCharts.value ? apiCharts.value.commodityStructure : dashboard.commodityStructure))
-const modeData = computed(() => (PROD && apiCharts.value ? apiCharts.value.modeShare : dashboard.modeShare))
-const terminalData = computed(() => (PROD && apiCharts.value ? apiCharts.value.terminalThroughput : dashboard.terminalThroughput))
-const vehicleData = computed(() => (PROD && apiCharts.value ? apiCharts.value.vehicleStatus : dashboard.vehicleStatus))
+const commodityData = computed(() => (apiCharts.value ? apiCharts.value.commodityStructure : dashboard.commodityStructure))
+const modeData = computed(() => (apiCharts.value ? apiCharts.value.modeShare : dashboard.modeShare))
+const terminalData = computed(() => (apiCharts.value ? apiCharts.value.terminalThroughput : dashboard.terminalThroughput))
+const vehicleData = computed(() => (apiCharts.value ? apiCharts.value.vehicleStatus : dashboard.vehicleStatus))
 
 /** 环比（最近 12 月趋势的末月 vs 上月）；无历史口径的指标不显示趋势 */
 function trendPctOf(key) {

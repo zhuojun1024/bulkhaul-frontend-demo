@@ -373,9 +373,8 @@ import { Search, Download, Refresh, Postcard, DocumentAdd, MagicStick, Plus } fr
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
-import { settlementCandidates, generateSettlements, startReconcile as flowStartReconcile, confirmSettle, recalcSettlement, autoMatchBank, matchBankRecord, addBankStatement, generatePayables, payPayable, payableStats as flowPayableStats } from '@/mock/flow'
+import { settlementCandidates, payableStats as flowPayableStats } from '@/mock/flow'
 import { useCollection } from '@/composables/useCollection'
-import { isProduction } from '@/mode'
 import { api } from '@/api'
 import { usePerm } from '@/permission'
 import { formatMoney, formatNum } from '@/utils'
@@ -426,20 +425,10 @@ function openMatch(row) {
 
 async function doMatch() {
   const s = find.settlement(matchSettlementId.value)
-  if (PROD) {
-    const d = await prodWrite('/finance/bank/' + matchTarget.value.id + '/match', { settlementId: matchSettlementId.value })
-    if (!d) return
-    matchDialog.value = false
-    ElMessage.success(`核销完成：${formatMoney(d.real)} 已核销至账单 ${s?.billNo || ''}`)
-    return
-  }
-  const r = matchBankRecord(matchTarget.value, s)
-  if (r && r.error) {
-    ElMessage.error(r.error)
-    return
-  }
+  const d = await prodWrite('/finance/bank/' + matchTarget.value.id + '/match', { settlementId: matchSettlementId.value })
+  if (!d) return
   matchDialog.value = false
-  ElMessage.success(`核销完成：${formatMoney(r.real)} 已核销至账单 ${s.billNo}`)
+  ElMessage.success(`核销完成：${formatMoney(d.real)} 已核销至账单 ${s?.billNo || ''}`)
 }
 
 function autoMatch() {
@@ -448,15 +437,10 @@ function autoMatch() {
     '自动核销',
     { type: 'info', confirmButtonText: '确认核销' }
   ).then(async () => {
-    if (PROD) {
-      const d = await prodWrite('/finance/bank/autoMatch')
-      if (!d) return
-      const n = Array.isArray(d) ? d.length : (d.matched || 0)
-      ElMessage.success(n ? `自动核销完成：${n} 笔银行流水已核销` : '暂无满足自动核销条件的流水')
-      return
-    }
-    const matched = autoMatchBank()
-    ElMessage.success(matched.length ? `自动核销完成：${matched.length} 笔银行流水已核销` : '暂无满足自动核销条件的流水')
+    const d = await prodWrite('/finance/bank/autoMatch')
+    if (!d) return
+    const n = Array.isArray(d) ? d.length : (d.matched || 0)
+    ElMessage.success(n ? `自动核销完成：${n} 笔银行流水已核销` : '暂无满足自动核销条件的流水')
   }).catch(() => {})
 }
 
@@ -474,20 +458,10 @@ async function doBankEntry() {
     ElMessage.warning('请选择或输入对手方')
     return
   }
-  if (PROD) {
-    const d = await prodWrite('/finance/bank/statement', { ...bankEntryForm })
-    if (!d) return
-    bankEntryDialog.value = false
-    ElMessage.success(`银行流水 ${d.id} 已录入，进入待核销`)
-    return
-  }
-  const r = addBankStatement({ ...bankEntryForm })
-  if (r && r.error) {
-    ElMessage.error(r.error)
-    return
-  }
+  const d = await prodWrite('/finance/bank/statement', { ...bankEntryForm })
+  if (!d) return
   bankEntryDialog.value = false
-  ElMessage.success(`银行流水 ${r.id} 已录入，进入待核销`)
+  ElMessage.success(`银行流水 ${d.id} 已录入，进入待核销`)
 }
 
 /* ===== 趟次应付（P1 成本侧闭环） ===== */
@@ -505,47 +479,27 @@ function openPay(row) {
 }
 
 async function doPay() {
-  if (PROD) {
-    const d = await prodWrite('/finance/payables/' + payTarget.value.id + '/pay', { method: payMethod.value })
-    if (!d) return
-    payDialog.value = false
-    ElMessage.success(`付款完成：${formatMoney(d.amount)} 已核销`)
-    return
-  }
-  const r = payPayable(payTarget.value, payMethod.value)
-  if (r && r.error) {
-    ElMessage.error(r.error)
-    return
-  }
+  const d = await prodWrite('/finance/payables/' + payTarget.value.id + '/pay', { method: payMethod.value })
+  if (!d) return
   payDialog.value = false
-  ElMessage.success(`付款完成：${formatMoney(r.amount)} 已核销`)
+  ElMessage.success(`付款完成：${formatMoney(d.amount)} 已核销`)
 }
 
 function genPayables() {
   ElMessageBox.confirm('为所有已完成且尚无应付的公路车次批量生成趟次应付？', '生成趟次应付', { type: 'info', confirmButtonText: '生成' }).then(async () => {
-    if (PROD) {
-      const d = await prodWrite('/finance/payables/generate')
-      if (!d) return
-      ElMessage.success(d.created ? `已生成 ${d.created} 笔趟次应付` : '暂无需生成的趟次应付')
-      return
-    }
-    const r = generatePayables()
-    if (r && r.error) {
-      ElMessage.error(r.error)
-      return
-    }
-    ElMessage.success(r.created ? `已生成 ${r.created} 笔趟次应付` : '暂无需生成的趟次应付')
+    const d = await prodWrite('/finance/payables/generate')
+    if (!d) return
+    ElMessage.success(d.created ? `已生成 ${d.created} 笔趟次应付` : '暂无需生成的趟次应付')
   }).catch(() => {})
 }
 
 /* ===== Phase 4 灰度：生产模式（薄客户端）——结算账单/银行流水/应付读后端 /api/coll ===== */
-const PROD = isProduction()
 const settleCol = useCollection('settlements', () => ({ key: 'settlements:list' }))
 const bankCol = useCollection('bankRecords', () => ({ key: 'bankRecords:list' }))
 const payableCol = useCollection('payables', () => ({ key: 'payables:list' }))
-const settlements = computed(() => PROD ? settleCol.data.value : db.settlements)
-const bankRecords = computed(() => PROD ? bankCol.data.value : db.bankRecords)
-const payables = computed(() => PROD ? payableCol.data.value : db.payables)
+const settlements = computed(() => settleCol.data.value)
+const bankRecords = computed(() => bankCol.data.value)
+const payables = computed(() => payableCol.data.value)
 
 const periods = computed(() => [...new Set(settlements.value.map((s) => s.period))].sort().reverse())
 
@@ -585,12 +539,10 @@ function resetFilter() {
   page.value = 1
 }
 
-if (PROD) {
-  onMounted(() => { settleCol.refresh(); bankCol.refresh(); payableCol.refresh() })
-  const onRefreshed = () => { settleCol.refresh(); bankCol.refresh(); payableCol.refresh() }
-  window.addEventListener('blms:refreshed', onRefreshed)
-  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
-}
+onMounted(() => { settleCol.refresh(); bankCol.refresh(); payableCol.refresh() })
+const onRefreshed = () => { settleCol.refresh(); bankCol.refresh(); payableCol.refresh() }
+window.addEventListener('blms:refreshed', onRefreshed)
+onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 
 /* ===== Phase 4 引擎移除：生产模式写操作 = 后端权威（POST 落库）+ 三集合重取 =====
  * 不再依赖 flow.js 乐观改本地态；后端为完整状态机（返回 diffCount/delta/created/real/amount/id 与 flow 同形）。
@@ -615,15 +567,10 @@ function invoiceType(status) {
 
 function startReconcile(row) {
   ElMessageBox.confirm(`开始对账 ${row.billNo}？将执行调度量 vs 磅单净重 vs 结算量三方比对。`, '发起对账', { type: 'info' }).then(async () => {
-    if (PROD) {
-      const d = await prodWrite('/settlement/' + row.id + '/startReconcile')
-      if (!d) return
-      const dc = (d.reconciliation && d.reconciliation.diffCount) || d.diffCount || 0
-      ElMessage.success(dc ? `对账完成：${dc} 车次存在差异` : '对账完成：无差异')
-      return
-    }
-    const r = flowStartReconcile(row)
-    ElMessage.success(r.diffCount ? `对账完成：${r.diffCount} 车次存在差异` : '对账完成：无差异')
+    const d = await prodWrite('/settlement/' + row.id + '/startReconcile')
+    if (!d) return
+    const dc = (d.reconciliation && d.reconciliation.diffCount) || d.diffCount || 0
+    ElMessage.success(dc ? `对账完成：${dc} 车次存在差异` : '对账完成：无差异')
   }).catch(() => {})
 }
 
@@ -634,18 +581,9 @@ function recalc(row) {
     '重算结算',
     { type: 'info', confirmButtonText: '确认重算' }
   ).then(async () => {
-    if (PROD) {
-      const d = await prodWrite('/settlement/' + row.id + '/recalc')
-      if (!d) return
-      ElMessage.success(d.delta ? `重算完成：结算金额调整 ${d.delta > 0 ? '+' : ''}${formatMoney(d.delta)}` : '重算完成：金额无变化')
-      return
-    }
-    const r = recalcSettlement(row)
-    if (r && r.error) {
-      ElMessage.error(r.error)
-      return
-    }
-    ElMessage.success(r.delta ? `重算完成：结算金额调整 ${r.delta > 0 ? '+' : ''}${formatMoney(r.delta)}` : '重算完成：金额无变化')
+    const d = await prodWrite('/settlement/' + row.id + '/recalc')
+    if (!d) return
+    ElMessage.success(d.delta ? `重算完成：结算金额调整 ${d.delta > 0 ? '+' : ''}${formatMoney(d.delta)}` : '重算完成：金额无变化')
   }).catch(() => {})
 }
 
@@ -671,17 +609,8 @@ function settle(row) {
     '确认结算',
     { dangerouslyUseHTMLString: true, type: 'success', confirmButtonText: '确认结算' }
   ).then(async () => {
-    if (PROD) {
-      const d = await prodWrite('/settlement/' + row.id + '/confirmSettle')
-      if (d) ElMessage.success('结算完成，进入收款')
-      return
-    }
-    const r = confirmSettle(row)
-    if (r && r.error) {
-      ElMessage.error(r.error)
-      return
-    }
-    ElMessage.success('结算完成，进入收款')
+    const d = await prodWrite('/settlement/' + row.id + '/confirmSettle')
+    if (d) ElMessage.success('结算完成，进入收款')
   }).catch(() => {})
 }
 
@@ -709,17 +638,11 @@ function onGenSelect(rows) {
 }
 
 async function confirmGenerate() {
-  if (PROD) {
-    const d = await prodWrite('/settlement/generate', { keys: selectedGroups.value.map((g) => g.key) })
-    if (!d) return
-    const n = Array.isArray(d.created) ? d.created.length : (d.created || 0)
-    genDialog.value = false
-    ElMessage.success(`已生成 ${n} 张结算单，可发起对账`)
-    return
-  }
-  const created = generateSettlements(selectedGroups.value.map((g) => g.key))
+  const d = await prodWrite('/settlement/generate', { keys: selectedGroups.value.map((g) => g.key) })
+  if (!d) return
+  const n = Array.isArray(d.created) ? d.created.length : (d.created || 0)
   genDialog.value = false
-  ElMessage.success(`已生成 ${created.length} 张结算单，可发起对账`)
+  ElMessage.success(`已生成 ${n} 张结算单，可发起对账`)
 }
 
 function exportCsv() {

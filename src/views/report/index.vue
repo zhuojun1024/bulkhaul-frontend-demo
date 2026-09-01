@@ -241,9 +241,7 @@ import { Download } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import ChartCard from '@/components/ChartCard.vue'
 import StatCard from '@/components/StatCard.vue'
-import { monthlyReport, customerReport, commodityReport, terminalReport, costReport } from '@/mock/report'
 import { api } from '@/api'
-import { isProduction } from '@/mode'
 import { formatMoney, formatNum } from '@/utils'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
@@ -252,15 +250,13 @@ const tokens = useTokens()
 
 
 const activeTab = ref('monthly')
-/* ===== Phase 4 灰度：生产模式（薄客户端）——报表读后端 /api/report/*（只读聚合，无写后断言） ===== */
-const PROD = isProduction()
+/* ===== 薄客户端：报表读后端 /api/report/*（只读聚合，无写后断言） ===== */
 const monthlyData = ref([])
 const customerData = ref([])
 const commodityData = ref([])
 const terminalData = ref([])
 const costData = ref({ byMonth: [], byVehicle: [], byRoute: [] })
 async function loadReports() {
-  if (!PROD) return
   const [m, c, cm, t, co] = await Promise.all([
     api('GET', '/report/monthly'),
     api('GET', '/report/customer'),
@@ -275,11 +271,11 @@ async function loadReports() {
   if (co.ok) costData.value = co.data
 }
 onMounted(loadReports)
-const monthly = computed(() => PROD ? monthlyData.value : monthlyReport())
-const customer = computed(() => PROD ? customerData.value : customerReport())
-const commodity = computed(() => PROD ? commodityData.value : commodityReport())
-const terminal = computed(() => PROD ? terminalData.value : terminalReport())
-const cost = computed(() => PROD ? costData.value : costReport())
+const monthly = computed(() => monthlyData.value)
+const customer = computed(() => customerData.value)
+const commodity = computed(() => commodityData.value)
+const terminal = computed(() => terminalData.value)
+const cost = computed(() => costData.value)
 
 const monthlyOption = computed(() => ({
   tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },

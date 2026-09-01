@@ -100,21 +100,18 @@ import { ArrowLeft } from '@element-plus/icons-vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
 import { api } from '@/api'
-import { isProduction } from '@/mode'
 import { formatMoney, formatNum } from '@/utils'
 import dayjs from 'dayjs'
 
 const route = useRoute()
 
 /* ===== Phase 4 灰度：生产模式（薄客户端）——车辆详情读后端 /api/coll/vehicles/{id} + inspections + dispatches ===== */
-const PROD = isProduction()
 const vehicleRec = ref(null)
 async function loadDetail() {
-  if (!PROD) return
   const r = await api('GET', '/coll/vehicles/' + route.params.id)
   vehicleRec.value = r.ok ? r.data : null
 }
-const vehicle = computed(() => (PROD && vehicleRec.value ? vehicleRec.value : find.vehicle(route.params.id)))
+const vehicle = computed(() => vehicleRec.value || find.vehicle(route.params.id))
 const inspections = computed(() => db.inspections.filter((i) => i.vehicleId === vehicle.value?.id))
 const dispatches = computed(() => db.dispatches.filter((d) => d.vehicleId === vehicle.value?.id))
 onMounted(loadDetail)

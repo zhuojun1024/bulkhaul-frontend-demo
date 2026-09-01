@@ -434,9 +434,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, DocumentChecked, CircleCheck, Printer, Money, Refresh } from '@element-plus/icons-vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
-import { startReconcile as flowStartReconcile, confirmSettle, recordPayment, revertPayment, issueInvoice as flowIssueInvoice, recalcSettlement, supplementReceipt, prepaymentAvailable, applyPrepayment, dunning as flowDunning } from '@/mock/flow'
+import { prepaymentAvailable } from '@/mock/flow'
 import { api, refreshDb } from '@/api'
-import { isProduction } from '@/mode'
 import { usePerm } from '@/permission'
 import { formatMoney, formatNum } from '@/utils'
 
@@ -444,14 +443,12 @@ const route = useRoute()
 const { can } = usePerm()
 
 /* ===== Phase 4 灰度：生产模式（薄客户端）——结算详情读后端 /api/coll/settlements/{id} + invoices/payments/dunnings ===== */
-const PROD = isProduction()
 const settlementRec = ref(null)
 async function loadDetail() {
-  if (!PROD) return
   const r = await api('GET', '/coll/settlements/' + route.params.id)
   settlementRec.value = r.ok ? r.data : null
 }
-const settlement = computed(() => (PROD && settlementRec.value ? settlementRec.value : find.settlement(route.params.id)))
+const settlement = computed(() => settlementRec.value || find.settlement(route.params.id))
 const customer = computed(() => find.customer(settlement.value?.customerId))
 /** 发票：优先取最新一张非红冲发票（红冲后重开时不展示旧红冲票） */
 const invoice = computed(() => {
@@ -537,16 +534,10 @@ function openPayDialog() {
 }
 
 async function confirmPay() {
-  if (PROD) {
-    const d = await prodWrite('/settlement/' + settlement.value.id + '/recordPayment', { amount: payAmount.value, method: payMethod.value })
-    if (!d) return
-    payDialog.value = false
-    ElMessage.success(`已登记收款 ${formatMoney(d.amount != null ? d.amount : payAmount.value)}`)
-    return
-  }
-  const real = recordPayment(settlement.value, payAmount.value, payMethod.value)
+  const d = await prodWrite('/settlement/' + settlement.value.id + '/recordPayment', { amount: payAmount.value, method: payMethod.value })
+  if (!d) return
   payDialog.value = false
-  ElMessage.success(`已登记收款 ${formatMoney(real)}`)
+  ElMessage.success(`已登记收款 ${formatMoney(d.amount != null ? d.amount : payAmount.value)}`)
 }
 
 /* ===== 环节5：预付款抵扣 ===== */
@@ -560,20 +551,10 @@ function openPrepayDialog() {
 }
 
 async function confirmPrepay() {
-  if (PROD) {
-    const d = await prodWrite('/settlement/' + settlement.value.id + '/applyPrepayment', { amount: prepayAmount.value })
-    if (!d) return
-    prepayDialog.value = false
-    ElMessage.success(`预付款抵扣 ${formatMoney(d.amount != null ? d.amount : prepayAmount.value)}，剩余未付 ${formatMoney(unpaid.value)}`)
-    return
-  }
-  const r = applyPrepayment(settlement.value, prepayAmount.value)
-  if (r && r.error) {
-    ElMessage.error(r.error)
-    return
-  }
+  const d = await prodWrite('/settlement/' + settlement.value.id + '/applyPrepayment', { amount: prepayAmount.value })
+  if (!d) return
   prepayDialog.value = false
-  ElMessage.success(`预付款抵扣 ${formatMoney(r.amount)}，剩余未付 ${formatMoney(unpaid.value)}`)
+  ElMessage.success(`预付款抵扣 ${formatMoney(d.amount != null ? d.amount : prepayAmount.value)}，剩余未付 ${formatMoney(unpaid.value)}`)
 }
 
 /* ===== 收款冲正/退款 ===== */
@@ -592,20 +573,10 @@ async function confirmRevert() {
     ElMessage.warning('请填写冲正原因')
     return
   }
-  if (PROD) {
-    const d = await prodWrite('/settlement/' + settlement.value.id + '/revertPayment/' + revertTarget.value.id, { reason: revertReason.value.trim() })
-    if (!d) return
-    revertDialog.value = false
-    ElMessage.success(`已冲正 ${formatMoney(d.amount != null ? d.amount : 0)}，剩余未付 ${formatMoney(unpaid.value)}`)
-    return
-  }
-  const r = revertPayment(settlement.value, revertTarget.value.id, revertReason.value)
-  if (r && r.error) {
-    ElMessage.error(r.error)
-    return
-  }
+  const d = await prodWrite('/settlement/' + settlement.value.id + '/revertPayment/' + revertTarget.value.id, { reason: revertReason.value.trim() })
+  if (!d) return
   revertDialog.value = false
-  ElMessage.success(`已冲正 ${formatMoney(r.amount)}，剩余未付 ${formatMoney(unpaid.value)}`)
+  ElMessage.success(`已冲正 ${formatMoney(d.amount != null ? d.amount : 0)}，剩余未付 ${formatMoney(unpaid.value)}`)
 }
 
 /* ===== 催收（P1 逾期催收） ===== */
@@ -628,20 +599,10 @@ function openDunning() {
 }
 
 async function confirmDunning() {
-  if (PROD) {
-    const d = await prodWrite('/settlement/' + settlement.value.id + '/dunning', { level: dunningLevel.value })
-    if (!d) return
-    dunningDialog.value = false
-    ElMessage.success(`已发起第 ${d.round != null ? d.round : 1} 轮催收，已提醒客户`)
-    return
-  }
-  const r = flowDunning(settlement.value, dunningLevel.value)
-  if (r && r.error) {
-    ElMessage.error(r.error)
-    return
-  }
+  const d = await prodWrite('/settlement/' + settlement.value.id + '/dunning', { level: dunningLevel.value })
+  if (!d) return
   dunningDialog.value = false
-  ElMessage.success(`已发起第 ${r.round} 轮催收，已提醒客户`)
+  ElMessage.success(`已发起第 ${d.round != null ? d.round : 1} 轮催收，已提醒客户`)
 }
 
 const stepActive = computed(() => {
@@ -680,21 +641,10 @@ async function submitSupplement() {
     ElMessage.warning('请填写签收人')
     return
   }
-  if (PROD) {
-    const d = await prodWrite('/dispatch/' + supTarget.value + '/supplementReceipt', { signer: supForm.signer.trim(), reason: supForm.reason.trim() })
-    if (!d) return
-    supDialog.value = false
-    ElMessage.success(`补签成功：${(d.receipt && d.receipt.code) || ''}（签收人 ${supForm.signer.trim()}），对账结果已刷新`)
-    return
-  }
-  const d = find.dispatch(supTarget.value)
-  const r = supplementReceipt(d, supForm.signer.trim(), supForm.reason.trim())
-  if (r && r.error) {
-    ElMessage.error(r.error)
-    return
-  }
+  const d = await prodWrite('/dispatch/' + supTarget.value + '/supplementReceipt', { signer: supForm.signer.trim(), reason: supForm.reason.trim() })
+  if (!d) return
   supDialog.value = false
-  ElMessage.success(`补签成功：${r.code}（签收人 ${r.signer}），对账结果已刷新`)
+  ElMessage.success(`补签成功：${(d.receipt && d.receipt.code) || ''}（签收人 ${supForm.signer.trim()}），对账结果已刷新`)
 }
 
 function invoiceType(status) {
@@ -703,15 +653,10 @@ function invoiceType(status) {
 
 function startReconcile() {
   ElMessageBox.confirm('确认发起对账？将执行调度量 vs 磅单净重 vs 结算量三方比对。', '发起对账', { type: 'info' }).then(async () => {
-    if (PROD) {
-      const d = await prodWrite('/settlement/' + settlement.value.id + '/startReconcile')
-      if (!d) return
-      const dc = (d.reconciliation && d.reconciliation.diffCount) || d.diffCount || 0
-      ElMessage.success(dc ? `对账完成：${dc} 车次存在差异` : '对账完成：无差异')
-      return
-    }
-    const r = flowStartReconcile(settlement.value)
-    ElMessage.success(r.diffCount ? `对账完成：${r.diffCount} 车次存在差异` : '对账完成：无差异')
+    const d = await prodWrite('/settlement/' + settlement.value.id + '/startReconcile')
+    if (!d) return
+    const dc = (d.reconciliation && d.reconciliation.diffCount) || d.diffCount || 0
+    ElMessage.success(dc ? `对账完成：${dc} 车次存在差异` : '对账完成：无差异')
   }).catch(() => {})
 }
 
@@ -721,18 +666,9 @@ function recalc() {
     '重算结算',
     { type: 'info', confirmButtonText: '确认重算' }
   ).then(async () => {
-    if (PROD) {
-      const d = await prodWrite('/settlement/' + settlement.value.id + '/recalc')
-      if (!d) return
-      ElMessage.success(d.delta ? `重算完成：结算金额调整 ${d.delta > 0 ? '+' : ''}${formatMoney(d.delta)}` : '重算完成：金额无变化')
-      return
-    }
-    const r = recalcSettlement(settlement.value)
-    if (r && r.error) {
-      ElMessage.error(r.error)
-      return
-    }
-    ElMessage.success(r.delta ? `重算完成：结算金额调整 ${r.delta > 0 ? '+' : ''}${formatMoney(r.delta)}` : '重算完成：金额无变化')
+    const d = await prodWrite('/settlement/' + settlement.value.id + '/recalc')
+    if (!d) return
+    ElMessage.success(d.delta ? `重算完成：结算金额调整 ${d.delta > 0 ? '+' : ''}${formatMoney(d.delta)}` : '重算完成：金额无变化')
   }).catch(() => {})
 }
 
@@ -763,33 +699,15 @@ function settle() {
     '确认结算',
     { dangerouslyUseHTMLString: true, type: 'success', confirmButtonText: '确认结算' }
   ).then(async () => {
-    if (PROD) {
-      const d = await prodWrite('/settlement/' + s.id + '/confirmSettle')
-      if (d) ElMessage.success('结算完成，进入收款')
-      return
-    }
-    const r = confirmSettle(s)
-    if (r && r.error) {
-      ElMessage.error(r.error)
-      return
-    }
-    ElMessage.success('结算完成，进入收款')
+    const d = await prodWrite('/settlement/' + s.id + '/confirmSettle')
+    if (d) ElMessage.success('结算完成，进入收款')
   }).catch(() => {})
 }
 
 async function issueInvoice() {
-  if (PROD) {
-    const d = await prodWrite('/settlement/' + settlement.value.id + '/issueInvoice')
-    if (!d) return
-    ElMessage.success(`发票已开具：${d.invoiceNo || ''}`)
-    return
-  }
-  const r = flowIssueInvoice(settlement.value)
-  if (r && r.error) {
-    ElMessage.error(r.error)
-    return
-  }
-  ElMessage.success(`发票已开具：${r.invoiceNo}`)
+  const d = await prodWrite('/settlement/' + settlement.value.id + '/issueInvoice')
+  if (!d) return
+  ElMessage.success(`发票已开具：${d.invoiceNo || ''}`)
 }
 
 function printBill() {

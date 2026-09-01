@@ -83,21 +83,18 @@ import { ArrowLeft } from '@element-plus/icons-vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
 import { api } from '@/api'
-import { isProduction } from '@/mode'
 import { formatNum } from '@/utils'
 import dayjs from 'dayjs'
 
 const route = useRoute()
 
 /* ===== Phase 4 灰度：生产模式（薄客户端）——司机详情读后端 /api/coll/drivers/{id} + dispatches ===== */
-const PROD = isProduction()
 const driverRec = ref(null)
 async function loadDetail() {
-  if (!PROD) return
   const r = await api('GET', '/coll/drivers/' + route.params.id)
   driverRec.value = r.ok ? r.data : null
 }
-const driver = computed(() => (PROD && driverRec.value ? driverRec.value : find.driver(route.params.id)))
+const driver = computed(() => driverRec.value || find.driver(route.params.id))
 const dispatches = computed(() => db.dispatches.filter((d) => d.driverId === driver.value?.id))
 onMounted(loadDetail)
 watch(() => route.params.id, loadDetail)

@@ -82,7 +82,6 @@ import { Search, Download, Refresh } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { db } from '@/mock'
 import { useCollection } from '@/composables/useCollection'
-import { isProduction } from '@/mode'
 import dayjs from 'dayjs'
 
 
@@ -91,9 +90,8 @@ const page = ref(1)
 const pageSize = ref(20)
 
 /* ===== Phase 4 灰度：生产模式（薄客户端）——操作日志读后端 /api/coll/logs（审计日志特例） ===== */
-const PROD = isProduction()
 const listCol = useCollection('logs', () => ({ key: 'logs:list' }))
-const rows = computed(() => PROD ? listCol.data.value : db.logs)
+const rows = computed(() => listCol.data.value)
 
 const modules = computed(() => [...new Set(rows.value.map((l) => l.module))])
 
@@ -125,12 +123,10 @@ function resetFilter() {
   page.value = 1
 }
 
-if (PROD) {
-  onMounted(() => { listCol.refresh() })
-  const onRefreshed = () => { listCol.refresh() }
-  window.addEventListener('blms:refreshed', onRefreshed)
-  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
-}
+onMounted(() => { listCol.refresh() })
+const onRefreshed = () => { listCol.refresh() }
+window.addEventListener('blms:refreshed', onRefreshed)
+onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 
 function exportCsv() {
   const headers = ['操作时间', '操作人', '账号', '操作内容', '模块', 'IP', '结果']
