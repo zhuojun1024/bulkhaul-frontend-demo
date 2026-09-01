@@ -143,9 +143,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import ImportDialog from '@/components/ImportDialog.vue'
 import { db } from '@/mock'
-import { importCommodities, saveCommodity, toggleCommodityStatus } from '@/mock/flow'
 import { useCollection } from '@/composables/useCollection'
-import { isProduction } from '@/mode'
 import { api } from '@/api'
 import { usePerm } from '@/permission'
 
@@ -159,9 +157,8 @@ const statusMap = {
 /* ===== Phase 4 灰度：生产模式（薄客户端）——商品列表读后端 /api/coll/commodities =====
  * 演示模式（默认）保持本地内存引擎（db.commodities，现有断言不变）；
  * 生产模式：数据源切后端权威（useCollection 全量取），过滤逻辑两模式一致。 */
-const PROD = isProduction()
 const listCol = useCollection('commodities', () => ({ key: 'commodities:list' }))
-const rows = computed(() => PROD ? listCol.data.value : db.commodities)
+const rows = computed(() => listCol.data.value)
 
 const categories = computed(() => [...new Set(rows.value.map((c) => c.category))])
 
@@ -183,12 +180,10 @@ function resetFilter() {
   filter.category = ''
 }
 
-if (PROD) {
-  onMounted(() => { listCol.refresh() })
-  const onRefreshed = () => { listCol.refresh() }
-  window.addEventListener('blms:refreshed', onRefreshed)
-  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
-}
+onMounted(() => { listCol.refresh() })
+const onRefreshed = () => { listCol.refresh() }
+window.addEventListener('blms:refreshed', onRefreshed)
+onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 
 /* ===== Phase 4 引擎移除：生产模式写操作 = 后端权威（POST 落库）+ 列表重取 =====
  * 后端业务错误经 ApiResult.success 包装为 data.error（HTTP 200），须检查 r.data.error。 */
@@ -232,40 +227,20 @@ function openDialog(row) {
 
 async function save() {
   // Phase 4 引擎移除：生产模式写操作 = 后端权威（RBAC + 重名守卫 + 审计）
-  if (PROD) {
-    const d = await prodWrite('/admin/commodity', { id: editingId.value, ...form })
-    if (!d) return
-    ElMessage.success(editingId.value ? '商品已更新' : '商品已创建')
-    dialogVisible.value = false
-    return
-  }
-  // 演示模式：写操作下沉服务层（P2）：RBAC + 重名守卫 + 审计
-  const r = saveCommodity({ id: editingId.value, ...form })
-  if (r && r.error) {
-    ElMessage.warning(r.error)
-    return
-  }
+  const d = await prodWrite('/admin/commodity', { id: editingId.value, ...form })
+  if (!d) return
   ElMessage.success(editingId.value ? '商品已更新' : '商品已创建')
   dialogVisible.value = false
 }
 
 async function toggleStatus(row) {
-  if (PROD) {
-    const d = await prodWrite('/admin/commodity/' + row.id + '/toggle')
-    if (!d) return
-    // 后端 ok(null) 无 status；row 未变异，新状态 = 旧状态取反
-    ElMessage.success(`商品 ${row.name} 已${row.status === 'active' ? '停用' : '启用'}`)
-    return
-  }
-  const r = toggleCommodityStatus(row)
-  if (r && r.error) {
-    ElMessage.error(r.error)
-    return
-  }
-  ElMessage.success(`商品 ${row.name} 已${row.status === 'active' ? '启用' : '停用'}`)
+  const d = await prodWrite('/admin/commodity/' + row.id + '/toggle')
+  if (!d) return
+  // 后端 ok(null) 无 status；row 未变异，新状态 = 旧状态取反
+  ElMessage.success(`商品 ${row.name} 已${row.status === 'active' ? '停用' : '启用'}`)
 }
 
-/* ===== 数据导入（Excel/CSV → flow.importCommodities） ===== */
+/* ===== 数据导入（Excel/CSV → 后端 /admin/commodity/import，按名称去重） ===== */
 const importVisible = ref(false)
 const importResult = ref(null)
 const importColumns = [
@@ -283,20 +258,14 @@ function openImport() {
 }
 
 async function doImport(rows) {
-  if (PROD) {
-    const r = await api('POST', '/admin/commodity/import', rows)
-    if (!r.ok || (r.data && r.data.error)) {
-      ElMessage.error((r.data && r.data.error) || r.error || '导入失败')
-      return
-    }
-    importResult.value = r.data
-    await listCol.refresh()
-    ElMessage.success(`导入完成：新增 ${(r.data.created || []).length} 条，跳过重复 ${(r.data.skipped || []).length} 条${(r.data.errors || []).length ? `，失败 ${r.data.errors.length} 条` : ''}`)
+  const r = await api('POST', '/admin/commodity/import', rows)
+  if (!r.ok || (r.data && r.data.error)) {
+    ElMessage.error((r.data && r.data.error) || r.error || '导入失败')
     return
   }
-  importResult.value = importCommodities(rows)
-  const r = importResult.value
-  ElMessage.success(`导入完成：新增 ${r.created.length} 条，跳过重复 ${r.skipped.length} 条${r.errors.length ? `，失败 ${r.errors.length} 条` : ''}`)
+  importResult.value = r.data
+  await listCol.refresh()
+  ElMessage.success(`导入完成：新增 ${(r.data.created || []).length} 条，跳过重复 ${(r.data.skipped || []).length} 条${(r.data.errors || []).length ? `，失败 ${r.data.errors.length} 条` : ''}`)
 }
 </script>
 

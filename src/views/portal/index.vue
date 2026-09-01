@@ -379,8 +379,7 @@ import StatCard from '@/components/StatCard.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
 import { useCollection } from '@/composables/useCollection'
-import { isProduction } from '@/mode'
-import { customerConfirm, customerObjection, outstandingOf, prepaymentAvailable, submitTransportRequest } from '@/mock/flow'
+import { outstandingOf, prepaymentAvailable } from '@/mock/flow'
 import { api, refreshDb } from '@/api'
 import { useUserStore } from '@/store'
 import { usePerm } from '@/permission'
@@ -391,19 +390,16 @@ const userStore = useUserStore()
 const { can } = usePerm()
 
 /* ===== Phase 4 灰度：生产模式（薄客户端）——发起运输需求表单的商品/场站/收货方下拉为只读引用，读后端集合；本方合同/需求/账单保留本地 db（确认对账/异议/发起需求写后断言依赖乐观态） ===== */
-const PROD = isProduction()
 const commoditiesCol = useCollection('commodities', () => ({ key: 'portal:commodities' }))
 const terminalsCol = useCollection('terminals', () => ({ key: 'portal:terminals' }))
 const customersCol = useCollection('customers', () => ({ key: 'portal:customers' }))
-const commodities = computed(() => PROD ? commoditiesCol.data.value : db.commodities)
-const terminals = computed(() => PROD ? terminalsCol.data.value : db.terminals)
-const customers = computed(() => PROD ? customersCol.data.value : db.customers)
-if (PROD) {
-  onMounted(() => { commoditiesCol.refresh(); terminalsCol.refresh(); customersCol.refresh() })
-  const onRefreshed = () => { commoditiesCol.refresh(); terminalsCol.refresh(); customersCol.refresh() }
-  window.addEventListener('blms:refreshed', onRefreshed)
-  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
-}
+const commodities = computed(() => commoditiesCol.data.value)
+const terminals = computed(() => terminalsCol.data.value)
+const customers = computed(() => customersCol.data.value)
+onMounted(() => { commoditiesCol.refresh(); terminalsCol.refresh(); customersCol.refresh() })
+const onRefreshed = () => { commoditiesCol.refresh(); terminalsCol.refresh(); customersCol.refresh() }
+window.addEventListener('blms:refreshed', onRefreshed)
+onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 
 /* ===== Phase 4 引擎移除：生产模式写操作 = 后端权威（POST 落库）+ 快照重水合 =====
  * 门户主表（transportRequests/settlements/contracts）读本地 db（快照水合），
@@ -475,18 +471,8 @@ async function submitRequest() {
     ElMessage.warning('装货场站与卸货场站不能相同')
     return
   }
-  if (PROD) {
-    const r = await prodWrite('/contract/request', { ...requestForm, customerId: customer.value.id })
-    if (!r) return
-    requestDialog.value = false
-    ElMessage.success(`运输需求 ${r.id} 已提交，请等待平台处理`)
-    return
-  }
-  const r = submitTransportRequest(customer.value.id, requestForm)
-  if (r && r.error) {
-    ElMessage.error(r.error)
-    return
-  }
+  const r = await prodWrite('/contract/request', { ...requestForm, customerId: customer.value.id })
+  if (!r) return
   requestDialog.value = false
   ElMessage.success(`运输需求 ${r.id} 已提交，请等待平台处理`)
 }
@@ -524,17 +510,8 @@ function confirmReconcile(s) {
     { type: 'info' }
   )
     .then(async () => {
-      if (PROD) {
-        const r = await prodWrite('/settlement/' + s.id + '/customerConfirm')
-        if (r) ElMessage.success('已确认对账结果')
-        return
-      }
-      const r = customerConfirm(s)
-      if (r && r.error) {
-        ElMessage.error(r.error)
-        return
-      }
-      ElMessage.success('已确认对账结果')
+      const r = await prodWrite('/settlement/' + s.id + '/customerConfirm')
+      if (r) ElMessage.success('已确认对账结果')
     })
     .catch(() => {})
 }
@@ -559,18 +536,8 @@ async function submitObjection() {
     ElMessage.warning('请填写异议原因')
     return
   }
-  if (PROD) {
-    const r = await prodWrite('/settlement/' + objTarget.value.id + '/customerObjection', { reason: objForm.reason.trim() })
-    if (!r) return
-    objDialog.value = false
-    ElMessage.success('异议已提交，平台将重新对账，请等待新的对账结果')
-    return
-  }
-  const r = customerObjection(objTarget.value, objForm.reason.trim())
-  if (r && r.error) {
-    ElMessage.error(r.error)
-    return
-  }
+  const r = await prodWrite('/settlement/' + objTarget.value.id + '/customerObjection', { reason: objForm.reason.trim() })
+  if (!r) return
   objDialog.value = false
   ElMessage.success('异议已提交，平台将重新对账，请等待新的对账结果')
 }

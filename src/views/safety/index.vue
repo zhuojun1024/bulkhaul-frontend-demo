@@ -373,9 +373,8 @@ import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, dashboard } from '@/mock'
-import { registerAccident, closeAccident, addTraining, completeTraining, addInspection, listInsuranceClaims, fileInsuranceClaim, assessInsuranceClaim, settleInsuranceClaim, rejectInsuranceClaim } from '@/mock/flow'
+import { listInsuranceClaims } from '@/mock/flow'
 import { useCollection } from '@/composables/useCollection'
-import { isProduction } from '@/mode'
 import { formatMoney } from '@/utils'
 import { api, refreshDb } from '@/api'
 import dayjs from 'dayjs'
@@ -386,17 +385,14 @@ const activeTab = ref('accident')
 const todayStr = dayjs().format('YYYY-MM-DD')
 
 /* ===== Phase 4 灰度：生产模式（薄客户端）——车辆/司机下拉为只读引用，读后端集合；事故/培训/检查主表保留本地 db（登记写后断言依赖乐观态） ===== */
-const PROD = isProduction()
 const vehiclesCol = useCollection('vehicles', () => ({ key: 'safety:vehicles' }))
 const driversCol = useCollection('drivers', () => ({ key: 'safety:drivers' }))
-const vehicles = computed(() => PROD ? vehiclesCol.data.value : db.vehicles)
-const drivers = computed(() => PROD ? driversCol.data.value : db.drivers)
-if (PROD) {
-  onMounted(() => { vehiclesCol.refresh(); driversCol.refresh() })
-  const onRefreshed = () => { vehiclesCol.refresh(); driversCol.refresh() }
-  window.addEventListener('blms:refreshed', onRefreshed)
-  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
-}
+const vehicles = computed(() => vehiclesCol.data.value)
+const drivers = computed(() => driversCol.data.value)
+onMounted(() => { vehiclesCol.refresh(); driversCol.refresh() })
+const onRefreshed = () => { vehiclesCol.refresh(); driversCol.refresh() }
+window.addEventListener('blms:refreshed', onRefreshed)
+onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 
 /* ===== Phase 4 引擎移除：生产模式写操作 = 后端权威（POST 落库）+ 快照重水合 =====
  * 安全域主表（accidents/trainings/inspections/insuranceClaims）读本地 db（快照水合），
@@ -488,14 +484,8 @@ async function submitAccident() {
     ElMessage.warning('请填写事故描述')
     return
   }
-  if (PROD) {
-    const a = await prodWrite('/safety/accident', { ...accidentForm, description: accidentForm.description.trim() })
-    if (!a) return
-    accidentDialog.value = false
-    ElMessage.success(`事故 ${a.id} 已登记`)
-    return
-  }
-  const a = registerAccident({ ...accidentForm, description: accidentForm.description.trim() })
+  const a = await prodWrite('/safety/accident', { ...accidentForm, description: accidentForm.description.trim() })
+  if (!a) return
   accidentDialog.value = false
   ElMessage.success(`事故 ${a.id} 已登记`)
 }
@@ -503,17 +493,8 @@ async function submitAccident() {
 function closeAccidentRow(row) {
   ElMessageBox.confirm(`确认事故 ${row.id} 结案？`, '事故结案', { type: 'warning', confirmButtonText: '确认结案' })
     .then(async () => {
-      if (PROD) {
-        const r = await prodWrite('/safety/accident/' + row.id + '/close')
-        if (r) ElMessage.success(`事故 ${row.id} 已结案`)
-        return
-      }
-      const r = closeAccident(row)
-      if (r && r.error) {
-        ElMessage.error(r.error)
-        return
-      }
-      ElMessage.success(`事故 ${row.id} 已结案`)
+      const r = await prodWrite('/safety/accident/' + row.id + '/close')
+      if (r) ElMessage.success(`事故 ${row.id} 已结案`)
     })
     .catch(() => {})
 }
@@ -546,18 +527,8 @@ async function submitFileClaim() {
     ElMessage.warning('请选择关联事故')
     return
   }
-  if (PROD) {
-    const r = await prodWrite('/insurance/claim', { ...claimForm, accidentId: claimForm.accidentId })
-    if (!r) return
-    fileClaimDialog.value = false
-    ElMessage.success(`理赔单 ${r.id} 已报险`)
-    return
-  }
-  const r = fileInsuranceClaim(claimForm.accidentId, { ...claimForm })
-  if (r && r.error) {
-    ElMessage.error(r.error)
-    return
-  }
+  const r = await prodWrite('/insurance/claim', { ...claimForm, accidentId: claimForm.accidentId })
+  if (!r) return
   fileClaimDialog.value = false
   ElMessage.success(`理赔单 ${r.id} 已报险`)
 }
@@ -578,18 +549,8 @@ async function submitAssess() {
     ElMessage.warning('请选择责任认定')
     return
   }
-  if (PROD) {
-    const r = await prodWrite('/insurance/claim/' + assessTarget.value.id + '/assess', { ...assessForm })
-    if (!r) return
-    assessDialog.value = false
-    ElMessage.success(`理赔单 ${assessTarget.value.id} 已定责核定`)
-    return
-  }
-  const r = assessInsuranceClaim(assessTarget.value, { ...assessForm })
-  if (r && r.error) {
-    ElMessage.error(r.error)
-    return
-  }
+  const r = await prodWrite('/insurance/claim/' + assessTarget.value.id + '/assess', { ...assessForm })
+  if (!r) return
   assessDialog.value = false
   ElMessage.success(`理赔单 ${assessTarget.value.id} 已定责核定`)
 }
@@ -606,18 +567,8 @@ function openSettle(row) {
 }
 
 async function submitSettle() {
-  if (PROD) {
-    const r = await prodWrite('/insurance/claim/' + settleTarget.value.id + '/settle', { settledAmount: settleAmount.value })
-    if (!r) return
-    settleDialog.value = false
-    ElMessage.success(`理赔单 ${settleTarget.value.id} 已结案${r.offsetSettlement ? '，已冲减账单 ' + r.offsetSettlement : ''}`)
-    return
-  }
-  const r = settleInsuranceClaim(settleTarget.value, { settledAmount: settleAmount.value })
-  if (r && r.error) {
-    ElMessage.error(r.error)
-    return
-  }
+  const r = await prodWrite('/insurance/claim/' + settleTarget.value.id + '/settle', { settledAmount: settleAmount.value })
+  if (!r) return
   settleDialog.value = false
   ElMessage.success(`理赔单 ${settleTarget.value.id} 已结案${r.offsetSettlement ? '，已冲减账单 ' + r.offsetSettlement : ''}`)
 }
@@ -625,17 +576,8 @@ async function submitSettle() {
 function rejectClaim(row) {
   ElMessageBox.prompt('请填写拒赔原因', '保险拒赔', { confirmButtonText: '确认拒赔', cancelButtonText: '取消', inputType: 'textarea' })
     .then(async ({ value }) => {
-      if (PROD) {
-        const r = await prodWrite('/insurance/claim/' + row.id + '/reject', { reason: value || '' })
-        if (r) ElMessage.success(`理赔单 ${row.id} 已拒赔`)
-        return
-      }
-      const r = rejectInsuranceClaim(row, value || '')
-      if (r && r.error) {
-        ElMessage.error(r.error)
-        return
-      }
-      ElMessage.success(`理赔单 ${row.id} 已拒赔`)
+      const r = await prodWrite('/insurance/claim/' + row.id + '/reject', { reason: value || '' })
+      if (r) ElMessage.success(`理赔单 ${row.id} 已拒赔`)
     })
     .catch(() => {})
 }
@@ -664,18 +606,8 @@ async function submitTraining() {
     ElMessage.warning('请选择培训日期')
     return
   }
-  if (PROD) {
-    const r = await prodWrite('/safety/training', trainingForm)
-    if (!r) return
-    trainingDialog.value = false
-    ElMessage.success(`培训 ${r.id} 已计划`)
-    return
-  }
-  const r = addTraining(trainingForm)
-  if (r && r.error) {
-    ElMessage.error(r.error)
-    return
-  }
+  const r = await prodWrite('/safety/training', trainingForm)
+  if (!r) return
   trainingDialog.value = false
   ElMessage.success(`培训 ${r.id} 已计划`)
 }
@@ -691,18 +623,8 @@ function openCompleteTraining(row) {
 }
 
 async function submitCompleteTraining() {
-  if (PROD) {
-    const r = await prodWrite('/safety/training/' + completeTarget.value.id + '/complete', { driverIds: completeDriverIds.value })
-    if (!r) return
-    completeDialog.value = false
-    ElMessage.success(`培训 ${completeTarget.value.id} 已完成，${completeDriverIds.value.length} 名司机参训`)
-    return
-  }
-  const r = completeTraining(completeTarget.value, completeDriverIds.value)
-  if (r && r.error) {
-    ElMessage.error(r.error)
-    return
-  }
+  const r = await prodWrite('/safety/training/' + completeTarget.value.id + '/complete', { driverIds: completeDriverIds.value })
+  if (!r) return
   completeDialog.value = false
   ElMessage.success(`培训 ${completeTarget.value.id} 已完成，${completeDriverIds.value.length} 名司机参训`)
 }
@@ -732,20 +654,10 @@ async function submitInspection() {
     ElMessage.warning('请选择检查日期')
     return
   }
-  if (PROD) {
-    const i = await prodWrite('/safety/inspection', inspectionForm)
-    if (!i) return
-    inspectionDialog.value = false
-    ElMessage.success(`车辆 ${i.plate || inspectionForm.vehicleId} 检查已登记（${i.result === 'pass' ? '合格' : '不合格'}）`)
-    return
-  }
-  const i = addInspection(inspectionForm)
-  if (i && i.error) {
-    ElMessage.error(i.error)
-    return
-  }
+  const i = await prodWrite('/safety/inspection', inspectionForm)
+  if (!i) return
   inspectionDialog.value = false
-  ElMessage.success(`车辆 ${i.plate} 检查已登记（${i.result === 'pass' ? '合格' : '不合格'}）`)
+  ElMessage.success(`车辆 ${i.plate || inspectionForm.vehicleId} 检查已登记（${i.result === 'pass' ? '合格' : '不合格'}）`)
 }
 </script>
 

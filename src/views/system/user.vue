@@ -172,9 +172,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Plus, Refresh } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { db } from '@/mock'
-import { removeUser as flowRemoveUser, saveUser, toggleUserStatus, resetPassword, DATA_REGIONS, setDataScope } from '@/mock/flow'
+import { DATA_REGIONS } from '@/mock/flow'
 import { useCollection } from '@/composables/useCollection'
-import { isProduction } from '@/mode'
 import { usePerm } from '@/permission'
 import { api, refreshDb } from '@/api'
 
@@ -196,18 +195,8 @@ function openScope(row) {
 
 async function saveScope() {
   // Phase 4 引擎移除：生产模式写操作 = 后端权威（RBAC + 审计）
-  if (PROD) {
-    const r = await prodWrite('PUT', '/admin/user/' + scopeTarget.value.username + '/dataScope', { regions: scopeForm.regions })
-    if (!r) return
-    scopeVisible.value = false
-    ElMessage.success(scopeForm.regions.length ? `数据范围已设为：${scopeForm.regions.join('、')}` : '已恢复全量数据')
-    return
-  }
-  const r = setDataScope(scopeTarget.value.username, scopeForm.regions)
-  if (r && r.error) {
-    ElMessage.error(r.error)
-    return
-  }
+  const r = await prodWrite('PUT', '/admin/user/' + scopeTarget.value.username + '/dataScope', { regions: scopeForm.regions })
+  if (!r) return
   scopeVisible.value = false
   ElMessage.success(scopeForm.regions.length ? `数据范围已设为：${scopeForm.regions.join('、')}` : '已恢复全量数据')
 }
@@ -232,18 +221,8 @@ async function saveResetPw() {
     ElMessage.warning('两次输入的密码不一致')
     return
   }
-  if (PROD) {
-    const r = await prodWrite('POST', '/admin/user/' + resetPwTarget.value.id + '/resetPassword', { password: resetPwForm.password })
-    if (!r) return
-    resetPwVisible.value = false
-    ElMessage.success(`账号 ${resetPwTarget.value.username} 密码已重置`)
-    return
-  }
-  const r = resetPassword(resetPwTarget.value.id, resetPwForm.password)
-  if (r && r.error) {
-    ElMessage.error(r.error)
-    return
-  }
+  const r = await prodWrite('POST', '/admin/user/' + resetPwTarget.value.id + '/resetPassword', { password: resetPwForm.password })
+  if (!r) return
   resetPwVisible.value = false
   ElMessage.success(`账号 ${resetPwTarget.value.username} 密码已重置`)
 }
@@ -254,9 +233,8 @@ const page = ref(1)
 const pageSize = ref(10)
 
 /* ===== Phase 4 灰度：生产模式（薄客户端）——用户列表读后端 /api/coll/users ===== */
-const PROD = isProduction()
 const listCol = useCollection('users', () => ({ key: 'users:list' }))
-const rows = computed(() => PROD ? listCol.data.value : db.users)
+const rows = computed(() => listCol.data.value)
 
 const filtered = computed(() =>
   rows.value.filter((u) => {
@@ -281,12 +259,10 @@ function resetFilter() {
   page.value = 1
 }
 
-if (PROD) {
-  onMounted(() => { listCol.refresh() })
-  const onRefreshed = () => { listCol.refresh() }
-  window.addEventListener('blms:refreshed', onRefreshed)
-  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
-}
+onMounted(() => { listCol.refresh() })
+const onRefreshed = () => { listCol.refresh() }
+window.addEventListener('blms:refreshed', onRefreshed)
+onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 
 /* ===== Phase 4 引擎移除：生产模式写操作 = 后端权威（POST/PUT/DELETE 落库）+ 快照重水合 =====
  * 用户域写联动 users + dataScopes（OBJ_COLL），统一 refreshDb 拉回权威态。
@@ -303,33 +279,15 @@ async function prodWrite(method, path, body) {
 
 async function toggleStatus(row, val) {
   // Phase 4 引擎移除：生产模式写操作 = 后端权威（RBAC + 当前账号保护 + 审计）
-  if (PROD) {
-    const r = await prodWrite('POST', '/admin/user/' + row.id + '/toggle', { active: !!val })
-    if (!r) return
-    ElMessage.success(`用户 ${row.name} 已${val ? '启用' : '停用'}`)
-    return
-  }
-  const r = toggleUserStatus(row, val)
-  if (r && r.error) {
-    ElMessage.error(r.error)
-    return
-  }
+  const r = await prodWrite('POST', '/admin/user/' + row.id + '/toggle', { active: !!val })
+  if (!r) return
   ElMessage.success(`用户 ${row.name} 已${val ? '启用' : '停用'}`)
 }
 
 function removeUser(row) {
   ElMessageBox.confirm(`确认删除用户 ${row.name}？`, '删除用户', { type: 'warning' }).then(async () => {
-    if (PROD) {
-      const r = await prodWrite('DELETE', '/admin/user/' + row.id)
-      if (r) ElMessage.success('用户已删除')
-      return
-    }
-    const r = flowRemoveUser(row)
-    if (r && r.error) {
-      ElMessage.error(r.error)
-      return
-    }
-    ElMessage.success('用户已删除')
+    const r = await prodWrite('DELETE', '/admin/user/' + row.id)
+    if (r) ElMessage.success('用户已删除')
   }).catch(() => {})
 }
 
@@ -351,18 +309,8 @@ function openDialog(row) {
 
 async function save() {
   // Phase 4 引擎移除：生产模式写操作 = 后端权威（RBAC + 账号查重 + 默认密码 + 正规 ID 生成 + 审计）
-  if (PROD) {
-    const r = await prodWrite('POST', '/admin/user', { id: editingId.value, ...form })
-    if (!r) return
-    ElMessage.success(editingId.value ? '用户已更新' : '用户已创建，可使用该账号登录')
-    dialogVisible.value = false
-    return
-  }
-  const r = saveUser({ id: editingId.value, ...form })
-  if (r && r.error) {
-    ElMessage.warning(r.error)
-    return
-  }
+  const r = await prodWrite('POST', '/admin/user', { id: editingId.value, ...form })
+  if (!r) return
   ElMessage.success(editingId.value ? '用户已更新' : '用户已创建，可使用该账号登录')
   dialogVisible.value = false
 }

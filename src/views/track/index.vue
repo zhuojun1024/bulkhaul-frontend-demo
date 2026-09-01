@@ -275,11 +275,10 @@ import { VideoPlay, VideoPause, Close, Warning, CircleCheck, AlarmClock, Aim, Se
 import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import { db, find, MAP_NODES, ROUTES } from '@/mock'
-import { trackPointsOf, maxDeviationOf, hashOffset, visibleDispatches, dataScopeOf } from '@/mock/flow'
+import { trackPointsOf, maxDeviationOf, hashOffset, dataScopeOf } from '@/mock/flow'
 import { onSchedulerEvent } from '@/mock/scheduler'
 import { useCollection } from '@/composables/useCollection'
 import { api } from '@/api'
-import { isProduction } from '@/mode'
 import { round } from '@/utils'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
@@ -292,11 +291,10 @@ const listFilter = ref('')
 // 环节8：数据权限（行级）——在途监控只展示当前操作人数据范围内的车次（装货侧区域）
 /* ===== Phase 4 灰度：生产模式（薄客户端）——车次/异常读后端集合（CollReadController 已按装货侧区域数据权限过滤，与 visibleDispatches 同口径）；
    围栏参数经本地 fenceForm 编辑 + 防抖 PUT /admin/fenceConfig 落库（待确认前抑制快照回写，避免 3s 定时刷新早于后端 commit 而回退乐观态） ===== */
-const PROD = isProduction()
 const dispatchesCol = useCollection('dispatches', () => ({ key: 'track:dispatches' }))
 const exceptionsCol = useCollection('exceptions', () => ({ key: 'track:exceptions' }))
-const allDispatches = computed(() => PROD ? dispatchesCol.data.value : db.dispatches)
-const scopedDispatches = computed(() => PROD ? dispatchesCol.data.value : visibleDispatches())
+const allDispatches = computed(() => dispatchesCol.data.value)
+const scopedDispatches = computed(() => dispatchesCol.data.value)
 const scopeRegions = computed(() => dataScopeOf().regions)
 
 /* 围栏参数（生产模式本地编辑态；演示模式直写 db.fenceConfig 保持原行为） */
@@ -310,7 +308,6 @@ function initFenceForm() {
   fenceForm.delayMinutes = c.delayMinutes ?? 30
 }
 watch(fenceForm, () => {
-  if (!PROD) return
   fencePending = { ...fenceForm }
   clearTimeout(fencePutTimer)
   fencePutTimer = setTimeout(async () => {
@@ -331,23 +328,21 @@ function syncFenceFromSnapshot() {
   fenceForm.deviateLimit = c.deviateLimit ?? 15
   fenceForm.delayMinutes = c.delayMinutes ?? 30
 }
-/** 围栏参数统一读口（生产模式本地编辑态 / 演示模式 db.fenceConfig） */
-const fence = computed(() => (PROD ? fenceForm : db.fenceConfig))
+/** 围栏参数统一读口（本地编辑态，防抖 PUT 落库） */
+const fence = computed(() => fenceForm)
 
-if (PROD) {
-  onMounted(() => {
-    dispatchesCol.refresh()
-    exceptionsCol.refresh()
-    initFenceForm()
-  })
-  const onRefreshed = () => {
-    dispatchesCol.refresh()
-    exceptionsCol.refresh()
-    syncFenceFromSnapshot()
-  }
-  window.addEventListener('blms:refreshed', onRefreshed)
-  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
+onMounted(() => {
+  dispatchesCol.refresh()
+  exceptionsCol.refresh()
+  initFenceForm()
+})
+const onRefreshed = () => {
+  dispatchesCol.refresh()
+  exceptionsCol.refresh()
+  syncFenceFromSnapshot()
 }
+window.addEventListener('blms:refreshed', onRefreshed)
+onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 
 /* ===== 线路与场站 ===== */
 const terminals = computed(() =>
@@ -524,7 +519,7 @@ const yesterdayDone = computed(() =>
 const doneTrend = computed(() =>
   yesterdayDone.value ? round(((todayDone.value - yesterdayDone.value) / yesterdayDone.value) * 100, 1) : null
 )
-const activeExceptions = computed(() => (PROD ? exceptionsCol.data.value : db.exceptions).filter((e) => e.status !== 'closed'))
+const activeExceptions = computed(() => exceptionsCol.data.value.filter((e) => e.status !== 'closed'))
 
 /* ===== 数据刷新（P2 架构下沉：GPS 遥测/围栏事件/逾期校准由全局定时任务驱动，
  *  本页只读展示 + 订阅"后端推送"的围栏预警，不再直接修改业务数据） ===== */

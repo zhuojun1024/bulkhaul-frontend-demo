@@ -110,9 +110,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Lock, User } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { db } from '@/mock'
-import { saveRole as flowSaveRole, removeRole as flowRemoveRole, updateRolePerms } from '@/mock/flow'
 import { useCollection } from '@/composables/useCollection'
-import { isProduction } from '@/mode'
 import { MENU_OPTIONS, ACTION_OPTIONS } from '@/permission'
 import { api, refreshDb } from '@/api'
 import { usePerm } from '@/permission'
@@ -120,16 +118,13 @@ import { usePerm } from '@/permission'
 const { can } = usePerm()
 
 /* ===== Phase 4 灰度：生产模式（薄客户端）——角色列表读后端 /api/coll/roles（users/rolePerms 交叉引用保留本地） ===== */
-const PROD = isProduction()
 const rolesCol = useCollection('roles', () => ({ key: 'roles:list' }))
-const roles = computed(() => PROD ? rolesCol.data.value : db.roles)
+const roles = computed(() => rolesCol.data.value)
 
-if (PROD) {
-  onMounted(() => { rolesCol.refresh() })
-  const onRefreshed = () => { rolesCol.refresh() }
-  window.addEventListener('blms:refreshed', onRefreshed)
-  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
-}
+onMounted(() => { rolesCol.refresh() })
+const onRefreshed = () => { rolesCol.refresh() }
+window.addEventListener('blms:refreshed', onRefreshed)
+onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 
 /* ===== Phase 4 引擎移除：生产模式写操作 = 后端权威（POST/PUT/DELETE 落库）+ 快照重水合 =====
  * 角色域写联动 roles + rolePerms（OBJ_COLL），统一 refreshDb 拉回权威态。
@@ -179,18 +174,8 @@ async function savePerm() {
   const body = permAll.value
     ? { menus: null, actions: null }
     : { menus: [...checkedMenus.value], actions: [...checkedActions.value] }
-  if (PROD) {
-    const r = await prodWrite('PUT', '/admin/role/' + name + '/perms', body)
-    if (!r) return
-    permVisible.value = false
-    ElMessage.success(`角色 ${name} 权限已更新并生效`)
-    return
-  }
-  const r = updateRolePerms(name, body)
-  if (r && r.error) {
-    ElMessage.error(r.error)
-    return
-  }
+  const r = await prodWrite('PUT', '/admin/role/' + name + '/perms', body)
+  if (!r) return
   permVisible.value = false
   ElMessage.success(`角色 ${name} 权限已更新并生效`)
 }
@@ -206,35 +191,16 @@ function openDialog() {
 
 async function saveRole() {
   // Phase 4 引擎移除：生产模式写操作 = 后端权威（RBAC + 查重 + 默认 deny 权限 + 正规 ID 生成 + 审计）
-  if (PROD) {
-    const r = await prodWrite('POST', '/admin/role', { name: form.name, code: form.code, description: form.description })
-    if (!r) return
-    dialogVisible.value = false
-    ElMessage.success('角色已创建（默认无权限，请在"权限"中授权）')
-    return
-  }
-  const r = flowSaveRole({ name: form.name, code: form.code, description: form.description })
-  if (r && r.error) {
-    ElMessage.warning(r.error)
-    return
-  }
+  const r = await prodWrite('POST', '/admin/role', { name: form.name, code: form.code, description: form.description })
+  if (!r) return
   dialogVisible.value = false
   ElMessage.success('角色已创建（默认无权限，请在"权限"中授权）')
 }
 
 function removeRole(role) {
   ElMessageBox.confirm(`确认删除角色 ${role.name}？`, '删除角色', { type: 'warning' }).then(async () => {
-    if (PROD) {
-      const r = await prodWrite('DELETE', '/admin/role/' + role.id)
-      if (r) ElMessage.success('角色已删除')
-      return
-    }
-    const r = flowRemoveRole(role)
-    if (r && r.error) {
-      ElMessage.warning(r.error)
-      return
-    }
-    ElMessage.success('角色已删除')
+    const r = await prodWrite('DELETE', '/admin/role/' + role.id)
+    if (r) ElMessage.success('角色已删除')
   }).catch(() => {})
 }
 </script>

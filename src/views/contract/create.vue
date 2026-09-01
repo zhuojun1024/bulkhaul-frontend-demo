@@ -177,10 +177,8 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
-import { db } from '@/mock'
-import { createContract, rateOf } from '@/mock/flow'
+import { rateOf } from '@/mock/flow'
 import { useCollection } from '@/composables/useCollection'
-import { isProduction } from '@/mode'
 import { api } from '@/api'
 import { formatMoney } from '@/utils'
 import dayjs from 'dayjs'
@@ -189,13 +187,12 @@ const router = useRouter()
 const formRef = ref()
 
 /* ===== Phase 4 灰度：生产模式（薄客户端）——创建表单下拉集合读后端 /api/coll ===== */
-const PROD = isProduction()
 const custCol = useCollection('customers', () => ({ key: 'customers:form' }))
 const commCol = useCollection('commodities', () => ({ key: 'commodities:form' }))
 const termCol = useCollection('terminals', () => ({ key: 'terminals:form' }))
-const customers = computed(() => PROD ? custCol.data.value : db.customers)
-const commodities = computed(() => PROD ? commCol.data.value : db.commodities)
-const terminals = computed(() => PROD ? termCol.data.value : db.terminals)
+const customers = computed(() => custCol.data.value)
+const commodities = computed(() => commCol.data.value)
+const terminals = computed(() => termCol.data.value)
 
 /** 候选客户（响应式：客户冻结/解冻后候选自动刷新） */
 const shippers = computed(() => customers.value.filter((c) => (c.type === 'shipper' || c.type === 'both') && c.status === 'active'))
@@ -256,12 +253,10 @@ function fillFromRate() {
   ElMessage.success(`已按运价卡 ${rc.id} 取价：${rc.unitPrice} 元/吨`)
 }
 
-if (PROD) {
-  onMounted(() => { custCol.refresh(); commCol.refresh(); termCol.refresh() })
-  const onRefreshed = () => { custCol.refresh(); commCol.refresh(); termCol.refresh() }
-  window.addEventListener('blms:refreshed', onRefreshed)
-  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
-}
+onMounted(() => { custCol.refresh(); commCol.refresh(); termCol.refresh() })
+const onRefreshed = () => { custCol.refresh(); commCol.refresh(); termCol.refresh() }
+window.addEventListener('blms:refreshed', onRefreshed)
+onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 
 async function submit(status) {
   formRef.value.validate(async (valid) => {
@@ -270,23 +265,12 @@ async function submit(status) {
       return
     }
     // Phase 4 引擎移除：生产模式写操作 = 后端权威（POST /contract 落库：守卫 + 信用校验 + 审批链 + 审计）
-    if (PROD) {
-      const r = await api('POST', '/contract', { ...form, status })
-      if (!r.ok) {
-        ElMessageBox.alert(r.error, status === 'pending' ? '提交失败' : '创建失败', { type: 'warning', confirmButtonText: '知道了' })
-        return
-      }
-      ElMessage.success(status === 'draft' ? '草稿已保存' : `合同 ${r.data.id} 已提交审批（部门审批 → 公司审批）`)
-      router.push('/contract')
-      return
-    }
-    // 演示模式：写操作下沉服务层（P2）：守卫 + 信用校验（提交审批时）+ 审批链生成 + 审计
-    const r = createContract({ ...form }, status)
-    if (r && r.error) {
+    const r = await api('POST', '/contract', { ...form, status })
+    if (!r.ok) {
       ElMessageBox.alert(r.error, status === 'pending' ? '提交失败' : '创建失败', { type: 'warning', confirmButtonText: '知道了' })
       return
     }
-    ElMessage.success(status === 'draft' ? '草稿已保存' : `合同 ${r.id} 已提交审批（部门审批 → 公司审批）`)
+    ElMessage.success(status === 'draft' ? '草稿已保存' : `合同 ${r.data.id} 已提交审批（部门审批 → 公司审批）`)
     router.push('/contract')
   })
 }

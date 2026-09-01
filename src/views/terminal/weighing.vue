@@ -167,8 +167,7 @@ import StatCard from '@/components/StatCard.vue'
 import { db, find } from '@/mock'
 import { api, refreshDb } from '@/api'
 import { useCollection } from '@/composables/useCollection'
-import { isProduction } from '@/mode'
-import { manualWeighing, correctWeighing, tareOf, isRoadMode } from '@/mock/flow'
+import { tareOf, isRoadMode } from '@/mock/flow'
 import { formatNum } from '@/utils'
 import dayjs from 'dayjs'
 import { usePerm } from '@/permission'
@@ -176,15 +175,12 @@ import { usePerm } from '@/permission'
 const { can } = usePerm()
 
 /* ===== Phase 4 灰度：生产模式（薄客户端）——场站筛选下拉为只读引用，读后端集合；磅单主表保留本地 db（补录/复磅写后断言依赖乐观态） ===== */
-const PROD = isProduction()
 const terminalsCol = useCollection('terminals', () => ({ key: 'weighing:terminals' }))
-const terminals = computed(() => PROD ? terminalsCol.data.value : db.terminals)
-if (PROD) {
-  onMounted(() => { terminalsCol.refresh() })
-  const onRefreshed = () => { terminalsCol.refresh() }
-  window.addEventListener('blms:refreshed', onRefreshed)
-  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
-}
+const terminals = computed(() => terminalsCol.data.value)
+onMounted(() => { terminalsCol.refresh() })
+const onRefreshed = () => { terminalsCol.refresh() }
+window.addEventListener('blms:refreshed', onRefreshed)
+onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 
 /* ===== Phase 4 引擎移除：生产模式写操作 = 后端权威（POST 落库）+ 快照重水合 =====
  * 本页磅单主表读 db.weighings（快照水合），写后 refreshDb 拉回权威态。
@@ -235,18 +231,8 @@ async function submitManual() {
     return
   }
   // Phase 4 引擎移除：生产模式写操作 = 后端权威（公路口径守卫 + 重复磅单守卫 + RBAC + 审计）
-  if (PROD) {
-    const d = await prodWrite('/weighing/manual', { dispatchId: manual.dispatchId, type: manual.type, net: manual.net })
-    if (!d) return
-    manualDialog.value = false
-    ElMessage.success('磅单已补录')
-    return
-  }
-  const { error } = manualWeighing(manual.dispatchId, manual.type, manual.net)
-  if (error) {
-    ElMessage.warning(error)
-    return
-  }
+  const d = await prodWrite('/weighing/manual', { dispatchId: manual.dispatchId, type: manual.type, net: manual.net })
+  if (!d) return
   manualDialog.value = false
   ElMessage.success('磅单已补录')
 }
@@ -273,18 +259,8 @@ async function submitCorrect() {
     return
   }
   // Phase 4 引擎移除：生产模式写操作 = 后端权威（净重守卫 + 已结算联动 + RBAC + 审计）
-  if (PROD) {
-    const d = await prodWrite('/weighing/' + correct.id + '/correct', { newNet: correct.newNet, reason: correct.reason.trim() })
-    if (!d) return
-    correctDialog.value = false
-    ElMessage.success('磅单已复磅更正')
-    return
-  }
-  const { error } = correctWeighing(correct.id, correct.newNet, correct.reason)
-  if (error) {
-    ElMessage.warning(error)
-    return
-  }
+  const d = await prodWrite('/weighing/' + correct.id + '/correct', { newNet: correct.newNet, reason: correct.reason.trim() })
+  if (!d) return
   correctDialog.value = false
   ElMessage.success('磅单已复磅更正')
 }

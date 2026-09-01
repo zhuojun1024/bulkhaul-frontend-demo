@@ -129,10 +129,7 @@ import { Search, Download, Refresh, Upload } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import ImportDialog from '@/components/ImportDialog.vue'
-import { db } from '@/mock'
-import { importCustomers, toggleCustomerStatus } from '@/mock/flow'
 import { useCollection } from '@/composables/useCollection'
-import { isProduction } from '@/mode'
 import { api } from '@/api'
 import { formatMoney } from '@/utils'
 import dayjs from 'dayjs'
@@ -155,9 +152,8 @@ const page = ref(1)
 const pageSize = ref(10)
 
 /* ===== Phase 4 灰度：生产模式（薄客户端）——客户列表读后端 /api/coll/customers ===== */
-const PROD = isProduction()
 const listCol = useCollection('customers', () => ({ key: 'customers:list' }))
-const rows = computed(() => PROD ? listCol.data.value : db.customers)
+const rows = computed(() => listCol.data.value)
 
 const regions = computed(() => [...new Set(rows.value.map((c) => c.region))])
 
@@ -196,12 +192,10 @@ function resetFilter() {
   page.value = 1
 }
 
-if (PROD) {
-  onMounted(() => { listCol.refresh() })
-  const onRefreshed = () => { listCol.refresh() }
-  window.addEventListener('blms:refreshed', onRefreshed)
-  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
-}
+onMounted(() => { listCol.refresh() })
+const onRefreshed = () => { listCol.refresh() }
+window.addEventListener('blms:refreshed', onRefreshed)
+onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 
 /* ===== Phase 4 引擎移除：生产模式写操作 = 后端权威（POST 落库）+ 列表重取 =====
  * 后端业务错误经 ApiResult.success 包装为 data.error（HTTP 200），须检查 r.data.error。 */
@@ -231,39 +225,20 @@ function toggleStatus(row) {
   if (row.status === 'active') {
     ElMessageBox.confirm(`确认冻结客户 ${row.name}？冻结后不可新建合同。`, '冻结客户', { type: 'warning' }).then(async () => {
       // Phase 4 引擎移除：生产模式写操作 = 后端权威（RBAC + 审计）
-      if (PROD) {
-        const d = await prodWrite('/admin/customer/' + row.id + '/toggle')
-        if (d) ElMessage.success('客户已冻结')
-        return
-      }
-      // 演示模式：写操作下沉服务层（P2）：RBAC + 审计
-      const r = toggleCustomerStatus(row)
-      if (r && r.error) {
-        ElMessage.error(r.error)
-        return
-      }
-      ElMessage.success('客户已冻结')
+      const d = await prodWrite('/admin/customer/' + row.id + '/toggle')
+      if (d) ElMessage.success('客户已冻结')
     }).catch(() => {})
   } else {
-    // 演示模式 / 生产模式：解冻（后端 ok(null)）
+    // 解冻（后端 ok(null)）
     const doUnfreeze = async () => {
-      if (PROD) {
-        const d = await prodWrite('/admin/customer/' + row.id + '/toggle')
-        if (d) ElMessage.success('客户已解冻')
-        return
-      }
-      const r = toggleCustomerStatus(row)
-      if (r && r.error) {
-        ElMessage.error(r.error)
-        return
-      }
-      ElMessage.success('客户已解冻')
+      const d = await prodWrite('/admin/customer/' + row.id + '/toggle')
+      if (d) ElMessage.success('客户已解冻')
     }
     doUnfreeze()
   }
 }
 
-/* ===== 数据导入（Excel/CSV → flow.importCustomers） ===== */
+/* ===== 数据导入（Excel/CSV → 后端 /admin/customer/import，按手机号去重） ===== */
 const importVisible = ref(false)
 const importResult = ref(null)
 const importColumns = [
@@ -283,20 +258,14 @@ function openImport() {
 }
 
 async function doImport(rows) {
-  if (PROD) {
-    const r = await api('POST', '/admin/customer/import', rows)
-    if (!r.ok || (r.data && r.data.error)) {
-      ElMessage.error((r.data && r.data.error) || r.error || '导入失败')
-      return
-    }
-    importResult.value = r.data
-    await listCol.refresh()
-    ElMessage.success(`导入完成：新增 ${(r.data.created || []).length} 条，跳过重复 ${(r.data.skipped || []).length} 条${(r.data.errors || []).length ? `，失败 ${r.data.errors.length} 条` : ''}`)
+  const r = await api('POST', '/admin/customer/import', rows)
+  if (!r.ok || (r.data && r.data.error)) {
+    ElMessage.error((r.data && r.data.error) || r.error || '导入失败')
     return
   }
-  importResult.value = importCustomers(rows)
-  const r = importResult.value
-  ElMessage.success(`导入完成：新增 ${r.created.length} 条，跳过重复 ${r.skipped.length} 条${r.errors.length ? `，失败 ${r.errors.length} 条` : ''}`)
+  importResult.value = r.data
+  await listCol.refresh()
+  ElMessage.success(`导入完成：新增 ${(r.data.created || []).length} 条，跳过重复 ${(r.data.skipped || []).length} 条${(r.data.errors || []).length ? `，失败 ${r.data.errors.length} 条` : ''}`)
 }
 
 function exportCsv() {

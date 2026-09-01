@@ -205,22 +205,10 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Van, CircleCheck, Aim, SwitchButton } from '@element-plus/icons-vue'
 import { db, find } from '@/mock'
-import {
-  acceptDispatch,
-  signReceipt,
-  driverDepart,
-  driverArrive,
-  driverReportException,
-  loadCodeOf,
-  unloadCodeOf,
-  scanConfirmLoad,
-  scanConfirmUnload,
-  driverIncomeOf
-} from '@/mock/flow'
+import { loadCodeOf, unloadCodeOf, driverIncomeOf } from '@/mock/flow'
 import { formatMoney } from '@/utils'
 import dayjs from 'dayjs'
 import { api, refreshDb } from '@/api'
-import { isProduction } from '@/mode'
 import { useTokens } from '@/utils/tokens'
 import { useUserStore } from '@/store'
 
@@ -291,20 +279,9 @@ function progressColor(status) {
   return { loading: tokens.warning, intransit: tokens.primary, unloading: tokens.warning, completed: tokens.success, exception: tokens.danger }[status] || tokens.neutral300
 }
 
-/* ===== 操作（调用 flow 中枢，与 PC 端同一套状态机） ===== */
-/** 状态机守卫拦截提示（flow 返回 { error } 时） */
-function guardError(r) {
-  if (r && r.error) {
-    ElMessage.error(r.error)
-    return true
-  }
-  return false
-}
-
 /* ===== Phase 4 引擎移除：生产模式写操作 = 后端权威（POST 落库）+ 快照重取 =====
  * 本页读 db.dispatches（生产模式由 /api/snapshot hydrate）；写后 refreshDb 更新响应式 db，
  * myDispatches 计算属性自动重渲染。不再依赖 flow.js 乐观改本地态。成功返回 r.data，失败 ElMessage.error 返回 null。 */
-const PROD = isProduction()
 async function prodWrite(path, body) {
   const r = await api('POST', path, body)
   if (!r.ok || (r.data && r.data.error)) {
@@ -316,12 +293,7 @@ async function prodWrite(path, body) {
 }
 
 function onAccept(d) {
-  if (PROD) {
-    prodWrite('/dispatch/' + d.id + '/accept').then((ok) => { if (ok) ElMessage.success('接单成功') })
-    return
-  }
-  acceptDispatch(d)
-  ElMessage.success('接单成功')
+  prodWrite('/dispatch/' + d.id + '/accept').then((ok) => { if (ok) ElMessage.success('接单成功') })
 }
 
 /* ===== 扫码确认装货（装货码核验通过后走 flow.confirmLoad） ===== */
@@ -336,34 +308,18 @@ function openScanLoad(d) {
 }
 
 async function submitScanLoad() {
-  if (PROD) {
-    const d = await prodWrite('/dispatch/' + scanTarget.value.id + '/scan/load', { code: scanCode.value })
-    if (!d) return
-    scanDialog.value = false
-    ElMessage.success('装货确认成功，进磅单已登记')
-    return
-  }
-  if (guardError(scanConfirmLoad(scanTarget.value, scanCode.value))) return
+  const d = await prodWrite('/dispatch/' + scanTarget.value.id + '/scan/load', { code: scanCode.value })
+  if (!d) return
   scanDialog.value = false
   ElMessage.success('装货确认成功，进磅单已登记')
 }
 async function onDepart(d) {
-  if (PROD) {
-    const ok = await prodWrite('/dispatch/' + d.id + '/driver/depart')
-    if (ok) ElMessage.success('已发车，进入在途状态')
-    return
-  }
-  if (guardError(driverDepart(d))) return
-  ElMessage.success('已发车，进入在途状态')
+  const ok = await prodWrite('/dispatch/' + d.id + '/driver/depart')
+  if (ok) ElMessage.success('已发车，进入在途状态')
 }
 async function onArrive(d) {
-  if (PROD) {
-    const ok = await prodWrite('/dispatch/' + d.id + '/driver/arrive')
-    if (ok) ElMessage.success('已到达卸货场站')
-    return
-  }
-  if (guardError(driverArrive(d))) return
-  ElMessage.success('已到达卸货场站')
+  const ok = await prodWrite('/dispatch/' + d.id + '/driver/arrive')
+  if (ok) ElMessage.success('已到达卸货场站')
 }
 
 /* ===== 电子签收 ===== */
@@ -384,24 +340,16 @@ async function submitSign() {
     ElMessage.warning('请填写签收人姓名')
     return
   }
-  if (PROD) {
-    // 先扫卸货码核验（后端 confirmUnload），再生成电子签收单（后端 signReceipt）
-    const u = await prodWrite('/dispatch/' + signTarget.value.id + '/scan/unload', { code: scanCode.value })
-    if (!u) return
-    const s = await prodWrite('/dispatch/' + signTarget.value.id + '/driver/signReceipt', { signer: signer.value.trim() })
-    if (!s) return
-    signDialog.value = false
-    ElMessage.success('卸货完成，电子签收单已生成')
-    return
-  }
-  // 先扫卸货码核验（走 flow.confirmUnload），再生成电子签收单
-  if (guardError(scanConfirmUnload(signTarget.value, scanCode.value))) return
-  signReceipt(signTarget.value, signer.value.trim())
+  // 先扫卸货码核验（后端 confirmUnload），再生成电子签收单（后端 signReceipt）
+  const u = await prodWrite('/dispatch/' + signTarget.value.id + '/scan/unload', { code: scanCode.value })
+  if (!u) return
+  const s = await prodWrite('/dispatch/' + signTarget.value.id + '/driver/signReceipt', { signer: signer.value.trim() })
+  if (!s) return
   signDialog.value = false
   ElMessage.success('卸货完成，电子签收单已生成')
 }
 
-/* ===== F4a：司机端上报异常（执行中状态，走 flow.driverReportException 身份守卫 + 状态机） ===== */
+/* ===== 司机端上报异常（执行中状态，后端身份守卫 + 状态机） ===== */
 const excDialog = ref(false)
 const excTarget = ref(null)
 const excForm = reactive({ type: 'other', level: 'medium', description: '' })
@@ -417,15 +365,8 @@ async function submitException() {
     ElMessage.warning('请填写异常描述')
     return
   }
-  if (PROD) {
-    const d = await prodWrite('/dispatch/' + excTarget.value.id + '/reportException', { description: excForm.description, type: excForm.type, level: excForm.level })
-    if (!d) return
-    excDialog.value = false
-    ElMessage.success('异常已上报，请等待平台处理')
-    return
-  }
-  const r = driverReportException(excTarget.value, excForm.description, excForm.type, excForm.level)
-  if (guardError(r)) return
+  const d = await prodWrite('/dispatch/' + excTarget.value.id + '/reportException', { description: excForm.description, type: excForm.type, level: excForm.level })
+  if (!d) return
   excDialog.value = false
   ElMessage.success('异常已上报，请等待平台处理')
 }
