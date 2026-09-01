@@ -331,8 +331,8 @@ function guardError(r) {
  * 不再依赖 flow.js 乐观改本地态；列表已监听 blms:refreshed 重取，此处显式 refresh 保证即时。 */
 async function prodWrite(path, successMsg, body) {
   const r = await api('POST', path, body)
-  if (!r.ok) {
-    ElMessage.error(r.error || '操作失败')
+  if (!r.ok || (r.data && r.data.error)) {
+    ElMessage.error((r.data && r.data.error) || r.error || '操作失败')
     return false
   }
   await listCol.refresh()

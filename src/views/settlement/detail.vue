@@ -467,8 +467,8 @@ watch(() => route.params.id, loadDetail)
  * 成功返回 r.data，失败 ElMessage.error 返回 null。refreshDb 联动收款/催收/发票集合，loadDetail 重取权威账单。 */
 async function prodWrite(path, body) {
   const r = await api('POST', path, body)
-  if (!r.ok) {
-    ElMessage.error(r.error || '操作失败')
+  if (!r.ok || (r.data && r.data.error)) {
+    ElMessage.error((r.data && r.data.error) || r.error || '操作失败')
     return null
   }
   await refreshDb()
@@ -541,7 +541,7 @@ async function confirmPay() {
     const d = await prodWrite('/settlement/' + settlement.value.id + '/recordPayment', { amount: payAmount.value, method: payMethod.value })
     if (!d) return
     payDialog.value = false
-    ElMessage.success(`已登记收款 ${formatMoney(d.real != null ? d.real : payAmount.value)}`)
+    ElMessage.success(`已登记收款 ${formatMoney(d.amount != null ? d.amount : payAmount.value)}`)
     return
   }
   const real = recordPayment(settlement.value, payAmount.value, payMethod.value)
@@ -684,7 +684,7 @@ async function submitSupplement() {
     const d = await prodWrite('/dispatch/' + supTarget.value + '/supplementReceipt', { signer: supForm.signer.trim(), reason: supForm.reason.trim() })
     if (!d) return
     supDialog.value = false
-    ElMessage.success(`补签成功：${d.code || ''}（签收人 ${supForm.signer.trim()}），对账结果已刷新`)
+    ElMessage.success(`补签成功：${(d.receipt && d.receipt.code) || ''}（签收人 ${supForm.signer.trim()}），对账结果已刷新`)
     return
   }
   const d = find.dispatch(supTarget.value)
@@ -706,7 +706,8 @@ function startReconcile() {
     if (PROD) {
       const d = await prodWrite('/settlement/' + settlement.value.id + '/startReconcile')
       if (!d) return
-      ElMessage.success(d.diffCount ? `对账完成：${d.diffCount} 车次存在差异` : '对账完成：无差异')
+      const dc = (d.reconciliation && d.reconciliation.diffCount) || d.diffCount || 0
+      ElMessage.success(dc ? `对账完成：${dc} 车次存在差异` : '对账完成：无差异')
       return
     }
     const r = flowStartReconcile(settlement.value)

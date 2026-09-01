@@ -129,6 +129,7 @@ import { db } from '@/mock'
 import { importVehicles, resumeVehicle, sendVehicleRepair } from '@/mock/flow'
 import { useCollection } from '@/composables/useCollection'
 import { isProduction } from '@/mode'
+import { api } from '@/api'
 import { formatNum } from '@/utils'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
@@ -201,6 +202,18 @@ if (PROD) {
   onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 }
 
+/* ===== Phase 4 引擎移除：生产模式写操作 = 后端权威（POST 落库）+ 列表重取 =====
+ * 后端业务错误经 ApiResult.success 包装为 data.error（HTTP 200），须检查 r.data.error。 */
+async function prodWrite(path, body) {
+  const r = await api('POST', path, body)
+  if (!r.ok || (r.data && r.data.error)) {
+    ElMessage.error((r.data && r.data.error) || r.error || '操作失败')
+    return null
+  }
+  await listCol.refresh()
+  return r.data
+}
+
 function goDetail(row) {
   router.push(`/vehicle/${row.id}`)
 }
@@ -213,8 +226,14 @@ function sendRepair(row) {
   ElMessageBox.prompt('请输入报修原因', `车辆报修 - ${row.plate}`, {
     inputPattern: /.{2,}/,
     inputErrorMessage: '原因至少 2 个字符'
-  }).then(({ value }) => {
-    // 写操作下沉服务层（P2）：状态守卫 + RBAC + 审计
+  }).then(async ({ value }) => {
+    // Phase 4 引擎移除：生产模式写操作 = 后端权威（状态守卫 + RBAC + 审计）
+    if (PROD) {
+      const d = await prodWrite('/admin/vehicle/' + row.id + '/repair', { reason: value })
+      if (d) ElMessage.success(`${row.plate} 已报修，进入维修状态`)
+      return
+    }
+    // 演示模式：写操作下沉服务层（P2）：状态守卫 + RBAC + 审计
     const r = sendVehicleRepair(row, value)
     if (r && r.error) {
       ElMessage.error(r.error)
@@ -225,7 +244,12 @@ function sendRepair(row) {
 }
 
 function backToService(row) {
-  ElMessageBox.confirm(`确认 ${row.plate} 维修完成，恢复为空闲状态？`, '恢复车辆', { type: 'info' }).then(() => {
+  ElMessageBox.confirm(`确认 ${row.plate} 维修完成，恢复为空闲状态？`, '恢复车辆', { type: 'info' }).then(async () => {
+    if (PROD) {
+      const d = await prodWrite('/admin/vehicle/' + row.id + '/resume')
+      if (d) ElMessage.success(`${row.plate} 已恢复空闲`)
+      return
+    }
     const r = resumeVehicle(row)
     if (r && r.error) {
       ElMessage.error(r.error)
@@ -252,7 +276,18 @@ function openImport() {
   importVisible.value = true
 }
 
-function doImport(rows) {
+async function doImport(rows) {
+  if (PROD) {
+    const r = await api('POST', '/admin/vehicle/import', rows)
+    if (!r.ok || (r.data && r.data.error)) {
+      ElMessage.error((r.data && r.data.error) || r.error || '导入失败')
+      return
+    }
+    importResult.value = r.data
+    await listCol.refresh()
+    ElMessage.success(`导入完成：新增 ${(r.data.created || []).length} 条，跳过重复 ${(r.data.skipped || []).length} 条${(r.data.errors || []).length ? `，失败 ${r.data.errors.length} 条` : ''}`)
+    return
+  }
   importResult.value = importVehicles(rows)
   const r = importResult.value
   ElMessage.success(`导入完成：新增 ${r.created.length} 条，跳过重复 ${r.skipped.length} 条${r.errors.length ? `，失败 ${r.errors.length} 条` : ''}`)

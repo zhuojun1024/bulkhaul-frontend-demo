@@ -438,8 +438,8 @@ watch(() => route.params.id, loadDetail)
  * 成功返回 r.data，失败 ElMessage.error 返回 null。refreshDb 联动计划/车次/结算集合，loadDetail 重取权威合同。 */
 async function prodWrite(path, body) {
   const r = await api('POST', path, body)
-  if (!r.ok) {
-    ElMessage.error(r.error || '操作失败')
+  if (!r.ok || (r.data && r.data.error)) {
+    ElMessage.error((r.data && r.data.error) || r.error || '操作失败')
     return null
   }
   await refreshDb()

@@ -210,7 +210,7 @@ import { ArrowLeft, Money } from '@element-plus/icons-vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
 import { outstandingOf, prepaymentOf, prepaymentAvailable, collectPrepayment } from '@/mock/flow'
-import { api } from '@/api'
+import { api, refreshDb } from '@/api'
 import { isProduction } from '@/mode'
 import { usePerm } from '@/permission'
 import { formatMoney, formatNum } from '@/utils'
@@ -265,7 +265,25 @@ function openCollect() {
   collectDialog.value = true
 }
 
-function submitCollect() {
+async function submitCollect() {
+  // Phase 4 引擎移除：生产模式写操作 = 后端权威（冻结守卫 + RBAC + 审计）
+  if (PROD) {
+    const r = await api('POST', '/settlement/prepayment/collect', {
+      customerId: customer.value.id,
+      amount: collectForm.amount,
+      method: collectForm.method,
+      remark: collectForm.remark
+    })
+    if (!r.ok || (r.data && r.data.error)) {
+      ElMessage.error((r.data && r.data.error) || r.error || '收取预付款失败')
+      return
+    }
+    await refreshDb()
+    await loadDetail()
+    collectDialog.value = false
+    ElMessage.success(`预付款已收取：${(r.data && r.data.id) || ''}`)
+    return
+  }
   const r = collectPrepayment(customer.value.id, collectForm.amount, collectForm.method, collectForm.remark)
   if (r && r.error) {
     ElMessage.error(r.error)

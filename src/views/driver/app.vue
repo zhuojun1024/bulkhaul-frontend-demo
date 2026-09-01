@@ -219,6 +219,8 @@ import {
 } from '@/mock/flow'
 import { formatMoney } from '@/utils'
 import dayjs from 'dayjs'
+import { api, refreshDb } from '@/api'
+import { isProduction } from '@/mode'
 import { useTokens } from '@/utils/tokens'
 import { useUserStore } from '@/store'
 
@@ -298,7 +300,26 @@ function guardError(r) {
   }
   return false
 }
+
+/* ===== Phase 4 引擎移除：生产模式写操作 = 后端权威（POST 落库）+ 快照重取 =====
+ * 本页读 db.dispatches（生产模式由 /api/snapshot hydrate）；写后 refreshDb 更新响应式 db，
+ * myDispatches 计算属性自动重渲染。不再依赖 flow.js 乐观改本地态。成功返回 r.data，失败 ElMessage.error 返回 null。 */
+const PROD = isProduction()
+async function prodWrite(path, body) {
+  const r = await api('POST', path, body)
+  if (!r.ok || (r.data && r.data.error)) {
+    ElMessage.error((r.data && r.data.error) || r.error || '操作失败')
+    return null
+  }
+  await refreshDb()
+  return r.data
+}
+
 function onAccept(d) {
+  if (PROD) {
+    prodWrite('/dispatch/' + d.id + '/accept').then((ok) => { if (ok) ElMessage.success('接单成功') })
+    return
+  }
   acceptDispatch(d)
   ElMessage.success('接单成功')
 }
@@ -314,16 +335,33 @@ function openScanLoad(d) {
   scanDialog.value = true
 }
 
-function submitScanLoad() {
+async function submitScanLoad() {
+  if (PROD) {
+    const d = await prodWrite('/dispatch/' + scanTarget.value.id + '/scan/load', { code: scanCode.value })
+    if (!d) return
+    scanDialog.value = false
+    ElMessage.success('装货确认成功，进磅单已登记')
+    return
+  }
   if (guardError(scanConfirmLoad(scanTarget.value, scanCode.value))) return
   scanDialog.value = false
   ElMessage.success('装货确认成功，进磅单已登记')
 }
-function onDepart(d) {
+async function onDepart(d) {
+  if (PROD) {
+    const ok = await prodWrite('/dispatch/' + d.id + '/driver/depart')
+    if (ok) ElMessage.success('已发车，进入在途状态')
+    return
+  }
   if (guardError(driverDepart(d))) return
   ElMessage.success('已发车，进入在途状态')
 }
-function onArrive(d) {
+async function onArrive(d) {
+  if (PROD) {
+    const ok = await prodWrite('/dispatch/' + d.id + '/driver/arrive')
+    if (ok) ElMessage.success('已到达卸货场站')
+    return
+  }
   if (guardError(driverArrive(d))) return
   ElMessage.success('已到达卸货场站')
 }
@@ -341,9 +379,19 @@ function openSign(d) {
   signDialog.value = true
 }
 
-function submitSign() {
+async function submitSign() {
   if (!signer.value.trim()) {
     ElMessage.warning('请填写签收人姓名')
+    return
+  }
+  if (PROD) {
+    // 先扫卸货码核验（后端 confirmUnload），再生成电子签收单（后端 signReceipt）
+    const u = await prodWrite('/dispatch/' + signTarget.value.id + '/scan/unload', { code: scanCode.value })
+    if (!u) return
+    const s = await prodWrite('/dispatch/' + signTarget.value.id + '/driver/signReceipt', { signer: signer.value.trim() })
+    if (!s) return
+    signDialog.value = false
+    ElMessage.success('卸货完成，电子签收单已生成')
     return
   }
   // 先扫卸货码核验（走 flow.confirmUnload），再生成电子签收单
@@ -364,9 +412,16 @@ function openException(d) {
   excDialog.value = true
 }
 
-function submitException() {
+async function submitException() {
   if (!excForm.description.trim()) {
     ElMessage.warning('请填写异常描述')
+    return
+  }
+  if (PROD) {
+    const d = await prodWrite('/dispatch/' + excTarget.value.id + '/reportException', { description: excForm.description, type: excForm.type, level: excForm.level })
+    if (!d) return
+    excDialog.value = false
+    ElMessage.success('异常已上报，请等待平台处理')
     return
   }
   const r = driverReportException(excTarget.value, excForm.description, excForm.type, excForm.level)

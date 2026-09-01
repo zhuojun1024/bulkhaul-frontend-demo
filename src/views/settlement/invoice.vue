@@ -200,8 +200,8 @@ if (PROD) {
  * 不再依赖 flow.js 乐观改本地态；后端为完整状态机（返回 invoiceNo 与 flow 同形）。 */
 async function prodWrite(path, body) {
   const r = await api('POST', path, body)
-  if (!r.ok) {
-    ElMessage.error(r.error || '操作失败')
+  if (!r.ok || (r.data && r.data.error)) {
+    ElMessage.error((r.data && r.data.error) || r.error || '操作失败')
     return null
   }
   await listCol.refresh()

@@ -85,6 +85,7 @@ import { db, find } from '@/mock'
 import { contractRemaining, createPlan } from '@/mock/flow'
 import { useCollection } from '@/composables/useCollection'
 import { isProduction } from '@/mode'
+import { api } from '@/api'
 import { formatMoney, formatNum } from '@/utils'
 import dayjs from 'dayjs'
 
@@ -144,10 +145,26 @@ if (PROD) {
   onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 }
 
-function submit() {
-  formRef.value.validate((valid) => {
+async function submit() {
+  formRef.value.validate(async (valid) => {
     if (!valid) return
-    // 写操作下沉服务层（P2）：合同执行中 + 剩余量守卫 + 审计
+    // Phase 4 引擎移除：生产模式写操作 = 后端权威（POST /plan：合同执行中 + 剩余量守卫 + 审计）
+    if (PROD) {
+      const r = await api('POST', '/plan', {
+        contractId: form.contractId,
+        planDate: form.planDate,
+        quantity: form.quantity,
+        remark: form.remark
+      })
+      if (!r.ok) {
+        ElMessage.warning(r.error || '创建失败')
+        return
+      }
+      ElMessage.success(`计划 ${r.data.id} 创建成功`)
+      router.push(`/plan/${r.data.id}`)
+      return
+    }
+    // 演示模式：写操作下沉服务层（P2）：合同执行中 + 剩余量守卫 + 审计
     const r = createPlan({
       contractId: form.contractId,
       planDate: form.planDate,

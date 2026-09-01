@@ -162,6 +162,7 @@ import { db, find } from '@/mock'
 import { BUSY_STATUSES, cancelPlan, createDispatches, creditCheck, isRoadMode, vehicleInspectionExpired, visiblePlans, dataScopeOf } from '@/mock/flow'
 import { useCollection } from '@/composables/useCollection'
 import { isProduction } from '@/mode'
+import { api } from '@/api'
 import { formatNum } from '@/utils'
 import dayjs from 'dayjs'
 import { useTokens } from '@/utils/tokens'
@@ -246,8 +247,16 @@ function progressColor(status) {
 }
 
 function cancel(row) {
-  ElMessageBox.confirm(`确认取消计划 ${row.id}？`, '提示', { type: 'warning' }).then(() => {
-    // 写操作下沉服务层（P2）：状态守卫 + RBAC + 审计
+  ElMessageBox.confirm(`确认取消计划 ${row.id}？`, '提示', { type: 'warning' }).then(async () => {
+    // Phase 4 引擎移除：生产模式写操作 = 后端权威（POST /plan/{id}/cancel：状态守卫 + RBAC + 审计）
+    if (PROD) {
+      const r = await api('POST', '/plan/' + row.id + '/cancel')
+      if (!r.ok) { ElMessage.error(r.error || '操作失败'); return }
+      await listCol.refresh()
+      ElMessage.success('计划已取消')
+      return
+    }
+    // 演示模式：写操作下沉服务层（P2）：状态守卫 + RBAC + 审计
     const r = cancelPlan(row)
     if (r && r.error) {
       ElMessage.error(r.error)
@@ -295,7 +304,7 @@ function openDispatch(row) {
   dispatchVisible.value = true
 }
 
-function confirmDispatch() {
+async function confirmDispatch() {
   if (isRoad.value && vehicleSource.value === 'manual' && selectedVehicles.value.length < dispatchCount.value) {
     ElMessage.warning(`请至少选择 ${dispatchCount.value} 辆车`)
     return
@@ -305,6 +314,24 @@ function confirmDispatch() {
   const check = creditCheck(contract?.shipperId, plan.quantity * (plan.unitPrice || 0))
   if (!check.ok) {
     ElMessageBox.alert(check.message, '信用校验未通过', { type: 'warning', confirmButtonText: '知道了' })
+    return
+  }
+  // Phase 4 引擎移除：生产模式写操作 = 后端权威（POST /dispatch/create：事务化两阶段派车 + 资源占用）
+  if (PROD) {
+    const r = await api('POST', '/dispatch/create', {
+      planId: plan.id,
+      count: dispatchCount.value,
+      vehicleIds: vehicleSource.value === 'manual' ? selectedVehicles.value : []
+    })
+    dispatchVisible.value = false
+    if (!r.ok) { ElMessage.error(r.error || '派车失败'); return }
+    await listCol.refresh()
+    const created = (r.data && r.data.created) || []
+    if (r.data && r.data.error) {
+      ElMessage.warning(r.data.error)
+      return
+    }
+    ElMessage.success(`已为计划 ${plan.id} 生成 ${created.length} 张调度单`)
     return
   }
   const { created, error } = createDispatches(

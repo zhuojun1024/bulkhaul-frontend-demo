@@ -597,8 +597,8 @@ if (PROD) {
  * 成功返回 r.data，失败 ElMessage.error 返回 null。结算/银行流水/应付三联动集合全部重取。 */
 async function prodWrite(path, body) {
   const r = await api('POST', path, body)
-  if (!r.ok) {
-    ElMessage.error(r.error || '操作失败')
+  if (!r.ok || (r.data && r.data.error)) {
+    ElMessage.error((r.data && r.data.error) || r.error || '操作失败')
     return null
   }
   await Promise.all([settleCol.refresh(), bankCol.refresh(), payableCol.refresh()])
@@ -618,7 +618,8 @@ function startReconcile(row) {
     if (PROD) {
       const d = await prodWrite('/settlement/' + row.id + '/startReconcile')
       if (!d) return
-      ElMessage.success(d.diffCount ? `对账完成：${d.diffCount} 车次存在差异` : '对账完成：无差异')
+      const dc = (d.reconciliation && d.reconciliation.diffCount) || d.diffCount || 0
+      ElMessage.success(dc ? `对账完成：${dc} 车次存在差异` : '对账完成：无差异')
       return
     }
     const r = flowStartReconcile(row)

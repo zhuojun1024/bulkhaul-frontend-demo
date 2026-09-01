@@ -108,6 +108,7 @@ import { db } from '@/mock'
 import { saveWarehouse } from '@/mock/flow'
 import { useCollection } from '@/composables/useCollection'
 import { isProduction } from '@/mode'
+import { api } from '@/api'
 import { formatNum } from '@/utils'
 import { useTokens } from '@/utils/tokens'
 import { usePerm } from '@/permission'
@@ -138,6 +139,18 @@ if (PROD) {
   const onRefreshed = () => { listCol.refresh() }
   window.addEventListener('blms:refreshed', onRefreshed)
   onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
+}
+
+/* ===== Phase 4 引擎移除：生产模式写操作 = 后端权威（POST 落库）+ 列表重取 =====
+ * 后端业务错误经 ApiResult.success 包装为 data.error（HTTP 200），须检查 r.data.error。 */
+async function prodWrite(path, body) {
+  const r = await api('POST', path, body)
+  if (!r.ok || (r.data && r.data.error)) {
+    ElMessage.error((r.data && r.data.error) || r.error || '操作失败')
+    return null
+  }
+  await listCol.refresh()
+  return r.data
 }
 
 function levelPercent(w) {
@@ -198,9 +211,17 @@ function openDialog(w) {
   dialogVisible.value = true
 }
 
-function save() {
+async function save() {
   if (!form.name.trim()) {
     ElMessage.warning('请输入仓库名称')
+    return
+  }
+  // Phase 4 引擎移除：生产模式写操作 = 后端权威（RBAC + 重名/容量守卫 + 审计）
+  if (PROD) {
+    const d = await prodWrite('/admin/warehouse', { ...form })
+    if (!d) return
+    dialogVisible.value = false
+    ElMessage.success(form.id ? '仓库已更新' : '仓库已新增')
     return
   }
   const r = saveWarehouse({ ...form })

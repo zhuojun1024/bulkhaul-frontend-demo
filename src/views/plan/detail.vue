@@ -126,7 +126,7 @@ import { ArrowLeft, Position } from '@element-plus/icons-vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, find } from '@/mock'
 import { BUSY_STATUSES, createDispatches, creditCheck, isRoadMode, vehicleInspectionExpired } from '@/mock/flow'
-import { api } from '@/api'
+import { api, refreshDb } from '@/api'
 import { isProduction } from '@/mode'
 import { formatNum } from '@/utils'
 import { usePerm } from '@/permission'
@@ -208,7 +208,7 @@ function dispatch() {
   dispatchVisible.value = true
 }
 
-function confirmDispatch() {
+async function confirmDispatch() {
   if (isRoad.value && vehicleSource.value === 'manual' && selectedVehicles.value.length < dispatchCount.value) {
     ElMessage.warning(`请至少选择 ${dispatchCount.value} 辆车`)
     return
@@ -217,6 +217,25 @@ function confirmDispatch() {
   const check = creditCheck(contract?.shipperId, plan.value.quantity * (plan.value.unitPrice || 0))
   if (!check.ok) {
     ElMessageBox.alert(check.message, '信用校验未通过', { type: 'warning', confirmButtonText: '知道了' })
+    return
+  }
+  // Phase 4 引擎移除：生产模式写操作 = 后端权威（POST /dispatch/create：事务化两阶段派车 + 资源占用）
+  if (PROD) {
+    const r = await api('POST', '/dispatch/create', {
+      planId: plan.value.id,
+      count: dispatchCount.value,
+      vehicleIds: vehicleSource.value === 'manual' ? selectedVehicles.value : []
+    })
+    dispatchVisible.value = false
+    if (!r.ok) { ElMessage.error(r.error || '派车失败'); return }
+    await refreshDb()
+    await loadDetail()
+    const created = (r.data && r.data.created) || []
+    if (r.data && r.data.error) {
+      ElMessage.warning(r.data.error)
+      return
+    }
+    ElMessage.success(`已生成 ${created.length} 张调度单`)
     return
   }
   const { created, error } = createDispatches(

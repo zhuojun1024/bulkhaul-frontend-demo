@@ -370,8 +370,8 @@ function guardError(r) {
  * 后端为完整状态机（doConfirmLoad 等价前端，联动磅单/计划/结算），重取后 UI 与后端同源。 */
 async function prodWrite(path, successMsg, body) {
   const r = await api('POST', path, body)
-  if (!r.ok) {
-    ElMessage.error(r.error || '操作失败')
+  if (!r.ok || (r.data && r.data.error)) {
+    ElMessage.error((r.data && r.data.error) || r.error || '操作失败')
     return false
   }
   // 后端已提交（await 落库）→ 拉权威快照（联动磅单/计划等集合 + 通知列表页重取）+ 重取本单详情
@@ -474,10 +474,10 @@ async function submitSupplement() {
   }
   if (PROD) {
     const r = await api('POST', '/dispatch/' + dispatch.value.id + '/supplementReceipt', { signer: supForm.signer.trim(), reason: supForm.reason.trim() })
-    if (!r.ok) { ElMessage.error(r.error || '补签失败'); return }
+    if (!r.ok || (r.data && r.data.error)) { ElMessage.error((r.data && r.data.error) || r.error || '补签失败'); return }
     await loadDetail()
     supDialog.value = false
-    ElMessage.success(`补签成功：${(r.data && r.data.code) || ''}（签收人 ${supForm.signer.trim()}）`)
+    ElMessage.success(`补签成功：${(r.data && r.data.receipt && r.data.receipt.code) || ''}（签收人 ${supForm.signer.trim()}）`)
     return
   }
   const r = supplementReceipt(dispatch.value, supForm.signer.trim(), supForm.reason.trim())

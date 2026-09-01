@@ -165,6 +165,7 @@ import { Search, Download, Refresh, Plus } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import { db, find } from '@/mock'
+import { api, refreshDb } from '@/api'
 import { useCollection } from '@/composables/useCollection'
 import { isProduction } from '@/mode'
 import { manualWeighing, correctWeighing, tareOf, isRoadMode } from '@/mock/flow'
@@ -183,6 +184,19 @@ if (PROD) {
   const onRefreshed = () => { terminalsCol.refresh() }
   window.addEventListener('blms:refreshed', onRefreshed)
   onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
+}
+
+/* ===== Phase 4 引擎移除：生产模式写操作 = 后端权威（POST 落库）+ 快照重水合 =====
+ * 本页磅单主表读 db.weighings（快照水合），写后 refreshDb 拉回权威态。
+ * 后端业务错误经 ApiResult.success 包装为 data.error（HTTP 200），须检查 r.data.error。 */
+async function prodWrite(path, body) {
+  const r = await api('POST', path, body)
+  if (!r.ok || (r.data && r.data.error)) {
+    ElMessage.warning((r.data && r.data.error) || r.error || '操作失败')
+    return null
+  }
+  await refreshDb()
+  return r.data
 }
 
 const router = useRouter()
@@ -215,9 +229,17 @@ function onManualDispatch(id) {
   manual.net = manual.type === '进磅' ? d.quantity : inW ? inW.net : d.quantity
 }
 
-function submitManual() {
+async function submitManual() {
   if (!manual.dispatchId) {
     ElMessage.warning('请选择调度单')
+    return
+  }
+  // Phase 4 引擎移除：生产模式写操作 = 后端权威（公路口径守卫 + 重复磅单守卫 + RBAC + 审计）
+  if (PROD) {
+    const d = await prodWrite('/weighing/manual', { dispatchId: manual.dispatchId, type: manual.type, net: manual.net })
+    if (!d) return
+    manualDialog.value = false
+    ElMessage.success('磅单已补录')
     return
   }
   const { error } = manualWeighing(manual.dispatchId, manual.type, manual.net)
@@ -245,9 +267,17 @@ function openCorrect(row) {
   correctDialog.value = true
 }
 
-function submitCorrect() {
+async function submitCorrect() {
   if (!correct.reason.trim()) {
     ElMessage.warning('请填写复磅原因')
+    return
+  }
+  // Phase 4 引擎移除：生产模式写操作 = 后端权威（净重守卫 + 已结算联动 + RBAC + 审计）
+  if (PROD) {
+    const d = await prodWrite('/weighing/' + correct.id + '/correct', { newNet: correct.newNet, reason: correct.reason.trim() })
+    if (!d) return
+    correctDialog.value = false
+    ElMessage.success('磅单已复磅更正')
     return
   }
   const { error } = correctWeighing(correct.id, correct.newNet, correct.reason)

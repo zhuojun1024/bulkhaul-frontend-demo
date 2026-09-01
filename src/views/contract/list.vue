@@ -691,8 +691,8 @@ if (PROD) {
  * refreshDb 拉全量快照（合同 + 运价卡 + 联动集合）并派发 blms:refreshed 触发本页重取。 */
 async function prodCall(method, path, body) {
   const r = await api(method, path, body)
-  if (!r.ok) {
-    ElMessage.error(r.error || '操作失败')
+  if (!r.ok || (r.data && r.data.error)) {
+    ElMessage.error((r.data && r.data.error) || r.error || '操作失败')
     return null
   }
   await refreshDb()
