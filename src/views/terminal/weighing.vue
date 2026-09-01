@@ -26,7 +26,7 @@
           </el-form-item>
           <el-form-item>
             <el-select v-model="filter.terminalId" placeholder="场站" clearable>
-              <el-option v-for="t in db.terminals" :key="t.id" :label="t.name" :value="t.id" />
+              <el-option v-for="t in terminals" :key="t.id" :label="t.name" :value="t.id" />
             </el-select>
           </el-form-item>
           <el-form-item>
@@ -158,19 +158,32 @@
 <script setup>
 defineOptions({ name: 'Weighing' })
 import ActionColumn from '@/components/ActionColumn.vue'
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Search, Download, Refresh, Plus } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import { db, find } from '@/mock'
+import { useCollection } from '@/composables/useCollection'
+import { isProduction } from '@/mode'
 import { manualWeighing, correctWeighing, tareOf, isRoadMode } from '@/mock/flow'
 import { formatNum } from '@/utils'
 import dayjs from 'dayjs'
 import { usePerm } from '@/permission'
 
 const { can } = usePerm()
+
+/* ===== Phase 4 灰度：生产模式（薄客户端）——场站筛选下拉为只读引用，读后端集合；磅单主表保留本地 db（补录/复磅写后断言依赖乐观态） ===== */
+const PROD = isProduction()
+const terminalsCol = useCollection('terminals', () => ({ key: 'weighing:terminals' }))
+const terminals = computed(() => PROD ? terminalsCol.data.value : db.terminals)
+if (PROD) {
+  onMounted(() => { terminalsCol.refresh() })
+  const onRefreshed = () => { terminalsCol.refresh() }
+  window.addEventListener('blms:refreshed', onRefreshed)
+  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
+}
 
 const router = useRouter()
 

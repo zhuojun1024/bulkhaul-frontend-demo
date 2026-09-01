@@ -190,7 +190,7 @@
         </el-form-item>
         <el-form-item label="涉及车辆">
           <el-select v-model="accidentForm.vehicleId" filterable placeholder="请选择车辆（可留空）" style="width: 100%">
-            <el-option v-for="v in db.vehicles" :key="v.id" :label="v.plate + '（' + v.type + '）'" :value="v.id" />
+            <el-option v-for="v in vehicles" :key="v.id" :label="v.plate + '（' + v.type + '）'" :value="v.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="发生地点">
@@ -239,7 +239,7 @@
         <el-form label-width="90px" style="margin-top: 16px">
           <el-form-item label="参训司机">
             <el-select v-model="completeDriverIds" multiple filterable collapse-tags collapse-tags-tooltip placeholder="选择实际参训司机" style="width: 100%">
-              <el-option v-for="d in db.drivers" :key="d.id" :label="d.name + '（' + d.licenseType + '）'" :value="d.id" />
+              <el-option v-for="d in drivers" :key="d.id" :label="d.name + '（' + d.licenseType + '）'" :value="d.id" />
             </el-select>
           </el-form-item>
         </el-form>
@@ -255,7 +255,7 @@
       <el-form label-width="90px">
         <el-form-item label="被检车辆" required>
           <el-select v-model="inspectionForm.vehicleId" filterable placeholder="请选择车辆" style="width: 100%">
-            <el-option v-for="v in db.vehicles" :key="v.id" :label="v.plate + '（' + v.type + '）'" :value="v.id" />
+            <el-option v-for="v in vehicles" :key="v.id" :label="v.plate + '（' + v.type + '）'" :value="v.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="检查日期" required>
@@ -366,7 +366,7 @@
 <script setup>
 defineOptions({ name: 'Safety' })
 import ActionColumn from '@/components/ActionColumn.vue'
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
@@ -374,6 +374,8 @@ import StatCard from '@/components/StatCard.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { db, dashboard } from '@/mock'
 import { registerAccident, closeAccident, addTraining, completeTraining, addInspection, listInsuranceClaims, fileInsuranceClaim, assessInsuranceClaim, settleInsuranceClaim, rejectInsuranceClaim } from '@/mock/flow'
+import { useCollection } from '@/composables/useCollection'
+import { isProduction } from '@/mode'
 import { formatMoney } from '@/utils'
 import dayjs from 'dayjs'
 import { usePerm } from '@/permission'
@@ -381,6 +383,19 @@ import { usePerm } from '@/permission'
 const { can } = usePerm()
 const activeTab = ref('accident')
 const todayStr = dayjs().format('YYYY-MM-DD')
+
+/* ===== Phase 4 灰度：生产模式（薄客户端）——车辆/司机下拉为只读引用，读后端集合；事故/培训/检查主表保留本地 db（登记写后断言依赖乐观态） ===== */
+const PROD = isProduction()
+const vehiclesCol = useCollection('vehicles', () => ({ key: 'safety:vehicles' }))
+const driversCol = useCollection('drivers', () => ({ key: 'safety:drivers' }))
+const vehicles = computed(() => PROD ? vehiclesCol.data.value : db.vehicles)
+const drivers = computed(() => PROD ? driversCol.data.value : db.drivers)
+if (PROD) {
+  onMounted(() => { vehiclesCol.refresh(); driversCol.refresh() })
+  const onRefreshed = () => { vehiclesCol.refresh(); driversCol.refresh() }
+  window.addEventListener('blms:refreshed', onRefreshed)
+  onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
+}
 
 const accidents = computed(() => db.accidents)
 const trainings = computed(() => db.trainings)
