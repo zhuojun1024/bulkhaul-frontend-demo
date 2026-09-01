@@ -377,6 +377,7 @@ import { registerAccident, closeAccident, addTraining, completeTraining, addInsp
 import { useCollection } from '@/composables/useCollection'
 import { isProduction } from '@/mode'
 import { formatMoney } from '@/utils'
+import { api, refreshDb } from '@/api'
 import dayjs from 'dayjs'
 import { usePerm } from '@/permission'
 
@@ -395,6 +396,19 @@ if (PROD) {
   const onRefreshed = () => { vehiclesCol.refresh(); driversCol.refresh() }
   window.addEventListener('blms:refreshed', onRefreshed)
   onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
+}
+
+/* ===== Phase 4 引擎移除：生产模式写操作 = 后端权威（POST 落库）+ 快照重水合 =====
+ * 安全域主表（accidents/trainings/inspections/insuranceClaims）读本地 db（快照水合），
+ * 写后 refreshDb 拉回权威态。后端业务错误经 ApiResult.success 包装为 data.error（HTTP 200），须检查 r.data.error。 */
+async function prodWrite(path, body) {
+  const r = await api('POST', path, body)
+  if (!r.ok || (r.data && r.data.error)) {
+    ElMessage.error((r.data && r.data.error) || r.error || '操作失败')
+    return null
+  }
+  await refreshDb()
+  return r.data
 }
 
 const accidents = computed(() => db.accidents)
@@ -465,13 +479,20 @@ function openAccident() {
   accidentDialog.value = true
 }
 
-function submitAccident() {
+async function submitAccident() {
   if (!accidentForm.time) {
     ElMessage.warning('请选择发生日期')
     return
   }
   if (!accidentForm.description.trim()) {
     ElMessage.warning('请填写事故描述')
+    return
+  }
+  if (PROD) {
+    const a = await prodWrite('/safety/accident', { ...accidentForm, description: accidentForm.description.trim() })
+    if (!a) return
+    accidentDialog.value = false
+    ElMessage.success(`事故 ${a.id} 已登记`)
     return
   }
   const a = registerAccident({ ...accidentForm, description: accidentForm.description.trim() })
@@ -481,7 +502,12 @@ function submitAccident() {
 
 function closeAccidentRow(row) {
   ElMessageBox.confirm(`确认事故 ${row.id} 结案？`, '事故结案', { type: 'warning', confirmButtonText: '确认结案' })
-    .then(() => {
+    .then(async () => {
+      if (PROD) {
+        const r = await prodWrite('/safety/accident/' + row.id + '/close')
+        if (r) ElMessage.success(`事故 ${row.id} 已结案`)
+        return
+      }
       const r = closeAccident(row)
       if (r && r.error) {
         ElMessage.error(r.error)
@@ -515,9 +541,16 @@ function openFileClaim() {
   fileClaimDialog.value = true
 }
 
-function submitFileClaim() {
+async function submitFileClaim() {
   if (!claimForm.accidentId) {
     ElMessage.warning('请选择关联事故')
+    return
+  }
+  if (PROD) {
+    const r = await prodWrite('/insurance/claim', { ...claimForm, accidentId: claimForm.accidentId })
+    if (!r) return
+    fileClaimDialog.value = false
+    ElMessage.success(`理赔单 ${r.id} 已报险`)
     return
   }
   const r = fileInsuranceClaim(claimForm.accidentId, { ...claimForm })
@@ -540,9 +573,16 @@ function openAssess(row) {
   assessDialog.value = true
 }
 
-function submitAssess() {
+async function submitAssess() {
   if (!assessForm.responsibility) {
     ElMessage.warning('请选择责任认定')
+    return
+  }
+  if (PROD) {
+    const r = await prodWrite('/insurance/claim/' + assessTarget.value.id + '/assess', { ...assessForm })
+    if (!r) return
+    assessDialog.value = false
+    ElMessage.success(`理赔单 ${assessTarget.value.id} 已定责核定`)
     return
   }
   const r = assessInsuranceClaim(assessTarget.value, { ...assessForm })
@@ -565,7 +605,14 @@ function openSettle(row) {
   settleDialog.value = true
 }
 
-function submitSettle() {
+async function submitSettle() {
+  if (PROD) {
+    const r = await prodWrite('/insurance/claim/' + settleTarget.value.id + '/settle', { settledAmount: settleAmount.value })
+    if (!r) return
+    settleDialog.value = false
+    ElMessage.success(`理赔单 ${settleTarget.value.id} 已结案${r.offsetSettlement ? '，已冲减账单 ' + r.offsetSettlement : ''}`)
+    return
+  }
   const r = settleInsuranceClaim(settleTarget.value, { settledAmount: settleAmount.value })
   if (r && r.error) {
     ElMessage.error(r.error)
@@ -577,7 +624,12 @@ function submitSettle() {
 
 function rejectClaim(row) {
   ElMessageBox.prompt('请填写拒赔原因', '保险拒赔', { confirmButtonText: '确认拒赔', cancelButtonText: '取消', inputType: 'textarea' })
-    .then(({ value }) => {
+    .then(async ({ value }) => {
+      if (PROD) {
+        const r = await prodWrite('/insurance/claim/' + row.id + '/reject', { reason: value || '' })
+        if (r) ElMessage.success(`理赔单 ${row.id} 已拒赔`)
+        return
+      }
       const r = rejectInsuranceClaim(row, value || '')
       if (r && r.error) {
         ElMessage.error(r.error)
@@ -603,13 +655,20 @@ function disablePastDate(date) {
   return date < dayjs().startOf('day')
 }
 
-function submitTraining() {
+async function submitTraining() {
   if (!trainingForm.title.trim()) {
     ElMessage.warning('请填写培训主题')
     return
   }
   if (!trainingForm.date) {
     ElMessage.warning('请选择培训日期')
+    return
+  }
+  if (PROD) {
+    const r = await prodWrite('/safety/training', trainingForm)
+    if (!r) return
+    trainingDialog.value = false
+    ElMessage.success(`培训 ${r.id} 已计划`)
     return
   }
   const r = addTraining(trainingForm)
@@ -631,7 +690,14 @@ function openCompleteTraining(row) {
   completeDialog.value = true
 }
 
-function submitCompleteTraining() {
+async function submitCompleteTraining() {
+  if (PROD) {
+    const r = await prodWrite('/safety/training/' + completeTarget.value.id + '/complete', { driverIds: completeDriverIds.value })
+    if (!r) return
+    completeDialog.value = false
+    ElMessage.success(`培训 ${completeTarget.value.id} 已完成，${completeDriverIds.value.length} 名司机参训`)
+    return
+  }
   const r = completeTraining(completeTarget.value, completeDriverIds.value)
   if (r && r.error) {
     ElMessage.error(r.error)
@@ -657,13 +723,20 @@ function openInspection() {
   inspectionDialog.value = true
 }
 
-function submitInspection() {
+async function submitInspection() {
   if (!inspectionForm.vehicleId) {
     ElMessage.warning('请选择被检车辆')
     return
   }
   if (!inspectionForm.date) {
     ElMessage.warning('请选择检查日期')
+    return
+  }
+  if (PROD) {
+    const i = await prodWrite('/safety/inspection', inspectionForm)
+    if (!i) return
+    inspectionDialog.value = false
+    ElMessage.success(`车辆 ${i.plate || inspectionForm.vehicleId} 检查已登记（${i.result === 'pass' ? '合格' : '不合格'}）`)
     return
   }
   const i = addInspection(inspectionForm)

@@ -381,6 +381,7 @@ import { db, find } from '@/mock'
 import { useCollection } from '@/composables/useCollection'
 import { isProduction } from '@/mode'
 import { customerConfirm, customerObjection, outstandingOf, prepaymentAvailable, submitTransportRequest } from '@/mock/flow'
+import { api, refreshDb } from '@/api'
 import { useUserStore } from '@/store'
 import { usePerm } from '@/permission'
 import { formatMoney, formatNum } from '@/utils'
@@ -402,6 +403,19 @@ if (PROD) {
   const onRefreshed = () => { commoditiesCol.refresh(); terminalsCol.refresh(); customersCol.refresh() }
   window.addEventListener('blms:refreshed', onRefreshed)
   onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
+}
+
+/* ===== Phase 4 引擎移除：生产模式写操作 = 后端权威（POST 落库）+ 快照重水合 =====
+ * 门户主表（transportRequests/settlements/contracts）读本地 db（快照水合），
+ * 写后 refreshDb 拉回权威态。后端业务错误经 ApiResult.success 包装为 data.error（HTTP 200），须检查 r.data.error。 */
+async function prodWrite(path, body) {
+  const r = await api('POST', path, body)
+  if (!r.ok || (r.data && r.data.error)) {
+    ElMessage.error((r.data && r.data.error) || r.error || '操作失败')
+    return null
+  }
+  await refreshDb()
+  return r.data
 }
 
 /** 当前登录账号绑定的客户（客户角色账号携带 customerId） */
@@ -452,13 +466,20 @@ function openRequest() {
   requestDialog.value = true
 }
 
-function submitRequest() {
+async function submitRequest() {
   if (!requestForm.commodityId || !requestForm.loadTerminalId || !requestForm.unloadTerminalId || !requestForm.consigneeId) {
     ElMessage.warning('请完整填写商品、装/卸货场站与收货方')
     return
   }
   if (requestForm.loadTerminalId === requestForm.unloadTerminalId) {
     ElMessage.warning('装货场站与卸货场站不能相同')
+    return
+  }
+  if (PROD) {
+    const r = await prodWrite('/contract/request', { ...requestForm, customerId: customer.value.id })
+    if (!r) return
+    requestDialog.value = false
+    ElMessage.success(`运输需求 ${r.id} 已提交，请等待平台处理`)
     return
   }
   const r = submitTransportRequest(customer.value.id, requestForm)
@@ -502,7 +523,12 @@ function confirmReconcile(s) {
     '确认对账',
     { type: 'info' }
   )
-    .then(() => {
+    .then(async () => {
+      if (PROD) {
+        const r = await prodWrite('/settlement/' + s.id + '/customerConfirm')
+        if (r) ElMessage.success('已确认对账结果')
+        return
+      }
       const r = customerConfirm(s)
       if (r && r.error) {
         ElMessage.error(r.error)
@@ -528,9 +554,16 @@ function openObjection(s) {
   objDialog.value = true
 }
 
-function submitObjection() {
+async function submitObjection() {
   if (!objForm.reason.trim()) {
     ElMessage.warning('请填写异议原因')
+    return
+  }
+  if (PROD) {
+    const r = await prodWrite('/settlement/' + objTarget.value.id + '/customerObjection', { reason: objForm.reason.trim() })
+    if (!r) return
+    objDialog.value = false
+    ElMessage.success('异议已提交，平台将重新对账，请等待新的对账结果')
     return
   }
   const r = customerObjection(objTarget.value, objForm.reason.trim())

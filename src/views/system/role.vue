@@ -114,6 +114,7 @@ import { saveRole as flowSaveRole, removeRole as flowRemoveRole, updateRolePerms
 import { useCollection } from '@/composables/useCollection'
 import { isProduction } from '@/mode'
 import { MENU_OPTIONS, ACTION_OPTIONS } from '@/permission'
+import { api, refreshDb } from '@/api'
 import { usePerm } from '@/permission'
 
 const { can } = usePerm()
@@ -128,6 +129,19 @@ if (PROD) {
   const onRefreshed = () => { rolesCol.refresh() }
   window.addEventListener('blms:refreshed', onRefreshed)
   onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
+}
+
+/* ===== Phase 4 引擎移除：生产模式写操作 = 后端权威（POST/PUT/DELETE 落库）+ 快照重水合 =====
+ * 角色域写联动 roles + rolePerms（OBJ_COLL），统一 refreshDb 拉回权威态。
+ * 后端业务错误经 ApiResult.success 包装为 data.error（HTTP 200），须检查 r.data.error。 */
+async function prodWrite(method, path, body) {
+  const r = await api(method, path, body)
+  if (!r.ok || (r.data && r.data.error)) {
+    ElMessage.error((r.data && r.data.error) || r.error || '操作失败')
+    return null
+  }
+  await refreshDb()
+  return r.data
 }
 
 /** 角色下实际用户数（按用户表实时统计，避免种子 userCount 过期） */
@@ -159,15 +173,20 @@ function openPerm(role) {
   permVisible.value = true
 }
 
-function savePerm() {
-  // 写操作下沉服务层（P2）：RBAC + 审计
+async function savePerm() {
+  // Phase 4 引擎移除：生产模式写操作 = 后端权威（RBAC + 审计）
   const name = currentRole.value.name
-  const r = updateRolePerms(
-    name,
-    permAll.value
-      ? { menus: null, actions: null }
-      : { menus: [...checkedMenus.value], actions: [...checkedActions.value] }
-  )
+  const body = permAll.value
+    ? { menus: null, actions: null }
+    : { menus: [...checkedMenus.value], actions: [...checkedActions.value] }
+  if (PROD) {
+    const r = await prodWrite('PUT', '/admin/role/' + name + '/perms', body)
+    if (!r) return
+    permVisible.value = false
+    ElMessage.success(`角色 ${name} 权限已更新并生效`)
+    return
+  }
+  const r = updateRolePerms(name, body)
   if (r && r.error) {
     ElMessage.error(r.error)
     return
@@ -185,8 +204,15 @@ function openDialog() {
   dialogVisible.value = true
 }
 
-function saveRole() {
-  // 写操作下沉服务层（P2）：RBAC + 查重 + 默认 deny 权限 + 正规 ID 生成 + 审计
+async function saveRole() {
+  // Phase 4 引擎移除：生产模式写操作 = 后端权威（RBAC + 查重 + 默认 deny 权限 + 正规 ID 生成 + 审计）
+  if (PROD) {
+    const r = await prodWrite('POST', '/admin/role', { name: form.name, code: form.code, description: form.description })
+    if (!r) return
+    dialogVisible.value = false
+    ElMessage.success('角色已创建（默认无权限，请在"权限"中授权）')
+    return
+  }
   const r = flowSaveRole({ name: form.name, code: form.code, description: form.description })
   if (r && r.error) {
     ElMessage.warning(r.error)
@@ -197,8 +223,12 @@ function saveRole() {
 }
 
 function removeRole(role) {
-  ElMessageBox.confirm(`确认删除角色 ${role.name}？`, '删除角色', { type: 'warning' }).then(() => {
-    // 写操作下沉服务层（P2）：内置角色/在用角色守卫 + RBAC + 审计
+  ElMessageBox.confirm(`确认删除角色 ${role.name}？`, '删除角色', { type: 'warning' }).then(async () => {
+    if (PROD) {
+      const r = await prodWrite('DELETE', '/admin/role/' + role.id)
+      if (r) ElMessage.success('角色已删除')
+      return
+    }
     const r = flowRemoveRole(role)
     if (r && r.error) {
       ElMessage.warning(r.error)

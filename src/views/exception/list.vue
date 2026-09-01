@@ -188,6 +188,7 @@ import { db } from '@/mock'
 import { resumeDispatch, acceptException, finishException, closeException as flowCloseException } from '@/mock/flow'
 import { useCollection } from '@/composables/useCollection'
 import { isProduction } from '@/mode'
+import { api, refreshDb } from '@/api'
 import { formatNum } from '@/utils'
 import { useTokens } from '@/utils/tokens'
 import { usePerm } from '@/permission'
@@ -265,6 +266,19 @@ if (PROD) {
   onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 }
 
+/* ===== Phase 4 引擎移除：生产模式写操作 = 后端权威（POST 落库）+ 快照重水合 =====
+ * 异常域写联动 dispatches/settlements/accidents/vehicles，统一 refreshDb 拉回权威态。
+ * 后端业务错误经 ApiResult.success 包装为 data.error（HTTP 200），须检查 r.data.error。 */
+async function prodWrite(path, body, method) {
+  const r = await api(method || 'POST', path, body)
+  if (!r.ok || (r.data && r.data.error)) {
+    ElMessage.error((r.data && r.data.error) || r.error || '操作失败')
+    return null
+  }
+  await refreshDb()
+  return r.data
+}
+
 /* ===== 抽屉 ===== */
 const drawerVisible = ref(false)
 const current = ref(null)
@@ -290,9 +304,16 @@ const relatedDispatch = computed(() =>
   current.value ? db.dispatches.find((d) => d.id === current.value.dispatchId) : null
 )
 
-function resume() {
+async function resume() {
   const d = relatedDispatch.value
   if (!d || d.status !== 'exception') return
+  // Phase 4 引擎移除：生产模式写操作 = 后端权威（状态守卫 + RBAC + 审计）
+  if (PROD) {
+    const r = await prodWrite('/dispatch/' + d.id + '/resume')
+    if (!r) return
+    ElMessage.success(`调度单 ${d.id} 已恢复运输`)
+    return
+  }
   const r = resumeDispatch(d)
   if (r && r.error) {
     ElMessage.error(r.error)
@@ -301,25 +322,55 @@ function resume() {
   ElMessage.success(`调度单 ${d.id} 已恢复运输`)
 }
 
-function accept() {
+async function accept() {
   if (!handleForm.handler) {
     ElMessage.warning('请先填写处理人')
+    return
+  }
+  if (PROD) {
+    const r = await prodWrite('/exception/' + current.value.id + '/accept', { handler: handleForm.handler })
+    if (!r) return
+    ElMessage.success(`已受理，处理人：${handleForm.handler}`)
     return
   }
   acceptException(current.value, handleForm.handler)
   ElMessage.success(`已受理，处理人：${handleForm.handler}`)
 }
 
-function finish() {
+async function finish() {
   if (!handleForm.result) {
     ElMessage.warning('请填写处理结果')
+    return
+  }
+  if (PROD) {
+    const r = await prodWrite('/exception/' + current.value.id + '/finish', { result: handleForm.result, cost: handleForm.cost })
+    if (!r) return
+    ElMessage.success('处置完成，可关闭归档')
     return
   }
   finishException(current.value, handleForm.result, handleForm.cost)
   ElMessage.success('处置完成，可关闭归档')
 }
 
-function closeException(row) {
+async function closeException(row) {
+  if (PROD) {
+    const r = await prodWrite('/exception/' + row.id + '/close')
+    if (!r) return
+    ElMessage.success(`异常单 ${row.id} 已关闭归档`)
+    // 联动调度单：若仍处异常状态，询问是否恢复运输
+    const d = db.dispatches.find((x) => x.id === row.dispatchId)
+    if (d && d.status === 'exception') {
+      ElMessageBox.confirm(
+        `关联调度单 ${d.id} 仍处于异常状态，是否恢复运输？`,
+        '恢复运输',
+        { confirmButtonText: '恢复', cancelButtonText: '暂不', type: 'warning' }
+      ).then(async () => {
+        const rr = await prodWrite('/dispatch/' + d.id + '/resume')
+        if (rr) ElMessage.success(`调度单 ${d.id} 已恢复运输`)
+      }).catch(() => {})
+    }
+    return
+  }
   flowCloseException(row)
   ElMessage.success(`异常单 ${row.id} 已关闭归档`)
   if (current.value?.id === row.id) {

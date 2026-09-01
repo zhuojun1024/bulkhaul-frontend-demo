@@ -166,14 +166,33 @@ const paged = computed(() => {
   return filtered.value.slice(start, start + pageSize.value)
 })
 
-function markRead(row) {
+async function markRead(row) {
+  // Phase 4 引擎移除：生产模式写操作 = 后端权威（POST 落库）+ 消息重取
+  if (PROD) {
+    const r = await api('POST', '/admin/messages/' + row.id + '/read')
+    if (!r.ok || (r.data && r.data.error)) {
+      ElMessage.error((r.data && r.data.error) || r.error || '操作失败')
+      return
+    }
+    await loadMessages()
+    return
+  }
   markMessageRead(row)
 }
 
-function markAll() {
+async function markAll() {
+  if (PROD) {
+    const r = await api('POST', '/admin/messages/readAll')
+    if (!r.ok || (r.data && r.data.error)) {
+      ElMessage.error((r.data && r.data.error) || r.error || '操作失败')
+      return
+    }
+    await loadMessages()
+    ElMessage.success(`已将 ${(r.data && r.data.count) || 0} 条消息标为已读`)
+    return
+  }
   const n = markAllMessagesRead()
   ElMessage.success(`已将 ${n} 条消息标为已读`)
-  if (PROD) loadMessages()
 }
 
 if (PROD) {
@@ -196,7 +215,18 @@ function openDnd() {
   dndDialog.value = true
 }
 
-function saveDnd() {
+async function saveDnd() {
+  // Phase 4 引擎移除：生产模式写操作 = 后端权威（按登录账号保存）
+  if (PROD) {
+    const r = await api('PUT', '/admin/dnd', { ...dndForm, mutedTypes: [...dndForm.mutedTypes] })
+    if (!r.ok || (r.data && r.data.error)) {
+      ElMessage.error((r.data && r.data.error) || r.error || '操作失败')
+      return
+    }
+    dndDialog.value = false
+    ElMessage.success('免打扰设置已保存')
+    return
+  }
   const r = setDnd({ ...dndForm, mutedTypes: [...dndForm.mutedTypes] })
   if (r && r.error) {
     ElMessage.error(r.error)
@@ -207,7 +237,13 @@ function saveDnd() {
 }
 
 /** 查看：标记已读并跳转对应模块 */
-function openMessage(row) {
+async function openMessage(row) {
+  if (PROD) {
+    const r = await api('POST', '/admin/messages/' + row.id + '/read')
+    if (r.ok && !(r.data && r.data.error)) loadMessages()
+    if (row.path) router.push(row.path)
+    return
+  }
   markMessageRead(row)
   if (row.path) router.push(row.path)
 }
