@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * D2 API 契约测试（防漂移）：前端 W 映射（src/api/index.js 写端点 method+path）vs 后端控制器路由
+ * D2 API 契约测试（防漂移）：前端 W 映射（src/api/endpoints.js 写端点 method+path）vs 后端控制器路由
  * （@RequestMapping + @Get/Post/Put/DeleteMapping）。不匹配即红（CI 拦截前后端契约漂移）。
  * 把 2026-08-30 手工扫描（hashStr/派车顺序/契约漂移都是"翻译错"）固化成自动化。
  *
@@ -23,8 +23,8 @@ if (!fs.existsSync(path.join(serverDir, 'src', 'main', 'java'))) {
 
 function norm(p) { return p.replace(/\$\{[^}]+\}/g, '{x}').replace(/\{[^}]+\}/g, '{x}') }
 
-// ---- 前端 W 映射（src/api/index.js）----
-const apiSrc = fs.readFileSync(path.join(webRoot, 'src', 'api', 'index.js'), 'utf8')
+// ---- 前端 W 映射（src/api/endpoints.js）----
+const apiSrc = fs.readFileSync(path.join(webRoot, 'src', 'api', 'endpoints.js'), 'utf8')
 const lines = apiSrc.split('\n')
 const W = []
 let cur = null
