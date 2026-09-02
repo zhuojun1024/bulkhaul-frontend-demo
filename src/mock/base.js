@@ -1,31 +1,20 @@
 import { reactive } from 'vue'
 import dayjs from 'dayjs'
-import { mulberry32, round } from '@/utils'
+import { mulberry32 } from '@/utils'
 
-/** 全局种子随机数，保证每次刷新数据一致 */
+/** 全局种子随机数（仅 dashboard 历史趋势用，保证每次刷新一致） */
 export const rng = mulberry32(20260815)
-export { round }
 
-/** 基于全局 rng 的随机工具，各 mock 模块直接调用（randInt(min,max) / pick(arr)） */
+/** 基于全局 rng 的随机工具（dashboard 历史趋势用） */
 export function randInt(min, max) {
   return Math.floor(rng() * (max - min + 1)) + min
-}
-export function pick(arr) {
-  return arr[Math.floor(rng() * arr.length)]
-}
-export function pickN(arr, n) {
-  const copy = [...arr]
-  const res = []
-  while (res.length < n && copy.length) {
-    res.push(copy.splice(Math.floor(rng() * copy.length), 1)[0])
-  }
-  return res
 }
 
 /** 当前时间基准（运行时取当天，保证数据“新鲜”） */
 export const NOW = dayjs()
 
-/** 中央数据库：所有 mock 数据挂载于此，reactive 保证跨页面联动 */
+/** 本地响应式镜像：后端 /api/snapshot 填充（hydrate/refreshDb），reactive 保证跨页面联动；
+ *  仅作读缓存供派生读（derived.js）与交叉引用列（find.*）使用，后端为唯一权威态 */
 export const db = reactive({
   commodities: [],
   customers: [],
@@ -84,32 +73,6 @@ export function tareOf(vehicle) {
   return +(10 + (n % 61) / 10).toFixed(2)
 }
 
-/** 进磅装货差异系数（确定性，按调度单 id 派生，±0.5%）：实际过磅净重非恒等于调度量
- *  P2 进磅实际过磅共用同一口径（内存引擎移除后由后端权威执行） */
-export function loadVarianceOf(dispatchId) {
-  const n = String(dispatchId || '').split('').reduce((s, ch) => s + ch.charCodeAt(0), 0)
-  return ((n % 1000) / 1000 - 0.5) * 0.01
-}
-
-/* ========== 基础词库 ========== */
-export const SURNAMES = '王李张刘陈杨黄赵吴周徐孙马朱胡郭何林罗郑梁谢宋唐许韩冯邓曹彭'.split('')
-export const GIVEN_NAMES = [
-  '伟', '芳', '娜', '敏', '静', '丽', '强', '磊', '军', '洋',
-  '勇', '杰', '涛', '明', '超', '霞', '平', '刚', '华', '建国',
-  '建军', '志强', '海燕', '文斌', '秀兰', '桂英', '德福', '春生',
-  '国庆', '卫东', '学文', '永强', '宝山', '铁柱', '大伟', '金龙',
-  '凤霞', '玉梅', '桂芳', '春梅', '志远', '建华', '立新', '海燕',
-  '少康', '国栋', '子涵', '雨泽', '浩然', '天佑'
-]
-
-export function randomName() {
-  return pick(SURNAMES) + pick(GIVEN_NAMES)
-}
-
-export function randomPhone() {
-  const prefix = pick(['135', '136', '137', '138', '139', '150', '151', '152', '158', '159', '186', '187', '188', '199'])
-  return prefix + String(randInt(10000000, 99999999))
-}
 
 /** 运输线路：装货场站 -> 卸货场站 */
 export const ROUTES = [
@@ -141,32 +104,3 @@ export const MAP_NODES = {
   T012: { x: 620, y: 395, label: '日照港' }
 }
 
-/** 车牌前缀池 */
-export const PLATE_PREFIX = ['冀B', '冀C', '冀E', '晋A', '晋B', '晋C', '蒙K', '辽B', '鲁B', '陕K']
-
-export function randomPlate() {
-  const prefix = pick(PLATE_PREFIX)
-  const letter = String.fromCharCode(65 + randInt(0, 25))
-  const num = String(randInt(10000, 99999))
-  return `${prefix}·${letter}${num}`
-}
-
-/** 生成 ID 序列号 */
-let seq = 0
-export function nextSeq(prefix) {
-  seq += 1
-  return `${prefix}-${String(seq).padStart(4, '0')}`
-}
-
-/** 正规 ID 生成（P2 架构下沉：后端正规 ID 生成的等价实现）
- *  扫描列表已有 ID 取最大序列 + 1：删除记录后不复用旧号、并发创建不冲突；
- *  替代旧的"数组长度 + 1"派生（删除后长度回退会导致 ID 复用） */
-export function genId(prefix, width, list = []) {
-  let max = 0
-  const re = new RegExp(`^${prefix}(\\d+)$`)
-  for (const x of list) {
-    const m = re.exec(String((x && x.id) || ''))
-    if (m) max = Math.max(max, parseInt(m[1], 10))
-  }
-  return prefix + String(max + 1).padStart(width, '0')
-}
