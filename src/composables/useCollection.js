@@ -8,8 +8,8 @@
  *  - key：复合缓存键（默认 name；同集合不同查询传不同 key 避免串缓存）
  *
  * 双环境：
- *  - 浏览器（USE_API=true）：GET /api/coll/{name} → 写缓存
- *  - node / 演示（USE_API=false）：镜像本地响应式 db（内存引擎为权威），过滤在本地应用
+ *  - 浏览器（USE_API=true）：GET /api/coll/{name} → 写缓存（后端权威）
+ *  - node（USE_API=false）：镜像本地响应式 db，过滤在本地应用
  *
  * 返回：{ data, loading, error, total, refresh, update, invalidate }
  */
@@ -27,7 +27,7 @@ function filtersOf(opts) {
   return f
 }
 
-/** 本地过滤（node/演示模式镜像；口径与后端 CollReadController.applyFilters 一致） */
+/** 本地过滤（node 态镜像；口径与后端 CollReadController.applyFilters 一致） */
 function applyLocalFilters(rows, f) {
   let out = rows
   if (f.status) out = out.filter((r) => r.status === f.status)
@@ -61,7 +61,7 @@ export function useCollection(name, opts = {}) {
     const cur = typeof opts === 'function' ? opts() : opts
     const f = filtersOf(cur)
     if (!USE_API) {
-      // node / 演示模式：镜像本地响应式 db（内存引擎为权威）+ 本地过滤
+      // node 态：镜像本地响应式 db + 本地过滤
       const rows = applyLocalFilters((db[name] || []).slice(), f)
       if (cur.page) {
         const size = cur.size || 20

@@ -303,7 +303,7 @@ function progressColor(status) {
 const unitLabel = (d) => find.vehicle(d.vehicleId)?.plate || d.unitNo || d.id
 
 /* ===== Phase 4 引擎移除：生产模式写操作 = 后端权威（POST 落库）+ 重取列表 =====
- * 不再依赖 flow.js 乐观改本地态；列表已监听 blms:refreshed 重取，此处显式 refresh 保证即时。 */
+ * 不再依赖本地乐观改态；列表已监听 blms:refreshed 重取，此处显式 refresh 保证即时。 */
 async function prodWrite(path, successMsg, body) {
   const r = await api('POST', path, body)
   if (!r.ok || (r.data && r.data.error)) {

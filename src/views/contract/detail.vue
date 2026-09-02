@@ -420,7 +420,7 @@ onMounted(loadDetail)
 watch(() => route.params.id, loadDetail)
 
 /* ===== Phase 4 引擎移除：生产模式写操作 = 后端权威（POST 落库）+ 快照重取 + 重取主记录 =====
- * 不再依赖 flow.js 乐观改本地态；后端为完整状态机（返回 final/step/changed/pending/billNo 与 flow 同形）。
+ * 不再依赖本地乐观改态；后端为完整状态机（返回 final/step/changed/pending/billNo 与 flow 同形）。
  * 成功返回 r.data，失败 ElMessage.error 返回 null。refreshDb 联动计划/车次/结算集合，loadDetail 重取权威合同。 */
 async function prodWrite(path, body) {
   const r = await api('POST', path, body)

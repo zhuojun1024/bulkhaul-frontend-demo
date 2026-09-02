@@ -154,9 +154,8 @@ const statusMap = {
   inactive: { label: '停用', type: 'info' }
 }
 
-/* ===== Phase 4 灰度：生产模式（薄客户端）——商品列表读后端 /api/coll/commodities =====
- * 演示模式（默认）保持本地内存引擎（db.commodities，现有断言不变）；
- * 生产模式：数据源切后端权威（useCollection 全量取），过滤逻辑两模式一致。 */
+/* ===== Phase 4 灰度：薄客户端——商品列表读后端 /api/coll/commodities =====
+ * 数据源后端权威（useCollection 全量取，内存引擎已移除 F3），过滤逻辑与后端一致。 */
 const listCol = useCollection('commodities', () => ({ key: 'commodities:list' }))
 const rows = computed(() => listCol.data.value)
 

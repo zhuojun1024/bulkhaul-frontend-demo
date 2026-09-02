@@ -63,7 +63,7 @@ async function bootstrap() {
     try {
       await hydrate()
     } catch (e) {
-      console.warn('[启动] hydrate 失败，回退种子数据：', e && e.message)
+      console.warn('[启动] hydrate 失败（后端不可达），db 保持空态，待网络恢复后刷新：', e && e.message)
     }
     // 恢复登录态（db.users 已由 hydrate 填充）；恢复失败（账号停用/不存在）则清登录态
     if (!userStore.restore()) {

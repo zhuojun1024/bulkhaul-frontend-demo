@@ -1,16 +1,13 @@
 /**
- * 真实 API 联调层（阶段 6 收尾；目录拆分：src/api 为接口层，src/mock 为内存业务引擎/种子数据）
+ * 真实 API 联调层（阶段 6 收尾；目录拆分：src/api 为接口层，src/mock 为派生读/会话态/调度）
  *
- * 架构：内存引擎（flow.js）保持同步 + 响应式（npm test 554 断言不变），
- * 浏览器中每个写操作在内存引擎同步执行后，后台 POST 到后端持久化，
- * 并从 /api/snapshot 拉取权威态刷新本地 db（后端为权威）。
- * node 环境（npm test）USE_API=false，纯内存，不发 HTTP。
+ * 架构（薄客户端，内存引擎已移除 F3）：后端为唯一权威态。浏览器中每个写操作 POST 到后端，
+ * 成功后从 /api/snapshot 拉取权威态刷新本地 db（refreshDb）。本地 db 由后端 hydrate，
+ * 仅作读缓存供派生读函数（src/mock/derived.js）与交叉引用列使用。
+ * node 环境（npm test）USE_API=false，不发 HTTP。
  *
- * 读/计算函数（settlementCandidates/creditCheck/outstandingOf/visibleDispatches/…）保持同步本地，
- * 读 db（db 由后端 hydrate）。写函数经 afterWrite 持久化。
- *
- * afterWrite(fnName, ...args)：args 为调用方传入的**原始位置参数**（与 flow.js 函数签名一致），
- * W 映射按位置索引 args[0]/args[1]… 构造 path/body。
+ * afterWrite(fnName, ...args)：args 为调用方传入的**原始位置参数**，
+ * W 映射按位置索引 args[0]/args[1]… 构造 path/body，写后触发 refreshDb 重取权威态。
  */
 import { db } from '../mock/base'
 import { invalidateMany, invalidateAllFor } from '../composables/collectionStore'
@@ -111,8 +108,9 @@ export async function hydrate() {
   return refreshDb()
 }
 
-/* ===== 写端点映射：flow.js 写函数名 → { method, path(args), body(args) } =====
- * args 为原始位置参数数组（与 flow.js 函数签名一致）。path/body 按 args[i] 取参。 */
+/* ===== 写端点映射：写操作名 → { method, path(args), body(args) } =====
+ * args 为原始位置参数数组。path/body 按 args[i] 取参（内存引擎移除 F3 后，
+ * 写操作名沿用原 flow.js 写函数名作为 W 映射键，afterWrite 按名查表 POST 后端）。 */
 const W = {
   /* 调度（/api/dispatch） */
   confirmLoad: { path: (a) => `/dispatch/${a[0].id}/confirmLoad` },
@@ -331,12 +329,12 @@ function expectedVersionFor(fnName, args) {
 }
 
 /**
- * 写操作持久化钩子：内存引擎同步执行成功后调用。
+ * 写操作持久化钩子：写操作发起后调用。
  * node 下 no-op；浏览器下按 W 映射 POST 后端，防抖 200ms 后从快照刷新权威态（合并连续写）。
  * B3 乐观锁：核心集合既有记录写附带 expectedVersion（不匹配 → 409，经 window 事件提示"数据已变更，请刷新"）。
  * 后端拒绝（RBAC/守卫）或网络失败时 console.warn 并刷新回权威态，不阻塞 UI。
- * @param {string} fnName flow.js 写函数名
- * @param {...*} args 原始位置参数（与 flow.js 函数签名一致）
+ * @param {string} fnName 写操作名（W 映射键，沿用原 flow.js 写函数名）
+ * @param {...*} args 原始位置参数（W 映射按位置索引取参）
  */
 export function afterWrite(fnName, ...args) {
   if (!USE_API) return

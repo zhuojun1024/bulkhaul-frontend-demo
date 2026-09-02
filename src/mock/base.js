@@ -85,7 +85,7 @@ export function tareOf(vehicle) {
 }
 
 /** 进磅装货差异系数（确定性，按调度单 id 派生，±0.5%）：实际过磅净重非恒等于调度量
- *  P2 进磅实际过磅：种子磅单（weighing.js）与运行时过磅（flow.js）共用同一口径，避免循环导入 */
+ *  P2 进磅实际过磅共用同一口径（内存引擎移除后由后端权威执行） */
 export function loadVarianceOf(dispatchId) {
   const n = String(dispatchId || '').split('').reduce((s, ch) => s + ch.charCodeAt(0), 0)
   return ((n % 1000) / 1000 - 0.5) * 0.01

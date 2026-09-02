@@ -603,9 +603,8 @@ const filtered = computed(() => {
   })
 })
 
-/* ===== Phase 4 阶段 3：生产模式（薄客户端）——合同列表走服务端分页 + 过滤（/api/coll/contracts）=====
- * 演示模式（默认）保持本地内存引擎（filtered/paged 客户端分页，现有断言不变）；
- * 生产模式：行/总数/过滤/分页全部由后端权威，本地 db 仅用于列内交叉引用（find.*）。 */
+/* ===== Phase 4 阶段 3：薄客户端——合同列表走服务端分页 + 过滤（/api/coll/contracts）=====
+ * 行/总数/过滤/分页全部由后端权威（内存引擎已移除 F3），本地 db 仅用于列内交叉引用（find.*）。 */
 const listCol = useCollection('contracts', () => ({
   page: page.value,
   size: pageSize.value,
@@ -631,7 +630,7 @@ window.addEventListener('blms:refreshed', onRefreshed)
 onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 
 /* ===== Phase 4 引擎移除：生产模式写操作 = 后端权威（POST/PUT 落库）+ 快照重取 =====
- * 不再依赖 flow.js 乐观改本地态；后端为完整状态机（返回 id/final/step/changed/changes/billNo/status 与 flow 同形）。
+ * 不再依赖本地乐观改态；后端为完整状态机（返回 id/final/step/changed/changes/billNo/status 与 flow 同形）。
  * prodCall 成功返回 r.data（供调用方取 id/final/step 等），失败 ElMessage.error 并返回 null。
  * refreshDb 拉全量快照（合同 + 运价卡 + 联动集合）并派发 blms:refreshed 触发本页重取。 */
 async function prodCall(method, path, body) {

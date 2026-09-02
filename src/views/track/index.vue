@@ -297,7 +297,7 @@ const allDispatches = computed(() => dispatchesCol.data.value)
 const scopedDispatches = computed(() => dispatchesCol.data.value)
 const scopeRegions = computed(() => dataScopeOf().regions)
 
-/* 围栏参数（生产模式本地编辑态；演示模式直写 db.fenceConfig 保持原行为） */
+/* 围栏参数（本地编辑态，保存时 PUT 后端 fenceConfig 权威） */
 const fenceForm = reactive({ enabled: false, deviateLimit: 15, delayMinutes: 30 })
 let fencePending = null
 let fencePutTimer = null

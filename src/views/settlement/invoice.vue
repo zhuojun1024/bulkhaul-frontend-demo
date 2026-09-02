@@ -192,7 +192,7 @@ window.addEventListener('blms:refreshed', onRefreshed)
 onUnmounted(() => window.removeEventListener('blms:refreshed', onRefreshed))
 
 /* ===== Phase 4 引擎移除：生产模式写操作 = 后端权威（POST 落库）+ 列表重取 =====
- * 不再依赖 flow.js 乐观改本地态；后端为完整状态机（返回 invoiceNo 与 flow 同形）。 */
+ * 不再依赖本地乐观改态；后端为完整状态机（返回 invoiceNo 与 flow 同形）。 */
 async function prodWrite(path, body) {
   const r = await api('POST', path, body)
   if (!r.ok || (r.data && r.data.error)) {

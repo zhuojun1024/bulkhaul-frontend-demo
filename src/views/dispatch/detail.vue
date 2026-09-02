@@ -265,9 +265,8 @@ const route = useRoute()
 const router = useRouter()
 const { can } = usePerm()
 
-/* ===== Phase 4 阶段 4：生产模式读聚合端点（薄客户端，单次往返取详情读面） =====
- * 演示模式（默认回退）：find/db 本地响应式（现有断言不变）。
- * 生产模式：onMounted/换单时 GET /api/dispatch/{id}/detail 取权威读面（dispatch/commodity/
+/* ===== Phase 4 阶段 4：薄客户端读聚合端点（单次往返取详情读面） =====
+ * onMounted/换单时 GET /api/dispatch/{id}/detail 取权威读面（dispatch/commodity/
  *   vehicle/driver/loadTerminal/unloadTerminal），写入仍走 flow（乐观改 detail.dispatch +
  *   afterWrite 落库）；磅单读 db.weighings（flow 乐观 push + refreshDb 同步，与端点同源）。
  *   不监听 blms:refreshed 重取，避免 200ms 防抖刷新早于 PUT 落库而回写种子态覆盖乐观态
@@ -341,8 +340,8 @@ const timeline = computed(() => {
   return steps
 })
 
-/* ===== Phase 4 引擎移除：生产模式写操作 = 后端权威（POST 落库）+ 重取权威详情 =====
- * 不再依赖 flow.js 乐观改本地态（内存引擎移除后写路径纯后端）；演示模式保留 flow 乐观态。
+/* ===== Phase 4 引擎移除：写操作 = 后端权威（POST 落库）+ 重取权威详情 =====
+ * 不再依赖本地乐观改态（内存引擎已移除 F3，写路径纯后端）。
  * 后端为完整状态机（doConfirmLoad 等价前端，联动磅单/计划/结算），重取后 UI 与后端同源。 */
 async function prodWrite(path, successMsg, body) {
   const r = await api('POST', path, body)

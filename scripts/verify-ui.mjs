@@ -1,6 +1,6 @@
 /**
  * UI 层 e2e 冒烟测试（puppeteer-core + 本机 Chrome/Edge，弥补 D1：UI 接线零覆盖）
- * 覆盖场景（每场景独立浏览器上下文，localStorage 全新种子数据）：
+ * 覆盖场景（每场景独立浏览器上下文，后端重置回种子态 resetDemo）：
  *  1. admin 登录 → 工作台 → 调度列表 → 待装货车次详情 → 确认装货（主链路真实操作）
  *  2. 结算专员（user03）直改 URL 访问 /dispatch → 被路由守卫拦截回工作台，侧边栏无该菜单
  *  3. 只读用户（user16）可访问调度列表但无任何操作按钮
@@ -1524,16 +1524,14 @@ try {
     check('环节10：单证下载触发 Blob（text/html 电子单证 HTML）', dlResult.captured && dlResult.type.includes('text/html') && dlResult.hasTable && dlResult.isDoc)
     await ctx.close()
   }
-  /* ===== 场景 20：Phase 4 阶段 3 生产模式（薄客户端）合同列表——服务端分页 + 过滤 + 交叉引用 =====
-   * 演示模式（默认）由现有场景 1-19 覆盖；本场景验证生产模式（localStorage blms_app_mode=production）
-   * 下合同列表读服务端权威态：分页总数=后端全量、状态过滤=后端过滤数、交叉引用列（客户名）经 hydrate 本地 db 渲染。 */
-  console.log('== 20. 生产模式：合同列表服务端分页 + 过滤（薄客户端） ==')
+  /* ===== 场景 20：Phase 4 阶段 3 薄客户端合同列表——服务端分页 + 过滤 + 交叉引用 =====
+   * 内存引擎已移除（F3），前端恒为薄客户端：合同列表读服务端权威态——分页总数=后端全量、
+   * 状态过滤=后端过滤数、交叉引用列（客户名）经 hydrate 本地 db 渲染。 */
+  console.log('== 20. 薄客户端：合同列表服务端分页 + 过滤 ==')
   await resetDemo() // 回种子态
   {
     const { ctx, page } = await newPage(browser)
-    // 生产模式：登录前设置 localStorage 覆盖（合同组件 setup 读 isProduction()）
     await page.goto(BASE + '/#/login', { waitUntil: 'networkidle0' })
-    await page.evaluate(() => localStorage.setItem('blms_app_mode', 'production'))
     await login(page, 'admin', '123456')
     // 后端权威值（admin 范围 → 与 UI 同口径；snapshot 与 /api/coll 均按当前操作人数据范围过滤）
     const snap = await getBackendSnapshot()
@@ -1578,7 +1576,6 @@ try {
   {
     const { ctx, page } = await newPage(browser)
     await page.goto(BASE + '/#/login', { waitUntil: 'networkidle0' })
-    await page.evaluate(() => localStorage.setItem('blms_app_mode', 'production'))
     await login(page, 'admin', '123456')
     // 后端权威：取一张有磅单的调度单（详情读面非空，磅单表可断言行数）
     const snap = await getBackendSnapshot()
@@ -1615,7 +1612,6 @@ try {
   {
     const { ctx, page } = await newPage(browser)
     await page.goto(BASE + '/#/login', { waitUntil: 'networkidle0' })
-    await page.evaluate(() => localStorage.setItem('blms_app_mode', 'production'))
     // fetch 监听：记录页面发出的 /api 调用（证明薄客户端走后端聚合端点）
     await page.evaluate(() => {
       window.__apiCalls = []

@@ -281,7 +281,7 @@ function progressColor(status) {
 
 /* ===== Phase 4 引擎移除：生产模式写操作 = 后端权威（POST 落库）+ 快照重取 =====
  * 本页读 db.dispatches（生产模式由 /api/snapshot hydrate）；写后 refreshDb 更新响应式 db，
- * myDispatches 计算属性自动重渲染。不再依赖 flow.js 乐观改本地态。成功返回 r.data，失败 ElMessage.error 返回 null。 */
+ * myDispatches 计算属性自动重渲染。不再依赖本地乐观改态。成功返回 r.data，失败 ElMessage.error 返回 null。 */
 async function prodWrite(path, body) {
   const r = await api('POST', path, body)
   if (!r.ok || (r.data && r.data.error)) {
