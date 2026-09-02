@@ -208,7 +208,11 @@ import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, Money } from '@element-plus/icons-vue'
 import StatusTag from '@/components/StatusTag.vue'
-import { db, find } from '@/mock'
+import { db } from '@/mock'
+// 本视图交叉引用查找（原 @/mock find 下沉，仅声明本视图用到的键）
+const find = {
+  customer: (id) => db.customers.find((c) => c.id === id),
+}
 import { outstandingOf, prepaymentOf, prepaymentAvailable } from '@/mock/derived'
 import { api, refreshDb } from '@/api'
 import { usePerm } from '@/permission'

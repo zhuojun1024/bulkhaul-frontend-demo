@@ -197,7 +197,12 @@ import { Search, Download, Refresh, Setting, Plus } from '@element-plus/icons-vu
 import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import StatusTag from '@/components/StatusTag.vue'
-import { db, find } from '@/mock'
+import { db } from '@/mock'
+// 本视图交叉引用查找（原 @/mock find 下沉，仅声明本视图用到的键）
+const find = {
+  commodity: (id) => db.commodities.find((c) => c.id === id),
+  warehouse: (id) => db.warehouses.find((w) => w.id === id),
+}
 import { inventoryAlerts, safetyStockOf } from '@/mock/derived'
 import { useCollection } from '@/composables/useCollection'
 import { api } from '@/api'

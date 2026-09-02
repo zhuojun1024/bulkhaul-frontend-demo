@@ -124,7 +124,16 @@ import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, Position } from '@element-plus/icons-vue'
 import StatusTag from '@/components/StatusTag.vue'
-import { db, find } from '@/mock'
+import { db } from '@/mock'
+// 本视图交叉引用查找（原 @/mock find 下沉，仅声明本视图用到的键）
+const find = {
+  commodity: (id) => db.commodities.find((c) => c.id === id),
+  terminal: (id) => db.terminals.find((t) => t.id === id),
+  vehicle: (id) => db.vehicles.find((v) => v.id === id),
+  driver: (id) => db.drivers.find((d) => d.id === id),
+  contract: (id) => db.contracts.find((c) => c.id === id),
+  plan: (id) => db.plans.find((p) => p.id === id),
+}
 import { BUSY_STATUSES, creditCheck, isRoadMode, vehicleInspectionExpired } from '@/mock/derived'
 import { api, refreshDb } from '@/api'
 import { formatNum } from '@/utils'
