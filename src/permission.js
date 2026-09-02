@@ -1,6 +1,6 @@
 import { computed } from 'vue'
 import { useUserStore } from '@/store'
-import { db } from '@/mock'
+import { db } from '@/data'
 import { ROLE_MENUS, ROLE_ACTIONS, MENU_OPTIONS, ACTION_OPTIONS } from './permission-table'
 
 export { ROLE_MENUS, ROLE_ACTIONS, MENU_OPTIONS, ACTION_OPTIONS }

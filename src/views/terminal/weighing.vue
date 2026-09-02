@@ -164,15 +164,15 @@ import { ElMessage } from 'element-plus'
 import { Search, Download, Refresh, Plus } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
-import { db } from '@/mock'
-// 本视图交叉引用查找（原 @/mock find 下沉，仅声明本视图用到的键）
+import { db } from '@/data'
+// 本视图交叉引用查找（原 @/data find 下沉，仅声明本视图用到的键）
 const find = {
   terminal: (id) => db.terminals.find((t) => t.id === id),
   vehicle: (id) => db.vehicles.find((v) => v.id === id),
 }
 import { api, refreshDb } from '@/api'
 import { useCollection } from '@/composables/useCollection'
-import { tareOf, isRoadMode } from '@/mock/derived'
+import { tareOf, isRoadMode } from '@/data/derived'
 import { formatNum } from '@/utils'
 import dayjs from 'dayjs'
 import { usePerm } from '@/permission'

@@ -1,15 +1,15 @@
 /**
- * 真实 API 联调层（阶段 6 收尾；目录拆分：src/api 为接口层，src/mock 为派生读/会话态/调度）
+ * 真实 API 联调层（阶段 6 收尾；目录拆分：src/api 为接口层，src/data 为本地数据层/派生读/会话态/调度）
  *
  * 架构（薄客户端，内存引擎已移除 F3）：后端为唯一权威态。浏览器中每个写操作 POST 到后端，
  * 成功后从 /api/snapshot 拉取权威态刷新本地 db（refreshDb）。本地 db 由后端 hydrate，
- * 仅作读缓存供派生读函数（src/mock/derived.js）与交叉引用列使用。
+ * 仅作读缓存供派生读函数（src/data/derived.js）与交叉引用列使用。
  * node 环境（npm test）USE_API=false，不发 HTTP。
  *
  * afterWrite(fnName, ...args)：args 为调用方传入的**原始位置参数**，
  * W 映射按位置索引 args[0]/args[1]… 构造 path/body，写后触发 refreshDb 重取权威态。
  */
-import { db } from '../mock/base'
+import { db } from '../data/base'
 import { invalidateMany, invalidateAllFor } from '../composables/collectionStore'
 
 /** 浏览器环境（有 localStorage）启用真实 API；node 测试态关闭 */

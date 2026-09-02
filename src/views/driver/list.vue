@@ -174,7 +174,7 @@ import { Search, Download, Refresh, Plus, Upload } from '@element-plus/icons-vue
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import ImportDialog from '@/components/ImportDialog.vue'
-import { db } from '@/mock'
+import { db } from '@/data'
 import { useCollection } from '@/composables/useCollection'
 import { api } from '@/api'
 import { formatNum } from '@/utils'

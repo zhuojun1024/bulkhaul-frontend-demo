@@ -2,7 +2,7 @@
 
 纯前端（Vue 3）大宗物流全链路业务演示系统。覆盖 **合同 → 计划 → 调度 → 在途执行 → 异常 → 结算 → 对账 → 开票 → 收款 → 单证 → 报表** 的完整业务闭环，并内置客户门户、司机端（H5）、安全/保险、仓储、消息中心与 RBAC 权限体系。
 
-所有业务逻辑集中在 mock 服务层（`src/mock/flow.js`），按"可平移为后端 endpoint"的标准设计：状态机守卫、RBAC 单点校验、乐观锁、审计日志、定时任务模拟均在此层实现，视图层只读展示 + 调用服务层。
+薄客户端架构：业务状态机、RBAC 单点校验、乐观锁、审计日志、定时任务均由后端（bulkhaul-server）权威执行；前端 `src/api` 为接口层（读 /api/coll + 聚合端点，写 POST + 写后重取），`src/data` 为本地数据层（后端快照镜像 db + 派生读 + 看板聚合 + 定时任务事件桥），视图层只读展示 + 调用接口层。
 
 ---
 
@@ -16,7 +16,7 @@
 | UI | Element Plus 2.x（CSS 变量主题覆盖）+ 自研设计令牌体系 |
 | 图表 | ECharts 6（经 `useTokens()` 取色，与 CSS 令牌同源） |
 | 其他 | dayjs（时间）、xlsx（Excel 导入）、nprogress（路由进度）、screenfull |
-| 测试 | 服务层冒烟测试（纯 Node）+ UI E2E（puppeteer-core + 本机 Chrome/Edge） |
+| 测试 | 薄客户端数据层测试（纯 Node）+ 前后端契约 + UI E2E（puppeteer-core + 本机 Chrome/Edge） |
 | CI | GitHub Actions：安装 → 冒烟测试 → 构建 |
 
 ## 快速开始
@@ -25,8 +25,9 @@
 npm install
 npm run serve        # 开发（热更新）
 npm run build        # 生产构建
-npm test             # 服务层冒烟测试（verify-flow：数据一致性 + 状态机闭环 + RBAC + 35 个环节校验）
-npm run test:ui      # UI E2E（19 组场景，需本机 Chrome/Edge，先 build）
+npm test             # 薄客户端数据层测试（verify-api 35 + verify-collection 20）
+npm run test:contract # 前后端契约一致性（97 端点）
+npm run test:ui      # UI E2E（23 组场景 / 110 断言，需后端 8081，先 build）
 npm run lint         # ESLint
 ```
 
@@ -43,7 +44,7 @@ npm run lint         # ESLint
 | `user16` | 只读用户 | 全菜单只读，无任何操作按钮 |
 | 司机手机号 | 司机 | 司机端 H5：接单/扫码装货/发车/到达/扫码卸货签收/收入（手机号见司机管理列表） |
 
-> 登录失败 5 次锁定 5 分钟（刷新后仍生效）。数据持久化于 localStorage，可在页面重置演示数据；快照带版本号（当前 v10），结构升级自动丢弃旧快照。
+> 登录失败 5 次锁定 5 分钟（刷新后仍生效，后端权威）。数据持久化于后端（MySQL），可在页面"重置演示数据"（POST /api/admin/reset-demo）。
 
 ---
 
@@ -54,22 +55,25 @@ npm run lint         # ESLint
 ```
 ┌────────────────────────────────────────────────────────────┐
 │ 视图层  src/views/**（30+ 页面）                            │
-│   只读展示 + 表单交互；所有写操作调用服务层；                 │
-│   usePerm() 控制按钮显隐（体验层）                          │
+│   只读展示 + 表单交互；读 useCollection/聚合端点，           │
+│   写 api POST + 写后重取；usePerm() 控制按钮显隐（体验层）    │
 ├────────────────────────────────────────────────────────────┤
-│ 服务层  src/mock/flow.js（业务流转中枢，~3300 行）           │
-│   状态机 + 守卫 + RBAC 单点校验（requireAction）+ 联动回卷   │
-│   + 审计日志 + 消息通知；对接后端时本层函数即 endpoint 逻辑   │
+│ 接口层  src/api（薄客户端，后端为唯一权威态）                 │
+│   读：/api/coll/{name}（行级数据范围过滤）+ 聚合端点；        │
+│   写：POST /api/**（W 端点映射）+ refreshDb 快照重取；        │
+│   乐观锁 expectedVersion（409 → 提示刷新）                   │
 ├────────────────────────────────────────────────────────────┤
-│ 领域种子  src/mock/*.js（17 个业务域）                      │
-│   按依赖顺序导入，确定性种子随机（mulberry32 固定种子），     │
-│   刷新数据一致；跨域派生数据（运价/需求/流水）独立随机源      │
+│ 本地数据层  src/data（后端快照镜像，非数据源）                │
+│   base.js     db（reactive 镜像，/api/snapshot 填充）        │
+│               + 线路/地图常量                               │
+│   derived.js  纯派生读 + 会话态（轨迹/信用/结算/数据权限…）   │
+│   dashboard.js 看板/工作台聚合 + 静态演示数据（天气/公告）     │
+│   document.js 电子单证派生视图（磅单/签收单/发票）            │
+│   scheduler.js 定时任务桥（3s tick + 事件分发）              │
 ├────────────────────────────────────────────────────────────┤
 │ 基础设施                                                  │
-│   base.js   中央 db（reactive）+ 线路/地图/词库/ID 生成      │
-│   persist.js localStorage 快照（版本化 + 防抖 + 并发保护）   │
-│   scheduler.js 全局定时任务（模拟后端 cron/遥测管道）        │
 │   permission.js / permission-table.js RBAC 判定与权限表     │
+│   composables/useCollection.js 集合读缓存 + 本地过滤         │
 └────────────────────────────────────────────────────────────┘
 ```
 
@@ -77,7 +81,7 @@ npm run lint         # ESLint
 
 ```
 src/
-├── main.js                 # 入口：持久化/定时任务/全局错误兜底/路由进度条
+├── main.js                 # 入口：快照水合/定时任务/全局错误兜底/路由进度条
 ├── App.vue
 ├── router/index.js         # 菜单路由 + 隐藏路由（详情/新增页）+ 登录与菜单权限守卫
 ├── permission.js           # RBAC 运行时判定（menuAllowed / actionAllowed / usePerm）
@@ -86,7 +90,9 @@ src/
 ├── layout/                 # 布局：Sidebar（自研 AppMenu 浅色菜单）/ Navbar / TagsView / AppMain
 ├── components/             # 通用组件：PageHeader / StatCard / StatusTag / ChartCard / ImportDialog
 ├── views/                  # 页面（按业务域分目录，见"功能模块"）
-├── mock/                   # 服务层 + 领域种子 + 基础设施（见上）
+├── api/                    # 接口层：api() 客户端 + W 写端点映射 + refreshDb（见上）
+├── data/                   # 本地数据层：db 镜像 + 派生读 + 看板聚合 + 单证 + 调度桥（见上）
+├── composables/            # useCollection（集合读缓存）等
 ├── styles/                 # tokens.css（设计令牌）+ index.css（EP 主题映射 + 全局样式）
 └── utils/                  # 格式化 / 种子随机 / 密码哈希 / useTokens
 ```
@@ -96,7 +102,7 @@ src/
 1. **RBAC 四层权限，默认拒绝**
    - 菜单级：`ROLE_MENUS` 控制侧边栏可见菜单与路由访问（路由守卫强制）；
    - 按钮级：`ROLE_ACTIONS` 操作码控制关键操作按钮显隐（`usePerm().can()`）；
-   - 服务层单点校验：`requireAction` 在每个写操作入口按操作人角色校验——前端按钮权限仅为体验层，改 localStorage 也无法绕过；
+   - 后端单点校验：`requireAction` 在每个写端点入口按操作人角色校验（服务端权威）——前端按钮权限仅为体验层，改 localStorage 也无法绕过；
    - 行级数据权限：`dataScopes` 按装货侧场站区域过滤列表（如调度员仅见华北线路）。
    - 权限表数据化：`db.rolePerms` 可在角色管理页编辑并持久化，运行时优先于内置表；未注册角色（含空角色）一律拒绝。
 
@@ -123,16 +129,16 @@ src/
    `scheduler.js` 全局 3s tick，独立于页面生命周期：GPS 遥测推进在途进度 → 电子围栏事件（轨迹偏离/超 ETA 自动生成异常单）→ 逾期校准 → 异常升级（待受理超 2h 升级提醒、超 8h 督办）→ 合同审批催办（超 24h）。UI 通过 `onSchedulerEvent` 订阅，对接后等价 WebSocket 推送。
 
 6. **登录安全**
-   图形验证码（一次性、60s 有效、SVG 渲染）+ 密码 SHA-256 哈希存储（不落明文）+ 连续 5 次失败锁定 5 分钟；未登录直调服务层按"未登录"态默认拒绝；登出清除服务层 operator（审计日志不记在旧用户名下）。
+   图形验证码（一次性、60s 有效、SVG 渲染）+ 密码 bcrypt 哈希存储（不落明文）+ 连续 5 次失败锁定 5 分钟（后端权威）；未登录直调接口按"未登录"态默认拒绝（401）；登出清除本地登录态（审计日志不记在旧用户名下）。
 
 7. **消息中心**
    关键业务事件驱动（审批/调度/异常/结算/需求/系统），按 RBAC 操作码定向到目标角色（审批消息只发审批人）；支持免打扰（时段 + 类型屏蔽，跨零点）；未读角标。
 
 8. **数据持久化**
-   种子数据加载后恢复同版本 localStorage 快照（刷新不丢数据）；深度监听 db 防抖 800ms 写快照；快照带版本号与写入时间戳（多标签页冲突时跳过写入避免静默覆盖）；日志/消息设上限（1000/500）防 5MB 配额撑爆。
+   后端为唯一权威态（MySQL 持久化）；前端 db 为后端快照的本地响应式镜像（/api/snapshot 水合），写操作 POST 后端后 refreshDb 重取；"重置演示数据"调 POST /api/admin/reset-demo 回种子态。
 
 9. **确定性种子数据**
-   全局 `mulberry32(20260815)` 固定种子，刷新数据一致；跨域派生数据（运价表/客户需求/司机评分）使用独立随机源，不扰动全局序列；皮重/装货差异等按 ID 确定性派生，种子与运行时共用同一口径。
+   后端种子（gen-biz-seed.mjs 生成 biz_* 表）固定可复现；前端看板历史趋势用 `mulberry32(20260815)` 固定种子（后端无对应口径，本地生成）；皮重/装货差异等按 ID 确定性派生，前后端共用同一口径。
 
 10. **设计系统**
     设计令牌（CSS 自定义属性）单一来源：`tokens.css`（原始色阶 → 语义令牌）→ `index.css`（Element Plus 主题映射）→ `useTokens()`（JS/ECharts 场景）→ `design-tokens.json`（Figma 工具链）。WCAG AA 对比度校验，详见 [docs/design-system.md](docs/design-system.md)。侧边栏为自研浅色菜单组件 `AppMenu`（手风琴/收起态弹层/键盘导航/动效降级）。
@@ -201,8 +207,9 @@ src/
 
 | 层级 | 脚本 | 说明 |
 |---|---|---|
-| 服务层冒烟 | `npm test`（`scripts/verify-flow.mjs`） | 纯 Node：mock 数据一致性、状态机闭环、RBAC 默认拒绝、35 个业务环节逐条校验 |
-| UI E2E | `npm run test:ui`（`scripts/verify-ui.mjs`） | puppeteer-core + 本机 Chrome/Edge：19 组场景（登录/主链路操作/权限拦截/门户/司机端/锁定/回归） |
+| 数据层 | `npm test`（verify-api + verify-collection） | 纯 Node：W 端点契约 + api() 客户端 + refreshDb + collectionStore/useCollection 数据层（55 断言） |
+| 契约 | `npm run test:contract` | 前后端 97 端点 method/path 一致性 |
+| UI E2E | `npm run test:ui`（`scripts/verify-ui.mjs`） | puppeteer-core + 本机 Chrome/Edge：23 组场景 / 110 断言（登录/主链路/权限拦截/门户/司机端/锁定/回归/薄客户端），写后断言走 waitForBackend 后端权威 |
 | 操作列宽度 | `node scripts/verify-actioncol.mjs` | puppeteer-core：ActionColumn 自适应宽度实测（只读用户 1 按钮 80px vs 管理员 5 按钮 250px，随权限收敛） |
 | CI | `.github/workflows/ci.yml` | push/PR 触发：安装 → 冒烟测试 → 构建 |
 
@@ -210,4 +217,4 @@ src/
 
 ## 定位说明
 
-本项目为**演示/方案展示**定位：整个 `db` 与校验逻辑在浏览器端，真实安全需后端承接。服务层按"对接后端时函数即 endpoint 校验逻辑"的标准编写（RBAC 单点校验、乐观锁、ID 生成、登录鉴权均已按后端口径实现），可作为后端接口设计的直接参照。
+本项目为**演示/方案展示**定位，已对接后端（bulkhaul-server）：业务状态机、RBAC 单点校验、乐观锁、ID 生成、登录鉴权、审计日志均由后端权威执行，前端为薄客户端（读 /api/coll + 聚合端点，写 POST + 写后重取）。原前端 mock 服务层（flow.js 状态机 + 种子）已移除，其业务口径作为后端接口设计的参照。

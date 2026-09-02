@@ -15,7 +15,7 @@
  */
 import { computed } from 'vue'
 import { api, USE_API } from '@/api'
-import { db } from '@/mock/base'
+import { db } from '@/data/base'
 import { getCollection, setRows, invalidate as invalidateStore, optimisticUpdate, setLoading, setError } from './collectionStore'
 
 /** 过滤条件（本地镜像 + 查询串共用） */

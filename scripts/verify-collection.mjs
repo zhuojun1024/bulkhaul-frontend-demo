@@ -3,7 +3,7 @@
  * 运行：node --import ./scripts/register.mjs scripts/verify-collection.mjs
  * 纯逻辑，不依赖 HTTP（node 下 USE_API=false，useCollection 镜像本地 db）。
  */
-import { db } from '../src/mock/base.js'
+import { db } from '../src/data/base.js'
 import {
   getCollection, setRows, invalidate, optimisticUpdate, setLoading, setError, resetStore
 } from '../src/composables/collectionStore.js'

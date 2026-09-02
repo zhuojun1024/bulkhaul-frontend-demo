@@ -13,7 +13,7 @@
  * node 态 USE_API=false：api() 仍可直接调用（仅 afterWrite/hydrate 门控 USE_API），fetch 以 stub 注入。
  */
 import { W, api, refreshDb, afterWrite, USE_API } from '@/api'
-import { db } from '@/mock/base'
+import { db } from '@/data/base'
 
 let pass = 0, fail = 0
 function check(name, cond) {

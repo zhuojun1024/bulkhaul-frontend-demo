@@ -3,7 +3,7 @@
  * 策略：每个集合一张 biz_<coll> 表（id 标量 + payload JSON 整条记录）
  * 运行：node --import ./scripts/register.mjs scripts/gen-biz-seed.mjs
  */
-import { db } from '../src/mock/index.js'
+import { db } from '../src/data/index.js'
 import { writeFileSync } from 'node:fs'
 
 const COLL = [

@@ -1,7 +1,7 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import Layout from '@/layout/index.vue'
 import { menuAllowed } from '@/permission'
-import { db } from '@/mock'
+import { db } from '@/data'
 
 /**
  * 菜单路由（侧边栏展示）

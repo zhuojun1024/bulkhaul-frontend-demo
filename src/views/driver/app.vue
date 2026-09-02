@@ -204,15 +204,15 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Van, CircleCheck, Aim, SwitchButton } from '@element-plus/icons-vue'
-import { db } from '@/mock'
-// 本视图交叉引用查找（原 @/mock find 下沉，仅声明本视图用到的键）
+import { db } from '@/data'
+// 本视图交叉引用查找（原 @/data find 下沉，仅声明本视图用到的键）
 const find = {
   commodity: (id) => db.commodities.find((c) => c.id === id),
   customer: (id) => db.customers.find((c) => c.id === id),
   terminal: (id) => db.terminals.find((t) => t.id === id),
   contract: (id) => db.contracts.find((c) => c.id === id),
 }
-import { loadCodeOf, unloadCodeOf, driverIncomeOf } from '@/mock/derived'
+import { loadCodeOf, unloadCodeOf, driverIncomeOf } from '@/data/derived'
 import { formatMoney } from '@/utils'
 import dayjs from 'dayjs'
 import { api, refreshDb } from '@/api'

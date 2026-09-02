@@ -2,8 +2,8 @@
  * 角色权限表（唯一数据源）
  * 菜单级：ROLE_MENUS 控制侧边栏可见菜单与路由访问；null 表示全部菜单
  * 按钮级：ROLE_ACTIONS 控制关键操作按钮；null 表示全部操作，[] 表示只读
- * 本文件为纯数据、零依赖：permission.js（运行时判定）与 mock/system.js（种子 db.rolePerms）共用，
- * 避免 mock ↔ permission 循环引用。运行时以 db.rolePerms 为准（角色管理页可编辑），此处为内置默认值。
+ * 本文件为纯数据、零依赖：permission.js（运行时判定）与 data 层（db.rolePerms 默认值）共用，
+ * 避免 data ↔ permission 循环引用。运行时以 db.rolePerms 为准（角色管理页可编辑），此处为内置默认值。
  *
  * 操作码：
  *  contract   新建/变更/延期/终止/归档合同    contract-approve 合同审批（通过/驳回）

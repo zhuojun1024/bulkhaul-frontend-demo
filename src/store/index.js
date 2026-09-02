@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { reactive, ref } from 'vue'
-import { db } from '@/mock'
-import { clearOperator } from '@/mock/derived'
+import { db } from '@/data'
+import { clearOperator } from '@/data/derived'
 
 /** 应用全局状态（侧边栏折叠等） */
 export const useAppStore = defineStore('app', () => {

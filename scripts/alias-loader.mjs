@@ -4,13 +4,13 @@ import { fileURLToPath } from 'node:url'
 
 const ALIASES = {
   '@/utils': '../src/utils/index.js',
-  '@/mock': '../src/mock/index.js',
+  '@/data': '../src/data/index.js',
   '@/store': '../src/store/index.js',
   '@/permission': '../src/permission.js',
   '@/permission-table': '../src/permission-table.js'
 }
 
-/** @/ 子路径别名：@/mock/flow → src/mock/flow(.js | /index.js)；@/api → src/api/index.js（目录型模块） */
+/** @/ 子路径别名：@/data/derived → src/data/derived(.js | /index.js)；@/api → src/api/index.js（目录型模块） */
 function isFile(p) {
   try {
     return statSync(p).isFile()

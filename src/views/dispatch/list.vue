@@ -209,15 +209,15 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Download, Refresh } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
-import { db } from '@/mock'
-// 本视图交叉引用查找（原 @/mock find 下沉，仅声明本视图用到的键）
+import { db } from '@/data'
+// 本视图交叉引用查找（原 @/data find 下沉，仅声明本视图用到的键）
 const find = {
   commodity: (id) => db.commodities.find((c) => c.id === id),
   terminal: (id) => db.terminals.find((t) => t.id === id),
   vehicle: (id) => db.vehicles.find((v) => v.id === id),
   driver: (id) => db.drivers.find((d) => d.id === id),
 }
-import { isRoadMode, dataScopeOf } from '@/mock/derived'
+import { isRoadMode, dataScopeOf } from '@/data/derived'
 import { useCollection } from '@/composables/useCollection'
 import { api } from '@/api'
 import dayjs from 'dayjs'

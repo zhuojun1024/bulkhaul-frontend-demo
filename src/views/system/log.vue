@@ -80,7 +80,7 @@ import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, Download, Refresh } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
-import { db } from '@/mock'
+import { db } from '@/data'
 import { useCollection } from '@/composables/useCollection'
 import dayjs from 'dayjs'
 

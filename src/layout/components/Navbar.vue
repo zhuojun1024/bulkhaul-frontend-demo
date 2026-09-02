@@ -88,7 +88,7 @@ import screenfull from 'screenfull'
 import { useAppStore, useUserStore } from '@/store'
 import { storeToRefs } from 'pinia'
 import { api, refreshDb } from '@/api'
-import { markMessageRead, visibleMessages, unreadCount as flowUnreadCount, dataScopeOf } from '@/mock/derived'
+import { markMessageRead, visibleMessages, unreadCount as flowUnreadCount, dataScopeOf } from '@/data/derived'
 import { usePerm } from '@/permission'
 import { useTokens } from '@/utils/tokens'
 

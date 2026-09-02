@@ -6,7 +6,7 @@ import { formatMoney, formatWeight } from '@/utils'
  * 磅单 / 签收单 / 发票 统一为电子单证，提供列表聚合与内容生成（可下载 / 可打印 HTML）。
  * 派生视图：不新增存储、不消耗种子随机序列，实时从 weighings / dispatches.receipt / invoices 聚合，
  * 与操作日志互补——单证归档给"单据级"审计追溯，操作日志给"动作级"审计追溯。
- * 只读查询模块（同 report.js 口径），由视图/测试直接引入，不进 mock/index 种子链。
+ * 只读查询模块，由视图/测试直接引入，不进 data/index 门面。
  */
 
 export const DOC_TYPES = [

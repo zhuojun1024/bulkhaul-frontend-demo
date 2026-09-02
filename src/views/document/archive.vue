@@ -80,7 +80,7 @@ import { ElMessage } from 'element-plus'
 import { Search, Refresh, Download } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
-import { listDocuments, documentContent, DOC_TYPES } from '@/mock/document'
+import { listDocuments, documentContent, DOC_TYPES } from '@/data/document'
 import dayjs from 'dayjs'
 
 const docs = computed(() => listDocuments())

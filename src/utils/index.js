@@ -43,7 +43,7 @@ export function fromNow(d) {
   return formatDate(d)
 }
 
-/* ========== 种子随机数（保证 mock 数据稳定） ========== */
+/* ========== 种子随机数（保证本地演示数据稳定） ========== */
 export function mulberry32(seed) {
   let a = seed >>> 0
   return function () {

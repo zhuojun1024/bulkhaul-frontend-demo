@@ -3,7 +3,7 @@
  * 用途：反推后端 MySQL DDL（docs/backend-plan.md 阶段 1）
  * 运行：node --import ./scripts/register.mjs scripts/dump-schema.mjs
  */
-import { db } from '../src/mock/index.js'
+import { db } from '../src/data/index.js'
 import { writeFileSync } from 'node:fs'
 
 function typeOf(v) {

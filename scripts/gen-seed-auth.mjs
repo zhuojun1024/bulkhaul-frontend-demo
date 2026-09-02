@@ -5,7 +5,7 @@
  * 运行：node --import ./scripts/register.mjs scripts/gen-seed-auth.mjs
  */
 import { readFileSync, writeFileSync } from 'node:fs'
-import { db } from '../src/mock/index.js'
+import { db } from '../src/data/index.js'
 
 const esc = (s) => String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "''")
 const sql = (v) => v === null || v === undefined ? 'NULL' : `'${esc(v)}'`

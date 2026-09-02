@@ -143,8 +143,8 @@ import { Plus, Position, MapLocation, ArrowRight } from '@element-plus/icons-vue
 import StatCard from '@/components/StatCard.vue'
 import ChartCard from '@/components/ChartCard.vue'
 import StatusTag from '@/components/StatusTag.vue'
-import { db, dashboard, workbenchTodos, workbenchStats, workbenchTodoList, weatherOf, announcements } from '@/mock'
-// 本视图交叉引用查找（原 @/mock find 下沉，仅声明本视图用到的键）
+import { db, dashboard, workbenchTodos, workbenchStats, workbenchTodoList, weatherOf, announcements } from '@/data'
+// 本视图交叉引用查找（原 @/data find 下沉，仅声明本视图用到的键）
 const find = {
   commodity: (id) => db.commodities.find((c) => c.id === id),
   terminal: (id) => db.terminals.find((t) => t.id === id),

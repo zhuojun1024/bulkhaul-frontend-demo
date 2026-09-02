@@ -377,14 +377,14 @@ import { Plus } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import StatusTag from '@/components/StatusTag.vue'
-import { db } from '@/mock'
-// 本视图交叉引用查找（原 @/mock find 下沉，仅声明本视图用到的键）
+import { db } from '@/data'
+// 本视图交叉引用查找（原 @/data find 下沉，仅声明本视图用到的键）
 const find = {
   commodity: (id) => db.commodities.find((c) => c.id === id),
   terminal: (id) => db.terminals.find((t) => t.id === id),
 }
 import { useCollection } from '@/composables/useCollection'
-import { outstandingOf, prepaymentAvailable } from '@/mock/derived'
+import { outstandingOf, prepaymentAvailable } from '@/data/derived'
 import { api, refreshDb } from '@/api'
 import { useUserStore } from '@/store'
 import { usePerm } from '@/permission'

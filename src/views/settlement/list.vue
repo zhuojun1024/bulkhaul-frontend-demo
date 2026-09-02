@@ -372,14 +372,14 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Download, Refresh, Postcard, DocumentAdd, MagicStick, Plus } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
-import { db } from '@/mock'
-// 本视图交叉引用查找（原 @/mock find 下沉，仅声明本视图用到的键）
+import { db } from '@/data'
+// 本视图交叉引用查找（原 @/data find 下沉，仅声明本视图用到的键）
 const find = {
   customer: (id) => db.customers.find((c) => c.id === id),
   driver: (id) => db.drivers.find((d) => d.id === id),
   settlement: (id) => db.settlements.find((s) => s.id === id),
 }
-import { settlementCandidates, payableStats as flowPayableStats } from '@/mock/derived'
+import { settlementCandidates, payableStats as flowPayableStats } from '@/data/derived'
 import { useCollection } from '@/composables/useCollection'
 import { api } from '@/api'
 import { usePerm } from '@/permission'

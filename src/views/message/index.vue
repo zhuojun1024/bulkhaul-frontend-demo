@@ -108,7 +108,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Search, CircleCheck, MuteNotification } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
-import { getDnd, isMuted } from '@/mock/derived'
+import { getDnd, isMuted } from '@/data/derived'
 import { api } from '@/api'
 import { useTokens } from '@/utils/tokens'
 
