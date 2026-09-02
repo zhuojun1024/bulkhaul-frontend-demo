@@ -329,7 +329,13 @@ try {
       const tag = document.querySelector('.dispatch-detail__name')
       return tag && tag.textContent.includes('装货中')
     })
-    check('确认装货后状态流转为"装货中"（flow 状态机在 UI 生效）', true)
+    check('确认装货后状态流转为"装货中"（UI 即时反馈）', true)
+    // F4：后端权威断言（UI 即时态是后端写后重取的映射，直接断言后端快照防口径漂移）
+    const loadOk = await waitForBackend((snap) => {
+      const d = (snap.dispatches || []).find((x) => x.id === dispatchId)
+      return d && d.status === 'loading'
+    })
+    check('确认装货随后端快照生效（status=loading，后端权威）', !!loadOk)
 
     // 调度详情展示装/卸货码（扫码确认入口）
     const hasCodes = await page.evaluate(() => {
@@ -401,6 +407,10 @@ try {
       [...document.querySelectorAll('button')].some((b) => b.textContent.includes('确认对账'))
     )
     if (hasConfirmBtn) {
+      // F4：从后端快照识别目标账单（CUS001 对账中且有对账结果），避免 UI 行提取 billNo 的脆弱性
+      const confirmBill = (await getBackendSnapshot()).settlements
+        .filter((s) => s.customerId === 'CUS001' && s.status === 'reconciling' && s.reconciliation != null)
+        .map((s) => s.billNo)[0]
       await page.evaluate(() => {
         const btn = [...document.querySelectorAll('button')].find((b) => b.textContent.includes('确认对账'))
         btn.click()
@@ -409,7 +419,14 @@ try {
       await page.waitForFunction(() =>
         [...document.querySelectorAll('.el-tag')].some((t) => t.textContent.includes('已确认'))
       )
-      check('客户确认对账：按钮 → 弹窗确认 → 已确认标记', true)
+      check('客户确认对账：按钮 → 弹窗确认 → 已确认标记（UI 即时反馈）', true)
+      // F4：后端权威断言（customerConfirmed 写入后端）
+      const confirmOk = await waitForBackend((snap) => {
+        const s = (snap.settlements || []).find((x) => x.billNo === confirmBill)
+        return s && s.customerConfirmed != null
+      })
+      if (!confirmBill) console.log('  - 未识别到 CUS001 对账中账单（confirmBill=null）')
+      check('客户确认对账随后端快照生效（customerConfirmed 已写入，后端权威）', !!confirmOk)
     } else {
       console.log('  - 跳过确认对账（本方无"对账中"账单）')
     }
@@ -459,7 +476,12 @@ try {
       { timeout: 10000 },
       accRowsBefore
     )
-    check('事故登记：弹窗提交 → 列表新增记录（flow 联动生效）', true)
+    check('事故登记：弹窗提交 → 列表新增记录（UI 即时反馈）', true)
+    // F4：后端权威断言（事故记录写入后端）
+    const accOk = await waitForBackend((snap) =>
+      (snap.accidents || []).some((a) => String(a.description || '').includes('UI e2e：事故登记'))
+    )
+    check('事故登记随后端快照生效（accidents 新增，后端权威）', !!accOk)
     await ctx.close()
   }
 
@@ -478,15 +500,16 @@ try {
     await page.waitForFunction(() => [...document.querySelectorAll('.el-table__row')].some((r) => r.textContent.includes('YS-')))
     check('运输需求页签展示需求数据（YS- 编号）', true)
 
-    const pendingRow = await page.evaluate(() => {
+    const pendingReq = await page.evaluate(() => {
       const rows = [...document.querySelectorAll('.el-table__row')]
       const row = rows.find((r) => r.textContent.includes('待处理'))
-      if (!row) return false
+      if (!row) return null
+      const reqId = (row.textContent.match(/YS-\d{4,5}/) || [null])[0]
       const btn = [...row.querySelectorAll('button')].find((b) => b.textContent.includes('生成合同草稿'))
       btn && btn.click()
-      return !!btn
+      return reqId
     })
-    if (pendingRow) {
+    if (pendingReq) {
       await page.waitForSelector('.el-dialog')
       await page.evaluate(() => {
         const dialog = document.querySelector('.el-dialog')
@@ -494,7 +517,13 @@ try {
         submit.click()
       })
       await page.waitForFunction(() => [...document.querySelectorAll('.el-table__row')].some((r) => r.textContent.includes('已转合同')))
-      check('生成合同草稿：需求状态转为"已转合同"（flow 联动生效）', true)
+      check('生成合同草稿：需求状态转为"已转合同"（UI 即时反馈）', true)
+      // F4：后端权威断言（需求 status=converted + 新合同草稿生成）
+      const convOk = await waitForBackend((snap) => {
+        const r = (snap.transportRequests || []).find((x) => x.id === pendingReq)
+        return r && r.status === 'converted' && r.contractId != null
+      })
+      check('生成合同草稿随后端快照生效（status=converted + 合同草稿生成，后端权威）', !!convOk)
     } else {
       console.log('  - 跳过转合同（无待处理需求）')
     }
@@ -511,6 +540,8 @@ try {
     check('门户有"发起运输需求"入口（客户角色）', hasReqBtn)
 
     const reqRowsBefore = await page.evaluate(() => [...document.querySelectorAll('.el-table__row')].filter((r) => r.textContent.includes('YS-')).length)
+    // F4：提交前记录后端 pending 需求数（写后断言基准）
+    const pendingReqBefore = (await getBackendSnapshot()).transportRequests.filter((r) => r.status === 'pending').length
     await page.evaluate(() => {
       const btn = [...document.querySelectorAll('button')].find((b) => b.textContent.includes('发起运输需求'))
       btn.click()
@@ -530,7 +561,12 @@ try {
       { timeout: 10000 },
       reqRowsBefore
     )
-    check('发起运输需求：表单提交 → "我的运输需求"新增待处理记录', true)
+    check('发起运输需求：表单提交 → "我的运输需求"新增待处理记录（UI 即时反馈）', true)
+    // F4：后端权威断言（pending 需求数 +1，后端权威）
+    const reqOk = await waitForBackend((snap) =>
+      (snap.transportRequests || []).filter((r) => r.status === 'pending').length === pendingReqBefore + 1
+    )
+    check('发起运输需求随后端快照生效（pending 需求 +1，后端权威）', !!reqOk)
     await ctx.close()
   }
 
@@ -630,12 +666,22 @@ try {
     check('消息中心页展示消息列表', rowCount > 0)
 
     // 全部已读 → 顶栏角标消失
+    // F4：点击前记录当前未读消息 id 集合（后端权威基准）
+    const unreadIds = (await getBackendSnapshot()).messages.filter((m) => m.read === false).map((m) => m.id)
     await page.evaluate(() => {
       const btn = [...document.querySelectorAll('button')].find((b) => b.textContent.includes('全部已读'))
       btn.click()
     })
     await page.waitForFunction(() => !document.querySelector('.navbar__badge'), { timeout: 10000 })
-    check('全部已读后顶栏未读角标消失', true)
+    check('全部已读后顶栏未读角标消失（UI 即时反馈）', true)
+    // F4：后端权威断言（点击前未读的消息 id 集合全部 read=true）
+    const readOk = await waitForBackend((snap) =>
+      unreadIds.length > 0 && unreadIds.every((id) => {
+        const m = (snap.messages || []).find((x) => x.id === id)
+        return m && m.read === true
+      })
+    )
+    check('全部已读随后端快照生效（原未读消息 read=true，后端权威）', !!readOk)
     await ctx.close()
   }
 
@@ -659,7 +705,8 @@ try {
       return m ? parseInt(m[1], 10) : -1
     })
     check('银行对账页签展示待核销流水（待核销 > 0）', beforeCount > 0)
-
+    // F4：点击前记录后端 unmatched 银行流水数（写后断言基准）
+    const unmatchedBefore = (await getBackendSnapshot()).bankRecords.filter((b) => b.status === 'unmatched').length
     await page.evaluate(() => {
       const btn = [...document.querySelectorAll('button')].find((b) => b.textContent.includes('自动核销'))
       btn.click()
@@ -674,7 +721,12 @@ try {
       { timeout: 10000 },
       beforeCount
     )
-    check('自动核销：待核销数量减少（精确匹配核销）', true)
+    check('自动核销：待核销数量减少（精确匹配核销，UI 即时反馈）', true)
+    // F4：后端权威断言（unmatched 银行流水数较点击前减少，至少 1 笔转 matched）
+    const matchOk = await waitForBackend((snap) =>
+      (snap.bankRecords || []).filter((b) => b.status === 'unmatched').length < unmatchedBefore
+    )
+    check('自动核销随后端快照生效（unmatched 银行流水减少，后端权威）', !!matchOk)
     const hasNewMatch = await page.evaluate(() =>
       [...document.querySelectorAll('.el-table__row')].some((r) => r.textContent.includes('张建国'))
     )
@@ -736,7 +788,12 @@ try {
       btn.click()
     })
     await page.waitForFunction(() => [...document.querySelectorAll('.el-table__row')].some((r) => r.textContent.includes('G7 E2E 导入客户')))
-    check('导入后客户列表新增记录', true)
+    check('导入后客户列表新增记录（UI 即时反馈）', true)
+    // F4：后端权威断言（导入客户写入后端 customers）
+    const impOk = await waitForBackend((snap) =>
+      (snap.customers || []).some((c) => String(c.name || '').includes('G7 E2E 导入客户'))
+    )
+    check('客户导入随后端快照生效（customers 新增 G7 E2E 导入客户，后端权威）', !!impOk)
     await ctx.close()
   }
 
@@ -886,7 +943,13 @@ try {
       await page.evaluate(() => window.__dbtn('模拟扫码', '电子签收').click())
       await page.evaluate(() => window.__dbtn('确认签收', '电子签收').click())
       await page.waitForFunction((id) => window.__tag(id) === '已完成' && window.__receipt(id), { timeout: 10000 }, seed.dispatchId)
-      check('N-1：司机账号扫码确认卸货 + 电子签收（卸货中→已完成）', true)
+      check('N-1：司机账号扫码确认卸货 + 电子签收（卸货中→已完成，UI 即时反馈）', true)
+      // F4：后端权威断言（全链路 5 次状态机写均落后端：status=completed + 电子签收单生成）
+      const chainOk = await waitForBackend((snap) => {
+        const d = (snap.dispatches || []).find((x) => x.id === seed.dispatchId)
+        return d && d.status === 'completed' && d.receipt != null
+      })
+      check('N-1：司机全链路随后端快照生效（status=completed + receipt 生成，后端权威）', !!chainOk)
     }
     await ctx.close()
   }
@@ -976,7 +1039,13 @@ try {
       })
       await page.evaluate(() => window.__visDialogBtn('补签电子签收单', '确认补签').click())
       await page.waitForFunction(() => /QS-B\d{5}/.test(document.querySelector('.page')?.textContent || ''), { timeout: 10000 })
-      check('环节1：补签提交后签收单生成（QS-B 码展示）', true)
+      check('环节1：补签提交后签收单生成（QS-B 码展示，UI 即时反馈）', true)
+      // F4：后端权威断言（补签电子签收单写入后端 dispatch.receipt，code=QS-B）
+      const supOk = await waitForBackend((snap) => {
+        const d = (snap.dispatches || []).find((x) => x.id === seed.dispatchId)
+        return d && d.receipt != null && String(d.receipt.code || '').startsWith('QS-B')
+      })
+      check('环节1：补签随后端快照生效（receipt 生成 QS-B，后端权威）', !!supOk)
 
       // 环节3：admin 合同详情"变更（改价）→ 变更待审批 → 审批通过"
       await nav(page, '#/contract/' + seed.contractId)
@@ -986,16 +1055,27 @@ try {
         btn.click()
       })
       await page.waitForFunction(() => window.__visDialog('合同变更'), { timeout: 10000 })
-      await page.evaluate(() => {
+      // F4：记录原单价（后端权威基准）+ 读取 UI 实际提交的单价（断言精确值，规避取整误差）
+      const origUnitPrice = (await getBackendSnapshot()).contracts.find((x) => x.id === seed.contractId)?.unitPrice
+      const nextUnitPrice = await page.evaluate(() => {
         const priceInput = window.__visDialogInput('合同变更', '合同单价')
-        const next = String(Math.round(Number(priceInput.value) + 10))
+        return String(Math.round(Number(priceInput.value) + 10))
+      })
+      await page.evaluate((next) => {
+        const priceInput = window.__visDialogInput('合同变更', '合同单价')
         window.__setInput(priceInput, next)
         const reason = window.__visDialogInput('合同变更', '变更原因')
         window.__setInput(reason, 'e2e 改价审批测试')
-      })
+      }, nextUnitPrice)
       await page.evaluate(() => window.__visDialogBtn('合同变更', '确认变更').click())
       await page.waitForFunction(() => (document.querySelector('.page')?.textContent || '').includes('变更待审批'), { timeout: 10000 })
-      check('环节3：改价提交后不即时生效，展示"变更待审批"面板', true)
+      check('环节3：改价提交后不即时生效，展示"变更待审批"面板（UI 即时反馈）', true)
+      // F4：后端权威断言（改价提交后 pendingChange 写入后端，单价未变）
+      const changePending = await waitForBackend((snap) => {
+        const c = (snap.contracts || []).find((x) => x.id === seed.contractId)
+        return c && c.pendingChange != null
+      })
+      check('环节3：改价提交随后端快照生效（pendingChange 写入，后端权威）', !!changePending)
       // 两级审批通过（部门 → 公司）
       for (let i = 0; i < 2; i++) {
         await page.evaluate(() => {
@@ -1007,7 +1087,13 @@ try {
         await page.waitForFunction(() => !window.__visDialog('变更审批'), { timeout: 10000 })
       }
       const pendingGone = await page.evaluate(() => !(document.querySelector('.page')?.textContent || '').includes('变更待审批'))
-      check('环节3：改价两级审批通过后待批面板消失（变更生效）', pendingGone)
+      check('环节3：改价两级审批通过后待批面板消失（变更生效，UI 即时反馈）', pendingGone)
+      // F4：后端权威断言（末级审批通过后 pendingChange 清空 + 单价生效为 原单价+10）
+      const changeApplied = await waitForBackend((snap) => {
+        const c = (snap.contracts || []).find((x) => x.id === seed.contractId)
+        return c && c.pendingChange == null && Number(c.unitPrice) === Number(nextUnitPrice) && Number(nextUnitPrice) > Number(origUnitPrice)
+      })
+      check('环节3：改价审批随后端快照生效（pendingChange 清空 + 单价生效为 UI 提交值，后端权威）', !!changeApplied)
       await ctx.close()
     }
   }
@@ -1039,6 +1125,10 @@ try {
     await login(page, 'customer01', '123456')
     check('环节2：客户登录直达门户', page.url().includes('#/portal'))
     await page.waitForSelector('.el-table__row')
+    // F4：从后端快照识别目标账单（CUS001 对账中且有对账结果），避免 UI 行提取 billNo 的脆弱性
+    const objBill = (await getBackendSnapshot()).settlements
+      .filter((s) => s.customerId === 'CUS001' && s.status === 'reconciling' && s.reconciliation != null)
+      .map((s) => s.billNo)[0]
     const objRow = await page.evaluate(() => {
       const rows = [...document.querySelectorAll('.el-table__row')]
       const row = rows.find((r) => [...r.querySelectorAll('button')].some((b) => b.textContent.includes('确认对账')))
@@ -1060,7 +1150,14 @@ try {
         () => [...document.querySelectorAll('.el-table__row')].some((r) => r.textContent.includes('已异议')),
         { timeout: 10000 }
       )
-      check('环节2：异议提交后账单回待对账（行显示"已异议 · 待重新对账"）', true)
+      check('环节2：异议提交后账单回待对账（行显示"已异议 · 待重新对账"，UI 即时反馈）', true)
+      // F4：后端权威断言（异议写入后端：status 回 pending + objections 含 open 记录）
+      const objOk = await waitForBackend((snap) => {
+        const s = (snap.settlements || []).find((x) => x.billNo === objBill)
+        return s && s.status === 'pending' && (s.objections || []).some((o) => o.status === 'open')
+      })
+      if (!objBill) console.log('  - 未识别到 CUS001 对账中账单（objBill=null）')
+      check('环节2：客户异议随后端快照生效（status=pending + open 异议，后端权威）', !!objOk)
     }
     await ctx.close()
   }
@@ -1118,6 +1215,10 @@ try {
       const prepayBtn = await page.evaluate(() => [...document.querySelectorAll('button')].some((b) => b.textContent.replace(/\s/g, '').includes('预付款抵扣')))
       check(`环节5：${seed.prepayCustomerId} 已结算/逾期账单有"预付款抵扣"按钮`, prepayBtn)
       if (prepayBtn) {
+        // F4：抵扣前记录该账单收款流水数 + paidAmount（写后断言基准）
+        const prepaySnap0 = await getBackendSnapshot()
+        const prepaySettle0 = (prepaySnap0.settlements || []).find((x) => x.id === seed.prepaySettleId)
+        const prepayPayBefore = (prepaySnap0.payments || []).filter((p) => p.settlementId === seed.prepaySettleId).length
         await page.evaluate(() => {
           const btn = [...document.querySelectorAll('button')].find((b) => b.textContent.replace(/\s/g, '').includes('预付款抵扣'))
           btn.click()
@@ -1128,7 +1229,14 @@ try {
           () => [...document.querySelectorAll('.el-table__row')].some((r) => r.textContent.includes('预付款抵扣')),
           { timeout: 10000 }
         )
-        check('环节5：预付款抵扣后收款流水出现"预付款抵扣"记录', true)
+        check('环节5：预付款抵扣后收款流水出现"预付款抵扣"记录（UI 即时反馈）', true)
+        // F4：后端权威断言（收款流水新增 method=预付款抵扣 + paidAmount 增加）
+        const prepayDeductOk = await waitForBackend((snap) => {
+          const s = (snap.settlements || []).find((x) => x.id === seed.prepaySettleId)
+          const pays = (snap.payments || []).filter((p) => p.settlementId === seed.prepaySettleId)
+          return s && pays.length === prepayPayBefore + 1 && pays.some((p) => p.method === '预付款抵扣') && Number(s.paidAmount) > Number(prepaySettle0.paidAmount)
+        })
+        check('环节5：预付款抵扣随后端快照生效（收款流水 +1 + paidAmount 增加，后端权威）', !!prepayDeductOk)
       }
 
       // 环节5：客户详情"预付款台账" + 收取预付款
@@ -1136,6 +1244,8 @@ try {
       await page.waitForSelector('.customer-detail__name')
       const ledgerText = await page.evaluate(() => document.querySelector('.page')?.textContent || '')
       check('环节5：客户详情含"预付款台账"面板（种子 YF-0001）', ledgerText.includes('预付款台账') && ledgerText.includes('YF-0001'))
+      // F4：收取前记录 CUS001 预付款数（写后断言基准）
+      const prepayCountBefore = (await getBackendSnapshot()).prepayments.filter((p) => p.customerId === 'CUS001').length
       await page.evaluate(() => {
         const btn = [...document.querySelectorAll('button')].find((b) => b.textContent.replace(/\s/g, '').includes('收取预付款'))
         btn.click()
@@ -1147,7 +1257,13 @@ try {
       })
       await page.evaluate(() => window.__visDialogBtn('收取预付款', '确认收取').click())
       await page.waitForFunction(() => (document.querySelector('.page')?.textContent || '').includes('YF-0003'), { timeout: 10000 })
-      check('环节5：收取预付款后台账新增记录（YF-0003）', true)
+      check('环节5：收取预付款后台账新增记录（YF-0003，UI 即时反馈）', true)
+      // F4：后端权威断言（CUS001 预付款 +1，金额=100000）
+      const prepayCollectOk = await waitForBackend((snap) => {
+        const mine = (snap.prepayments || []).filter((p) => p.customerId === 'CUS001')
+        return mine.length === prepayCountBefore + 1 && mine.some((p) => Number(p.amount) === 100000)
+      })
+      check('环节5：收取预付款随后端快照生效（prepayments +1 金额 100000，后端权威）', !!prepayCollectOk)
       await ctx.close()
     }
   }
